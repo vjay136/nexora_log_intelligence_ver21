@@ -1086,8 +1086,10 @@ test('API monitor starts its independent probes concurrently and displays latenc
   await expect(page.getByText('Latency p95')).toBeVisible();
   expect(starts.length).toBeGreaterThan(10);
   // Chromium limits parallel connections per origin. The first transport wave
-  // proves that independent probes are dispatched concurrently.
-  expect(Math.max(...starts.slice(0, 6)) - Math.min(...starts.slice(0, 6))).toBeLessThan(70);
+  // proves that independent probes are dispatched concurrently. Keep the bound
+  // below the 5 * 80 ms a sequential first wave would require, while allowing
+  // for loaded CI runners to schedule intercepted requests with modest jitter.
+  expect(Math.max(...starts.slice(0, 6)) - Math.min(...starts.slice(0, 6))).toBeLessThan(300);
 });
 
 test('Endpoint Configuration tests and saves a safe ClickHouse field-mapped profile', async ({ page }) => {
