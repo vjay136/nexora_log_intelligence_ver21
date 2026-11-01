@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"log"
 	"regexp"
 	"strings"
 	"sync"
@@ -37,9 +38,12 @@ func NewParserPackAdapter() (*ParserPackAdapter, error) {
 // NewParserPackAdapterFromDirectory merges the embedded profiles with one
 // bounded controller-managed active generation. The directory may be absent.
 func NewParserPackAdapterFromDirectory(directory string) (*ParserPackAdapter, error) {
-	profiles, err := familyprofile.Resolve(directory)
+	profiles, diagnostics, err := familyprofile.ResolveResilient(directory)
 	if err != nil {
 		return nil, err
+	}
+	for _, diagnostic := range diagnostics {
+		log.Printf("WARNING: managed parser pack %q isolated: %s; built-in and validated managed parsers remain active", diagnostic.Name, diagnostic.Reason)
 	}
 	if len(profiles) == 0 {
 		return nil, &configurationError{message: "no approved parser profiles"}

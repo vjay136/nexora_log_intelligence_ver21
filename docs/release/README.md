@@ -1,5 +1,18 @@
 # NLI v20 release infrastructure
 
+## Release 20.0.0-6
+
+Release 6 is built from the R4 parsing/runtime baseline and fixes parser bundle hash canonicalization across proposal creation and approval. The normal independent-review path remains authoritative; approved delivery and targeted replay continue to require an exact client-applied bundle hash.
+
+### Verified source/UI acceptance for release 6
+
+- Full Go test suite: PASS.
+- Web API contracts: 24/24 PASS.
+- Browser UI scenarios: 69/69 PASS.
+- RPM reproducibility, package payload, and Rocky lifecycle: PENDING. These must be run from frozen Release 6 artifacts against the genuine Release 4 RPMs before claiming package/lifecycle qualification.
+
+See `../V20_R6_TEST_RESULTS.md` and `../V20_R6_QRW_OPERATOR_GUIDE.md` for the evidence boundary and guided recovery procedure.
+
 ## Release 20.0.0-4
 
 Release 4 validates the generated quarantine-recovery parser itself before any

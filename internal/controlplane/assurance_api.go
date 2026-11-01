@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"nexora.local/nli-v20/internal/familyprofile"
 	"nexora.local/nli-v20/internal/middleware"
 	"nexora.local/nli-v20/internal/registry"
 	metastore "nexora.local/nli-v20/internal/store"
@@ -951,6 +952,15 @@ func (s *Server) handleAssuranceParser(w http.ResponseWriter, r *http.Request) {
 		pack, packErr := assuranceRuntimePack(id, version, doc.CreatedBy, definition, cases)
 		if packErr != nil {
 			jsonError(w, "parser is approved but cannot be installed by the runtime: "+packErr.Error(), 409)
+			return
+		}
+		encodedPack, encodeErr := json.Marshal(pack)
+		if encodeErr != nil {
+			jsonError(w, "parser runtime pack could not be encoded", 500)
+			return
+		}
+		if _, validationErr := familyprofile.ValidateManagedPackBytes(id, encodedPack); validationErr != nil {
+			jsonError(w, "parser is approved but failed the production runtime gate: "+validationErr.Error(), 409)
 			return
 		}
 		body["runtime_pack"] = pack

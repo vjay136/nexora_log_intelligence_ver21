@@ -7,7 +7,7 @@ const origin = 'http://127.0.0.1:4176';
 const tabs = ['operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
 const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'nli-mark.svg', 'nexora-logo-v20.png', 'login-banner-v20.png', 'nexora-poster-v20.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
-async function mockController(page, { role = 'admin', healthIdentity = 'v20', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [] } = {}) {
+async function mockController(page, { role = 'admin', healthIdentity = 'v20', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [], rolloutSeed = [], rolloutApprovalFailure = null } = {}) {
   const observed = [];
   const cases = [];
   const uploads = [];
@@ -21,7 +21,8 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v20', up
   const inputProfiles = [];
   const inputRolloutSaves = [];
   const rolloutSaves = [];
-  const rolloutProposals = [];
+  const rolloutProposals = rolloutSeed.map(item => structuredClone(item));
+  const rolloutApprovalRequests = [];
   const historyQueries = [];
   const historyCounts = {};
   const users = [];
@@ -139,7 +140,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v20', up
     if (path.startsWith('/api/v1/config/')) return fulfill({ items: [] });
     if (path === '/api/v1/metadata') return fulfill({ records: [], stats: {}, payload_retained: false });
     if (path === '/api/v1/rollouts' && request.method() === 'POST') { rolloutSaves.push(request.postDataJSON()); return fulfill({ id: 'proposal-test', state: 'pending_approval' }, 201); }
-    if (path.match(/^\/api\/v1\/rollouts\/[^/]+\/(approve|cancel)$/) && request.method() === 'POST') { const [,id,action]=path.match(/^\/api\/v1\/rollouts\/([^/]+)\/(approve|cancel)$/),item=rolloutProposals.find(doc=>doc.id===id);if(item)item.state=action==='approve'?'approved':'cancelled';return fulfill({status:item?.state||action}); }
+    if (path.match(/^\/api\/v1\/rollouts\/[^/]+\/(approve|cancel)$/) && request.method() === 'POST') { const [,id,action]=path.match(/^\/api\/v1\/rollouts\/([^/]+)\/(approve|cancel)$/),item=rolloutProposals.find(doc=>doc.id===id),body=request.postDataJSON();if(action==='approve'){rolloutApprovalRequests.push({id,body});if(rolloutApprovalFailure)return fulfill({error:rolloutApprovalFailure},409);}if(item)item.state=action==='approve'?'approved':'cancelled';return fulfill({status:item?.state||action}); }
     if (path === '/api/v1/rollouts') return fulfill({ proposals: rolloutProposals, live: [] });
     if (path === '/api/v1/artifacts') return fulfill({ artifacts: [], signing_keys_configured: 0 });
     if (path === '/api/v1/rbac/roles') return fulfill({ roles: { viewer: ['assurance:run'], admin: ['*'] } });
@@ -163,7 +164,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v20', up
     if (path === '/api/v1/system') return fulfill({ version: '20.0.0', health: 'ok', storage: { mode: 'supabase', status: 'connected' }, security: { audit_chain: 'ok' } });
     return fulfill({ error: `Unmocked API: ${path}` }, 500);
   });
-  return { observed, uploads, assuranceRequests, assuranceCorpora, assurancePlans, assuranceRuns, outputSaves, inputSaves, outputProfiles, inputProfiles, inputRolloutSaves, rolloutSaves, rolloutProposals, historyQueries, users, auditEvents, notificationPolicySaves, notificationActions, qrwParserActions, qrwReplays, qrwSyncVerifications, qrwRolloutRequests };
+  return { observed, uploads, assuranceRequests, assuranceCorpora, assurancePlans, assuranceRuns, outputSaves, inputSaves, outputProfiles, inputProfiles, inputRolloutSaves, rolloutSaves, rolloutProposals, rolloutApprovalRequests, historyQueries, users, auditEvents, notificationPolicySaves, notificationActions, qrwParserActions, qrwReplays, qrwSyncVerifications, qrwRolloutRequests };
 }
 
 async function login(page) {
@@ -573,7 +574,7 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   const rolloutRow=page.locator('#page tr').filter({hasText:'qrw-rollout-1'});
   await expect(rolloutRow).toContainText('all_eligible · 2 client(s)');
   await expect(rolloutRow.getByRole('button',{name:'Emergency approve exact bundle'})).toBeEnabled();
-  await expect(page.locator('.qrw-next-action')).toContainText('Approve the exact rollout with audited administrator recovery');
+  await expect(page.locator('.qrw-next-action')).toContainText('Complete the audited rollout approval');
   mock.rolloutProposals[0].state='approved';
   await page.getByTestId('nav-operations').click();
   await page.getByTestId('nav-quarantine-wizard').click();
@@ -604,7 +605,45 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   expect(mock.qrwParserActions.map(item=>item.action)).toEqual(['approve','publish','rollback','offboard']);
 });
 
-test('premium login keeps the square V20 emblem and banner fully contained on desktop and mobile', async ({ page }) => {
+test('Approvals workspace sends reason-bearing independent and exact emergency approval contracts', async ({ page }) => {
+  const hash='a'.repeat(64),sync=[{asset_class:'parser',asset_id:'reviewed-parser',desired:{revision:4,sha256:hash,state:'published'},clients:[{node_id:'node-1',desired_hash:hash,applied_hash:'',status:'online',drifted:true}]}];
+  const mock=await mockController(page,{qrwSyncAssets:sync,rolloutSeed:[
+    {id:'independent-proposal',revision:7,created_by:'other-reviewer',state:'pending_approval',payload:{type:'parser_sync',name:'Independent parser rollout',bundle_hash:hash,target_mode:'selected',target_nodes:['node-1']}},
+    {id:'emergency-proposal',revision:8,created_by:'test-operator',state:'pending_approval',payload:{type:'parser_sync',name:'Emergency parser rollout',bundle_hash:hash,target_mode:'selected',target_nodes:['node-1']}},
+  ]});
+  await login(page);
+  await page.getByTestId('nav-rollouts').click();
+  const independent=page.locator('tr').filter({hasText:'Independent parser rollout'});
+  await independent.locator('[data-rollout-reason]').fill('Validated against the approved parser bundle');
+  await independent.getByRole('button',{name:'Approve reviewed proposal'}).click();
+  await expect.poll(()=>mock.rolloutApprovalRequests).toHaveLength(1);
+  expect(mock.rolloutApprovalRequests[0]).toEqual({id:'independent-proposal',body:{reason:'Validated against the approved parser bundle'}});
+  const emergency=page.locator('tr').filter({hasText:'Emergency parser rollout'});
+  await emergency.locator('[data-rollout-reason]').fill('Production recovery approved by administrator');
+  await emergency.getByRole('button',{name:'Emergency approve exact bundle'}).click();
+  await expect.poll(()=>mock.rolloutApprovalRequests).toHaveLength(2);
+  expect(mock.rolloutApprovalRequests[1]).toEqual({id:'emergency-proposal',body:{reason:'Production recovery approved by administrator',emergency_self_approval:true,expected_revision:8,expected_bundle_hash:hash}});
+});
+
+test('legacy parser proposals reach controller verification and a hash rejection becomes one actionable inline state', async ({ page }) => {
+  const hash='b'.repeat(64),legacyHash=hash.slice(0,20),sync=[{asset_class:'parser',asset_id:'legacy-parser',desired:{revision:2,sha256:hash,state:'published'},clients:[{node_id:'node-1',desired_hash:hash,applied_hash:'',status:'online',drifted:true}]}];
+  const mock=await mockController(page,{qrwSyncAssets:sync,rolloutApprovalFailure:'parser sync proposal bundle hash is invalid',rolloutSeed:[{id:'legacy-proposal',revision:2,created_by:'other-reviewer',state:'pending_approval',payload:{type:'parser_sync',name:'Legacy parser rollout',bundle_hash:legacyHash,payload:{asset_bundle:{schema_version:1}},target_mode:'selected',target_nodes:['node-1']}}]});
+  await login(page);
+  await page.getByTestId('nav-rollouts').click();
+  const row=page.locator('tr').filter({hasText:'Legacy parser rollout'});
+  await expect(row).toContainText('Legacy snapshot · controller verification required');
+  await expect(row.getByRole('button',{name:'Approve reviewed proposal'})).toBeEnabled();
+  await row.locator('[data-rollout-reason]').fill('Reviewed legacy snapshot evidence');
+  await row.getByRole('button',{name:'Approve reviewed proposal'}).click();
+  await expect.poll(()=>mock.rolloutApprovalRequests).toHaveLength(1);
+  const refreshed=page.locator('tr').filter({hasText:'Legacy parser rollout'});
+  await expect(refreshed).toContainText('Cancel this proposal and create a new one from the current published bundle');
+  await expect(refreshed.getByRole('button',{name:'Approve reviewed proposal'})).toBeDisabled();
+  await expect(page.locator('.toast.bad')).toHaveCount(0);
+  await expect(refreshed.getByRole('button',{name:'Cancel'})).toBeEnabled();
+});
+
+test('premium login presents the complete V20 banner in a responsive landscape stage', async ({ page }) => {
   await mockController(page);
   await page.goto(origin);
   const lockup=page.locator('.showcase-header .brand-emblem');
@@ -615,15 +654,17 @@ test('premium login keeps the square V20 emblem and banner fully contained on de
   await expect(page.locator('.showcase-header .brand-wordmark strong')).toHaveText('Nexora');
   await expect.poll(()=>banner.evaluate(image=>image.naturalWidth)).toBeGreaterThan(0);
   await expect(banner).toHaveCSS('object-fit','contain');
-  const desktop=await banner.evaluate(image=>({width:image.getBoundingClientRect().width,height:image.getBoundingClientRect().height}));
-  expect(Math.abs(desktop.width-desktop.height)).toBeLessThanOrEqual(1);
+  const desktop=await page.locator('.login-form-banner').evaluate(stage=>({width:stage.getBoundingClientRect().width,height:stage.getBoundingClientRect().height,imageWidth:stage.querySelector('img').naturalWidth,imageHeight:stage.querySelector('img').naturalHeight}));
+  expect(desktop.width).toBeGreaterThan(500);
+  expect(desktop.width/desktop.height).toBeCloseTo(1.6,1);
+  expect(desktop.imageWidth).toBe(desktop.imageHeight);
   await page.setViewportSize({width:390,height:844});
   await expect(page.locator('.auth-showcase')).toBeHidden();
   await expect(page.locator('#login-form .login-form-banner')).toBeVisible();
   await expect(page.getByRole('button', {name:'Sign in securely'})).toBeVisible();
-  const geometry=await banner.evaluate(image=>({width:image.getBoundingClientRect().width,height:image.getBoundingClientRect().height,scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth}));
-  expect(geometry.width).toBeGreaterThan(240);
-  expect(Math.abs(geometry.width-geometry.height)).toBeLessThanOrEqual(1);
+  const geometry=await page.locator('.login-form-banner').evaluate(stage=>({width:stage.getBoundingClientRect().width,height:stage.getBoundingClientRect().height,scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth}));
+  expect(geometry.width).toBeGreaterThan(330);
+  expect(geometry.width/geometry.height).toBeCloseTo(1.6,1);
   expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth);
 });
 
@@ -1468,7 +1509,8 @@ test('pending approval nav badge follows controller state and clears after an ac
   await login(page);
   await expect(page.locator('#approval-badge')).toHaveText('1');
   await page.getByTestId('nav-rollouts').click();
-  await page.getByRole('button',{name:'Approve'}).click();
+  await page.locator('[data-rollout-reason="approval-1"]').fill('Independent configuration review complete');
+  await page.getByRole('button',{name:'Approve reviewed proposal'}).click();
   await expect(page.locator('#approval-badge')).toBeHidden();
   await expect(page.locator('#page').getByText('approved', { exact: false }).first()).toBeVisible();
 });

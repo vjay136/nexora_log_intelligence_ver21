@@ -1377,6 +1377,29 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 	_ = json.Unmarshal(doc.Payload, &proposal)
 	proposalType := fmt.Sprint(proposal["type"])
 	proposalBundleHash := strings.TrimSpace(fmt.Sprint(proposal["bundle_hash"]))
+	var parserBundle *parserAssetBundle
+	var parserRolloutPayload any
+	parserHashValidation := ""
+	legacyProposalHash := ""
+	if proposalType == rolloutTypeParserSync {
+		verified, verifyErr := s.verifyParserSyncProposal(r.Context(), doc.Payload)
+		if verifyErr != nil {
+			jsonError(w, verifyErr.Error(), http.StatusConflict)
+			return
+		}
+		parserBundle = &verified.Bundle
+		proposalBundleHash = verified.CanonicalHash
+		legacyProposalHash = verified.StoredHash
+		parserHashValidation = verified.ValidationMode
+		parserRolloutPayload = map[string]any{"asset_bundle": verified.Bundle, "bundle_hash": verified.CanonicalHash}
+		setCanonicalProposalBundleHash(proposal, verified.CanonicalHash)
+		// A pending legacy proposal may have rendered its old verified digest in
+		// the emergency approval form. Bind that request to the canonical digest
+		// after verification so an operator is not forced to recreate safe work.
+		if strings.HasPrefix(verified.ValidationMode, "legacy_") && strings.EqualFold(strings.TrimSpace(approval.ExpectedBundleHash), verified.StoredHash) {
+			approval.ExpectedBundleHash = verified.CanonicalHash
+		}
+	}
 	if doc.CreatedBy == principal.Username && proposalType != rolloutTypeParserSync {
 		jsonError(w, "creator cannot approve own rollout; emergency self-approval is limited to exact parser bundle proposals", http.StatusConflict)
 		return
@@ -1390,38 +1413,19 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 		jsonError(w, approvalErr.Error(), http.StatusConflict)
 		return
 	}
-	targets := interfaceStrings(proposal["target_nodes"])
-	var parserBundle *parserAssetBundle
-	var parserRolloutPayload any
-	if fmt.Sprint(proposal["type"]) == rolloutTypeParserSync {
-		// Decode the parser snapshot directly from the stored JSON. Going through
-		// map[string]any first converts numbers inside asset payloads to float64
-		// and re-encodes the RawMessage bytes, which can change the bundle digest
-		// (for example, 1.0 becomes 1) and can mutate the payload sent to clients.
-		var syncProposal struct {
-			BundleHash string `json:"bundle_hash"`
-			Payload    struct {
-				Bundle     parserAssetBundle `json:"asset_bundle"`
-				BundleHash string            `json:"bundle_hash"`
-			} `json:"payload"`
+	if parserHashValidation != "" {
+		approvalAudit["bundle_hash"] = proposalBundleHash
+		approvalAudit["bundle_hash_validation"] = parserHashValidation
+		if strings.HasPrefix(parserHashValidation, "legacy_") {
+			approvalAudit["legacy_bundle_hash"] = legacyProposalHash
+			proposal["bundle_hash_migration"] = map[string]any{
+				"from": legacyProposalHash, "to": proposalBundleHash,
+				"mode": "verified_semantic_snapshot", "migrated_by": principal.Username,
+				"migrated_at": time.Now().UTC(),
+			}
 		}
-		if json.Unmarshal(doc.Payload, &syncProposal) != nil || syncProposal.BundleHash == "" || syncProposal.Payload.BundleHash != syncProposal.BundleHash || syncProposal.Payload.Bundle.BundleHash != syncProposal.BundleHash {
-			jsonError(w, "parser sync proposal has no exact bundle snapshot", http.StatusConflict)
-			return
-		}
-		hash, _, hashErr := bundleDigest(syncProposal.Payload.Bundle)
-		if hashErr != nil || hash != syncProposal.BundleHash {
-			jsonError(w, "parser sync proposal bundle hash is invalid", http.StatusConflict)
-			return
-		}
-		current, currentErr := s.buildActiveParserBundle(r.Context())
-		if currentErr != nil || current.BundleHash != syncProposal.BundleHash {
-			jsonError(w, "parser sync proposal is stale; create a rollout for the current published bundle", http.StatusConflict)
-			return
-		}
-		parserBundle = &syncProposal.Payload.Bundle
-		parserRolloutPayload = map[string]any{"asset_bundle": syncProposal.Payload.Bundle, "bundle_hash": syncProposal.BundleHash}
 	}
+	targets := interfaceStrings(proposal["target_nodes"])
 	if len(targets) == 0 {
 		for _, node := range s.fleet.All() {
 			if node.Status != fleet.StatusOffline {

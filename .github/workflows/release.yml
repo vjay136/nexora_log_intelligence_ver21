@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       previous_release_tag:
-        description: 'Optional previous Ver20 release tag containing genuine client/controller RPMs; defaults to v20.0.0-3'
+        description: 'Optional previous Ver20 release tag containing genuine client/controller RPMs; defaults to v20.0.0-4'
         required: false
         type: string
 
@@ -70,7 +70,7 @@ jobs:
       - name: Download genuine previous release RPMs
         env:
           GH_TOKEN: ${{ github.token }}
-          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v20.0.0-3' }}
+          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v20.0.0-4' }}
           PREVIOUS_RELEASE_REPO: vjay136/nexora_log_intelligence_ver20
         run: |
           mkdir -p '${{ runner.temp }}/previous'

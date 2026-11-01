@@ -26,7 +26,7 @@ unavailable measurements remain explicit. See the [NUPIRE architecture](docs/V20
 [baseline gap audit](docs/V20_BASELINE_CAPABILITY_GAP.md), and
 [research ledger](docs/V20_RESEARCH_AND_LICENSE_LEDGER.md).
 
-Release `20.0.0-4` completes the governed quarantine lifecycle in one workspace.
+Release `20.0.0-6` is based on the R4 parsing/runtime behavior and corrects parser bundle hash handling across approval and rollout. It retains the governed quarantine lifecycle in one workspace and binds review, publication, deployment, client acknowledgement, replay, and verification to the same immutable candidate/bundle.
 The Quarantine Resolution Wizard validates the exact generated candidate,
 binds approval to the displayed revision and checksum, embeds exact-bundle
 deployment and replay controls, and keeps all nine stages synchronized with
@@ -34,9 +34,7 @@ controller evidence. Compatible historical parsers receive deterministic
 runtime identities; invalid or colliding definitions stay blocked with an
 explicit repair path. Notification state is per user, and the login banner is
 contained above the sign-in form on the right.
-See the [UPES/GPRS architecture and acceptance guide](docs/V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md)
-the [Quarantine Resolution Wizard guide](docs/V20_QUARANTINE_RESOLUTION_WIZARD.md),
-and the [architecture diagram](docs/architecture/NLI_V20_UPES_GPRS_ARCHITECTURE.svg).
+See the [Release 6 test results](docs/V20_R6_TEST_RESULTS.md), [Release 6 Quarantine Resolution operator guide](docs/V20_R6_QRW_OPERATOR_GUIDE.md), [UPES/GPRS architecture and acceptance guide](docs/V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md), the [Quarantine Resolution Wizard guide](docs/V20_QUARANTINE_RESOLUTION_WIZARD.md), and the [architecture diagram](docs/architecture/NLI_V20_UPES_GPRS_ARCHITECTURE.svg).
 
 ## Ver19 capabilities retained in Ver20
 
@@ -52,7 +50,7 @@ and the [architecture diagram](docs/architecture/NLI_V20_UPES_GPRS_ARCHITECTURE.
 - Fleet, controller, and client management with node identity, heartbeat age, service state, configured inputs, selected outputs, parser/config revisions, resource telemetry, command leases, results, and audit.
 - Family-isolated parsed JSON and quarantine files for ten default inputs, plus simultaneous fan-out to Grafana Loki and ClickHouse with independent batching, retry, and local failure receipts. Authenticated bounded parser telemetry flows separately to the controller for live dashboards. Exact quarantined source records remain in the durable client queue and may be uploaded only when the operator enables bounded raw retention.
 - Pre-parse `default`, `filtered`, and `hybrid` selection by exact event name, service, and hostname, including reviewed presets for ImapDisconnected, AcctBadPswd, auth.loginByToken, MtaRequestingDomainTableUpdate, CARDDAV, and SieveRuleMsg.
-- x86_64 client and controller RPMs, one-use private-CA enrollment, fresh-install packaging and Release 3-to-Release 4 upgrade/rollback acceptance gates (requiring the genuine published Ver20 Release 3 RPMs), WebView/webapp archives, uninstall scripts, SBOM, provenance, and reproducible build checks. Historical V8/V10/V12/V14 packages remain represented in the migration corpus.
+- x86_64 client and controller RPMs, one-use private-CA enrollment, fresh-install packaging and Release 4-to-Release 6 upgrade/rollback acceptance gates (requiring the genuine published Ver20 Release 4 RPMs), WebView/webapp archives, uninstall scripts, SBOM, provenance, and reproducible build checks. Release 6 source/UI tests pass; its RPM and Rocky lifecycle gates remain pending. Historical V8/V10/V12/V14 packages remain represented in the migration corpus.
 
 ## Accuracy contract
 
@@ -82,7 +80,7 @@ The publishable key is used only for the protected metadata RPC contract. Server
 
 ## Ver19 upgrade and rollback
 
-Ver20 keeps stable RPM package identities, systemd units, `/etc/nli` configuration, and `/var/lib/nli` state paths so RPM can perform an in-place upgrade while retaining configuration and state paths. Release 4 is qualified against the exact published Release 3 client and controller RPMs. Retain those RPMs until post-upgrade checks pass. The Ver19 major migration boundary and the Release 4 rollback procedure are recorded in [the migration and rollback note](docs/release/V20_MIGRATION_AND_ROLLBACK.md).
+Ver20 keeps stable RPM package identities, systemd units, `/etc/nli` configuration, and `/var/lib/nli` state paths so RPM can perform an in-place upgrade while retaining configuration and state paths. Release 4 was qualified against the exact published Release 3 client and controller RPMs. Release 6 package lifecycle is still pending; its planned upgrade/rollback baseline is the genuine Release 4 client and controller RPMs. Retain those RPMs until post-upgrade checks pass. The Ver19 major migration boundary and Release 6 rollback procedure are recorded in [the migration and rollback note](docs/release/V20_MIGRATION_AND_ROLLBACK.md).
 
 ## Installation
 

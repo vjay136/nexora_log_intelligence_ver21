@@ -120,6 +120,31 @@ func assuranceRuntimePack(id, version, author string, definition map[string]any,
 			ProjectionMode: parserpolicy.ProjectionModeAllowlist, AllowedFields: sortedKeys(schema), CountPolicy: parserpolicy.CountPolicyExactSource,
 		}},
 	}
+	// An Assurance candidate contains one bounded rule. Limit execution to that
+	// single reviewed attempt so the generated pack stays within the client
+	// runtime's stricter managed-profile ceiling.
+	pack.ResourceLimits.MaxAttempts = 1
+	for index, testCase := range cases {
+		// Preview-only Assurance requests may not yet carry an expected payload.
+		// They must remain usable for interactive testing, but they are not
+		// reviewed regression evidence and therefore cannot enter a runtime pack.
+		if strings.TrimSpace(testCase.Raw) == "" || len(testCase.Desired) == 0 {
+			continue
+		}
+		caseService := strings.TrimSpace(testCase.Service)
+		if caseService == "" {
+			caseService = "auto"
+		}
+		pack.RegressionCases = append(pack.RegressionCases, parserpolicy.RegressionCase{
+			Name:            fmt.Sprintf("assurance-reviewed-%03d", index+1),
+			Input:           testCase.Raw,
+			Service:         caseService,
+			SourceType:      "file",
+			ExpectedPayload: testCase.Desired,
+			ExpectedParser:  id + "/" + id + "-rule",
+			ExpectedRoute:   "normal",
+		})
+	}
 	if err := parserpolicy.SealParserPack(pack); err != nil {
 		return nil, err
 	}

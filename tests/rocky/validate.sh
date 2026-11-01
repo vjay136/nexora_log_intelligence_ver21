@@ -182,6 +182,30 @@ systemctl is-active --quiet nli-agent || fail "agent did not restart after exact
 sleep 6
 [[ $(count_auto_records) == 49 ]] || fail "agent restart replayed already checkpointed input"
 
+# A synchronized managed parser must never disable the sealed built-in parser
+# fleet. Reproduce the R5 failure class with a malformed managed generation,
+# restart the agent, and prove that the valid line-oriented path remains live.
+systemctl stop nli-client-control
+cat >/var/lib/nli/parsers/r6-invalid-managed-pack.json <<'JSON'
+{"id":"r6-invalid-managed-pack","version":"1.0.0","review_state":"approved","rules":[]}
+JSON
+chown root:nli /var/lib/nli/parsers/r6-invalid-managed-pack.json
+chmod 0640 /var/lib/nli/parsers/r6-invalid-managed-pack.json
+systemctl restart nli-agent
+for _ in $(seq 1 30); do systemctl is-active --quiet nli-agent && break; sleep 1; done
+systemctl is-active --quiet nli-agent || { journalctl -u nli-agent --no-pager -n 100; fail "invalid managed parser disabled nli-agent"; }
+printf '{"event":"release-lifecycle-50","status":"ok"}\n' >>/var/log/nli/input/auto.log
+for _ in $(seq 1 30); do
+  auto_records=$(count_auto_records)
+  (( auto_records <= 50 )) || fail "isolated managed parser caused duplicate output: $auto_records records"
+  [[ $auto_records == 50 ]] && break
+  sleep 1
+done
+[[ $(count_auto_records) == 50 ]] || fail "sealed built-in parser did not remain live after managed parser isolation"
+rm -f /var/lib/nli/parsers/r6-invalid-managed-pack.json
+systemctl start nli-client-control
+assert_services_healthy managed-parser-isolation
+
 [[ $(nli version) == 'nli 20.0.0' ]] || fail "CLI reports the wrong version"
 [[ $(nli-agent --version) == 'nli-agent 20.0.0' ]] || fail "agent reports the wrong version"
 [[ $(nli-client-control --version) == 'nli-client-control 20.0.0' ]] || fail "client-control reports the wrong version"

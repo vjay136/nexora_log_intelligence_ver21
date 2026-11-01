@@ -51,18 +51,39 @@ type Profile struct {
 	Managed  bool
 }
 
+// ManagedPackDiagnostic records a controller-delivered pack that was kept out
+// of the active runtime. Invalid managed content must never execute, but one
+// bad synchronized file must not take the built-in parser engine offline.
+type ManagedPackDiagnostic struct {
+	Name   string
+	Reason string
+}
+
 // Resolve returns embedded profiles merged with an optional active managed
 // generation. A managed pack with the same ID replaces the embedded revision;
 // this lets the controller's existing active/rollback directory swap select the
 // generation without mutating or auto-activating pack state here.
 func Resolve(directory string) ([]Profile, error) {
+	profiles, _, err := resolve(directory, false)
+	return profiles, err
+}
+
+// ResolveResilient preserves the last-known-good product runtime when a
+// synchronized managed pack is semantically invalid. Filesystem integrity,
+// symlink, permission, size, and concurrent-mutation failures still fail
+// closed; only a fully read pack that fails parser validation is isolated.
+func ResolveResilient(directory string) ([]Profile, []ManagedPackDiagnostic, error) {
+	return resolve(directory, true)
+}
+
+func resolve(directory string, isolateInvalid bool) ([]Profile, []ManagedPackDiagnostic, error) {
 	profiles, err := Builtins()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	managed, err := LoadManagedDirectory(directory)
+	managed, diagnostics, err := loadManagedDirectory(directory, isolateInvalid)
 	if err != nil {
-		return nil, err
+		return nil, diagnostics, err
 	}
 
 	byID := make(map[string]Profile, len(profiles)+len(managed))
@@ -72,7 +93,7 @@ func Resolve(directory string) ([]Profile, error) {
 	managedIDs := make(map[string]struct{}, len(managed))
 	for _, profile := range managed {
 		if _, duplicate := managedIDs[profile.Pack.ID]; duplicate {
-			return nil, fmt.Errorf("managed parser generation repeats pack ID %q", profile.Pack.ID)
+			return nil, diagnostics, fmt.Errorf("managed parser generation repeats pack ID %q", profile.Pack.ID)
 		}
 		managedIDs[profile.Pack.ID] = struct{}{}
 		byID[profile.Pack.ID] = profile
@@ -83,7 +104,7 @@ func Resolve(directory string) ([]Profile, error) {
 		resolved = append(resolved, profile)
 	}
 	sortProfiles(resolved)
-	return resolved, nil
+	return resolved, diagnostics, nil
 }
 
 // Builtins validates and compiles all embedded product-owned profiles.
@@ -121,95 +142,105 @@ func Builtins() ([]Profile, error) {
 // ignores legacy parser JSON documents, rejects symlinks and writable assets on
 // Unix, and fails closed for malformed, draft, pending, or tampered packs.
 func LoadManagedDirectory(directory string) ([]Profile, error) {
+	profiles, _, err := loadManagedDirectory(directory, false)
+	return profiles, err
+}
+
+func loadManagedDirectory(directory string, isolateInvalid bool) ([]Profile, []ManagedPackDiagnostic, error) {
 	if strings.TrimSpace(directory) == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if !filepath.IsAbs(directory) {
-		return nil, fmt.Errorf("managed parser directory must be absolute")
+		return nil, nil, fmt.Errorf("managed parser directory must be absolute")
 	}
 	info, err := os.Lstat(directory)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("inspect managed parser directory: %w", err)
+		return nil, nil, fmt.Errorf("inspect managed parser directory: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return nil, fmt.Errorf("managed parser path must be a real directory")
+		return nil, nil, fmt.Errorf("managed parser path must be a real directory")
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o022 != 0 {
-		return nil, fmt.Errorf("managed parser directory must not be group/world writable")
+		return nil, nil, fmt.Errorf("managed parser directory must not be group/world writable")
 	}
 
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return nil, fmt.Errorf("read managed parser directory: %w", err)
+		return nil, nil, fmt.Errorf("read managed parser directory: %w", err)
 	}
 	if len(entries) > MaxDirectoryEntries {
-		return nil, fmt.Errorf("managed parser directory has %d entries; limit is %d", len(entries), MaxDirectoryEntries)
+		return nil, nil, fmt.Errorf("managed parser directory has %d entries; limit is %d", len(entries), MaxDirectoryEntries)
 	}
 
 	profiles := make([]Profile, 0, len(entries))
+	diagnostics := make([]ManagedPackDiagnostic, 0)
 	totalBytes := int64(0)
 	for _, entry := range entries {
 		entryPath := filepath.Join(directory, entry.Name())
 		entryInfo, err := os.Lstat(entryPath)
 		if err != nil {
-			return nil, fmt.Errorf("inspect managed parser entry %s: %w", entry.Name(), err)
+			return nil, diagnostics, fmt.Errorf("inspect managed parser entry %s: %w", entry.Name(), err)
 		}
 		if entryInfo.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("managed parser entry %s is a symlink", entry.Name())
+			return nil, diagnostics, fmt.Errorf("managed parser entry %s is a symlink", entry.Name())
 		}
 		if entryInfo.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
 			continue
 		}
 		if !entryInfo.Mode().IsRegular() {
-			return nil, fmt.Errorf("managed parser entry %s is not a regular file", entry.Name())
+			return nil, diagnostics, fmt.Errorf("managed parser entry %s is not a regular file", entry.Name())
 		}
 		if runtime.GOOS != "windows" && entryInfo.Mode().Perm()&0o022 != 0 {
-			return nil, fmt.Errorf("managed parser entry %s must not be group/world writable", entry.Name())
+			return nil, diagnostics, fmt.Errorf("managed parser entry %s must not be group/world writable", entry.Name())
 		}
 		if entryInfo.Size() <= 0 || entryInfo.Size() > parserpolicy.MaxPackSize {
-			return nil, fmt.Errorf("managed parser entry %s has invalid size %d", entry.Name(), entryInfo.Size())
+			return nil, diagnostics, fmt.Errorf("managed parser entry %s has invalid size %d", entry.Name(), entryInfo.Size())
 		}
 		totalBytes += entryInfo.Size()
 		if totalBytes > MaxManagedBytes {
-			return nil, fmt.Errorf("managed parser generation exceeds %d bytes", MaxManagedBytes)
+			return nil, diagnostics, fmt.Errorf("managed parser generation exceeds %d bytes", MaxManagedBytes)
 		}
 
 		file, err := os.Open(entryPath)
 		if err != nil {
-			return nil, fmt.Errorf("open managed parser entry %s: %w", entry.Name(), err)
+			return nil, diagnostics, fmt.Errorf("open managed parser entry %s: %w", entry.Name(), err)
 		}
 		data, readErr := io.ReadAll(io.LimitReader(file, parserpolicy.MaxPackSize+1))
 		closeErr := file.Close()
 		if readErr != nil {
-			return nil, fmt.Errorf("read managed parser entry %s: %w", entry.Name(), readErr)
+			return nil, diagnostics, fmt.Errorf("read managed parser entry %s: %w", entry.Name(), readErr)
 		}
 		if closeErr != nil {
-			return nil, fmt.Errorf("close managed parser entry %s: %w", entry.Name(), closeErr)
+			return nil, diagnostics, fmt.Errorf("close managed parser entry %s: %w", entry.Name(), closeErr)
 		}
 		if len(data) > parserpolicy.MaxPackSize {
-			return nil, fmt.Errorf("managed parser entry %s exceeds %d bytes", entry.Name(), parserpolicy.MaxPackSize)
+			return nil, diagnostics, fmt.Errorf("managed parser entry %s exceeds %d bytes", entry.Name(), parserpolicy.MaxPackSize)
 		}
 		after, err := os.Lstat(entryPath)
 		if err != nil || !os.SameFile(entryInfo, after) || after.Size() != int64(len(data)) {
-			return nil, fmt.Errorf("managed parser entry %s changed while loading", entry.Name())
+			return nil, diagnostics, fmt.Errorf("managed parser entry %s changed while loading", entry.Name())
 		}
 		if !LooksLikePackDocument(data) {
 			continue
 		}
 		profile, err := compile(entry.Name(), data, true, false)
 		if err != nil {
-			return nil, fmt.Errorf("managed parser entry %s: %w", entry.Name(), err)
+			if isolateInvalid {
+				diagnostics = append(diagnostics, ManagedPackDiagnostic{Name: entry.Name(), Reason: err.Error()})
+				continue
+			}
+			return nil, diagnostics, fmt.Errorf("managed parser entry %s: %w", entry.Name(), err)
 		}
 		profiles = append(profiles, profile)
 		if len(profiles) > MaxManagedPacks {
-			return nil, fmt.Errorf("managed parser generation exceeds %d packs", MaxManagedPacks)
+			return nil, diagnostics, fmt.Errorf("managed parser generation exceeds %d packs", MaxManagedPacks)
 		}
 	}
 	sortProfiles(profiles)
-	return profiles, nil
+	return profiles, diagnostics, nil
 }
 
 // LooksLikePackDocument distinguishes ParserPacks from legacy ParserDef JSON in
@@ -267,6 +298,18 @@ func compile(name string, data []byte, managed, builtin bool) (Profile, error) {
 		}
 	}
 	return Profile{Pack: pack, Executor: executor, Order: order, Name: name, Managed: managed}, nil
+}
+
+// ValidateManagedPackBytes applies the exact production-runtime gate without
+// loading a directory. The controller uses this before a parser can enter a
+// published fleet bundle, preventing an unreviewed pack from ever reaching a
+// client generation.
+func ValidateManagedPackBytes(name string, data []byte) (*parserpolicy.ParserPack, error) {
+	profile, err := compile(name, data, true, false)
+	if err != nil {
+		return nil, err
+	}
+	return profile.Pack, nil
 }
 
 func runApprovedRegressions(pack *parserpolicy.ParserPack, executor *parserpolicy.ParserPackExecutor) error {

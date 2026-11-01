@@ -262,9 +262,10 @@ func TestAgentStartupLoadsApprovedManagedGenerationAndRejectsTamper(t *testing.T
 		}
 	})
 
-	t.Run("tampered generation fails closed", func(t *testing.T) {
+	t.Run("tampered generation is isolated while builtins remain live", func(t *testing.T) {
 		root := t.TempDir()
-		config := configFor(root, filepath.Join(root, "telemetry.jsonl"))
+		telemetryPath := filepath.Join(root, "telemetry.jsonl")
+		config := configFor(root, telemetryPath)
 		pack := findBuiltin(t)
 		encoded, err := json.MarshalIndent(pack, "", "  ")
 		if err != nil {
@@ -272,8 +273,12 @@ func TestAgentStartupLoadsApprovedManagedGenerationAndRejectsTamper(t *testing.T
 		}
 		tampered := strings.Replace(string(encoded), "nexora-parser-review-board", "tampered-parser-review-board", 1)
 		writeManaged(t, config.StateDir, []byte(tampered+"\n"))
-		if err := Run(context.Background(), config, true); err == nil || !strings.Contains(err.Error(), "SHA256 mismatch") {
-			t.Fatalf("tampered managed generation did not fail startup: %v", err)
+		if err := Run(context.Background(), config, true); err != nil {
+			t.Fatalf("tampered managed generation stopped the R4 parsing path: %v", err)
+		}
+		telemetryRecords := readJSONObjectLines(t, telemetryPath)
+		if len(telemetryRecords) != 1 || telemetryRecords[0]["pack_id"] != pack.ID || telemetryRecords[0]["policy_hash"] != pack.SHA256 {
+			t.Fatalf("agent did not fall back to the sealed builtin parser: %#v", telemetryRecords)
 		}
 	})
 }

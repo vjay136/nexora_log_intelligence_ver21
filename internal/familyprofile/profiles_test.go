@@ -105,6 +105,30 @@ func TestManagedDirectoryPreservesApprovedStateAndRejectsUnsafePacks(t *testing.
 	})
 }
 
+func TestResilientResolveIsolatesInvalidManagedPackWithoutDisablingBuiltins(t *testing.T) {
+	directory := t.TempDir()
+	pack := clonePack(t, findProfile(t, mustBuiltins(t), "nli_reviewed_imap").Pack)
+	pack.ID = "controller_pack_without_reviewed_cases"
+	pack.ReviewState = parserpolicy.ReviewStateApproved
+	pack.ActivatedAt = nil
+	pack.RegressionCases = nil
+	sealAndWrite(t, directory, pack)
+
+	if _, err := LoadManagedDirectory(directory); err == nil || !strings.Contains(err.Error(), "no reviewed regression cases") {
+		t.Fatalf("strict loader accepted invalid pack: %v", err)
+	}
+	profiles, diagnostics, err := ResolveResilient(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != len(expectedBuiltinIDs) {
+		t.Fatalf("resilient runtime has %d profiles, want %d builtins", len(profiles), len(expectedBuiltinIDs))
+	}
+	if len(diagnostics) != 1 || diagnostics[0].Name == "" || !strings.Contains(diagnostics[0].Reason, "no reviewed regression cases") {
+		t.Fatalf("isolation diagnostic = %+v", diagnostics)
+	}
+}
+
 func TestManagedGenerationReplacementAndRollbackAreDeterministic(t *testing.T) {
 	builtins := mustBuiltins(t)
 	builtin := findProfile(t, builtins, "nli_reviewed_pop").Pack

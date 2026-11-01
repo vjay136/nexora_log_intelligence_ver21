@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"nexora.local/nli-v20/internal/familyprofile"
 	metastore "nexora.local/nli-v20/internal/store"
 	parserpolicy "nexora.local/nli-v20/parser-policy"
 )
@@ -80,12 +81,18 @@ func runtimeParserPackForDocument(doc metastore.Document) (*parserpolicy.ParserP
 	// id/name/version/priority/rules. Rules are still decoded with unknown-field
 	// rejection and validated by the current runtime before they can publish.
 	var rules []parserpolicy.ParserRule
+	var regressions []parserpolicy.RegressionCase
 	rawRules := envelope["rules"]
 	if len(rawRules) == 0 || string(rawRules) == "null" {
 		return nil, nil, fmt.Errorf("legacy parser has no runtime rules; edit and validate it in Assurance")
 	}
 	if err := strictJSON(rawRules, &rules); err != nil {
 		return nil, nil, fmt.Errorf("legacy parser rules are incompatible with the current runtime: %w", err)
+	}
+	if rawRegressions := envelope["regression_cases"]; len(rawRegressions) != 0 && string(rawRegressions) != "null" {
+		if err := strictJSON(rawRegressions, &regressions); err != nil {
+			return nil, nil, fmt.Errorf("legacy parser regressions are incompatible with the current runtime: %w", err)
+		}
 	}
 	var id, runtimeID, catalogID, version string
 	_ = json.Unmarshal(envelope["id"], &id)
@@ -113,12 +120,17 @@ func runtimeParserPackForDocument(doc metastore.Document) (*parserpolicy.ParserP
 			rules[index].Priority = priority
 		}
 	}
+	limits := parserpolicy.DefaultResourceLimits()
+	if len(rules) > 0 && limits.MaxAttempts > len(rules) {
+		limits.MaxAttempts = len(rules)
+	}
 	pack := &parserpolicy.ParserPack{
 		ID: id, Version: version, Revision: doc.Revision, SourceType: "manual",
 		Author: doc.CreatedBy, ReviewState: parserpolicy.ReviewStateApproved,
 		CreatedAt: doc.CreatedAt, Rules: rules,
-		ResourceLimits: parserpolicy.DefaultResourceLimits(),
-		Metadata:       map[string]string{"compatibility_source": "legacy-parser-catalog"},
+		RegressionCases: regressions,
+		ResourceLimits:  limits,
+		Metadata:        map[string]string{"compatibility_source": "legacy-parser-catalog"},
 	}
 	packDoc := doc
 	packDoc.ID = id
@@ -185,7 +197,11 @@ func normalizeRuntimeParserPack(doc metastore.Document, pack *parserpolicy.Parse
 	if verified.ReviewState != parserpolicy.ReviewStateApproved && verified.ReviewState != parserpolicy.ReviewStateActivated {
 		return nil, nil, fmt.Errorf("runtime parser must be approved or activated")
 	}
-	return verified, encoded, nil
+	validated, err := familyprofile.ValidateManagedPackBytes(doc.ID, encoded)
+	if err != nil {
+		return nil, nil, fmt.Errorf("runtime parser failed production validation: %w", err)
+	}
+	return validated, encoded, nil
 }
 
 func strictJSON(data []byte, target any) error {

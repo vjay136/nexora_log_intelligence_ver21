@@ -15,7 +15,9 @@ import (
 func TestQuarantineResolutionWizardParserRolloutRequiresExactIndependentApproval(t *testing.T) {
 	f := newAPIFixture(t)
 	definition := map[string]any{"pattern_type": "regex", "pattern": `status=(?P<status>\w+)`, "fields": []any{map[string]any{"name": "status", "source": "group:status", "type": "string"}}}
-	pack, err := assuranceRuntimePack("qrw-rollout", "1.0.0", "author", definition, nil)
+	pack, err := assuranceRuntimePack("qrw-rollout", "1.0.0", "author", definition, []assuranceRequest{{
+		Raw: "status=ready", Service: "auto", Desired: map[string]any{"status": "ready"},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +73,7 @@ func TestQuarantineResolutionWizardParserRolloutTargetModesAndStaleProposal(t *t
 	pack, err := assuranceRuntimePack("qrw-targets", "1.0.0", "author", map[string]any{
 		"pattern_type": "regex", "pattern": `status=(?P<status>\w+)`,
 		"fields": []any{map[string]any{"name": "status", "source": "group:status", "type": "string"}},
-	}, nil)
+	}, []assuranceRequest{{Raw: "status=ready", Service: "auto", Desired: map[string]any{"status": "ready"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -89,6 +89,11 @@ foreach ($name in @('nli_client_ver20.rpm','nli_clinet_ver20.rpm','nli_controlle
     $b = Get-Sha256 (Join-Path $pass2Rpm $name)
     if ($a -ne $b) { throw "Non-deterministic output: $name" }
 }
+foreach ($name in @('V20_R6_TEST_RESULTS.md','V20_R6_QRW_OPERATOR_GUIDE.md')) {
+    $a = Get-Sha256 (Join-Path $pass1Rpm $name)
+    $b = Get-Sha256 (Join-Path $pass2Rpm $name)
+    if ($a -ne $b) { throw "Non-deterministic output: $name" }
+}
 Copy-Item -Path (Join-Path $pass1Rpm '*') -Destination $OutputDirectory -Recurse
 
 $benchmarkCommand = 'export PATH=/usr/local/go/bin:/usr/bin:/bin GOCACHE=/tmp/gocache GOTMPDIR=/tmp/gotmp; mkdir -p "$GOCACHE" "$GOTMPDIR"; { go test ./internal/benchmarks -run="^$" -bench=. -benchmem -benchtime=250ms -count=5; go test ./parser-policy ./internal/mixedkv -run="^$" -bench=. -benchmem -benchtime=500ms -count=5; } > /artifacts/BENCHMARKS.txt'

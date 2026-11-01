@@ -17,6 +17,8 @@ R3_RESULTS = "V20_R3_TEST_RESULTS.md"
 R3_OPERATOR = "V20_R3_QRW_OPERATOR_GUIDE.md"
 R4_RESULTS = "V20_R4_TEST_RESULTS.md"
 R4_OPERATOR = "V20_R4_QRW_OPERATOR_GUIDE.md"
+R6_RESULTS = "V20_R6_TEST_RESULTS.md"
+R6_OPERATOR = "V20_R6_QRW_OPERATOR_GUIDE.md"
 DIAGRAM = "NLI_V20_UPES_GPRS_ARCHITECTURE.svg"
 
 
@@ -36,6 +38,8 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
         R3_OPERATOR: root / "docs" / R3_OPERATOR,
         R4_RESULTS: root / "docs" / R4_RESULTS,
         R4_OPERATOR: root / "docs" / R4_OPERATOR,
+        R6_RESULTS: root / "docs" / R6_RESULTS,
+        R6_OPERATOR: root / "docs" / R6_OPERATOR,
         DIAGRAM: root / "docs" / "architecture" / DIAGRAM,
     }
     for name, source in sources.items():
@@ -112,6 +116,16 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
         if claim not in operator_r4:
             fail(f"R4 operator guide does not document expected control: {claim!r}")
 
+    results_r6 = sources[R6_RESULTS].read_text(encoding="utf-8")
+    for claim in ("20.0.0-6", "24/24", "69/69", "Complete Go suite", "Rocky lifecycle", "not claimed here", "not yet verified"):
+        if claim.lower() not in results_r6.lower():
+            fail(f"R6 test report does not record the correct evidence boundary: {claim!r}")
+
+    operator_r6 = sources[R6_OPERATOR].read_text(encoding="utf-8")
+    for claim in ("deterministic preview", "independent approval", "immutable bundle hash", "originating client", "replay"):
+        if claim.lower() not in operator_r6.lower():
+            fail(f"R6 operator guide does not document expected workflow: {claim!r}")
+
     for relative in (
         "packaging/build-rpms.sh",
         "packaging/rpm/nli-client.spec",
@@ -137,12 +151,17 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
         "packaging/rpm/nli-client.spec",
         "packaging/rpm/nli-controller-agent.spec",
     ):
-        if "20.0.0-4" not in (root / relative).read_text(encoding="utf-8"):
+        if "20.0.0-6" not in (root / relative).read_text(encoding="utf-8"):
             fail(f"{relative} does not identify the current release")
 
+    # Keep the previously released R4 operational evidence available in R6.
+    for relative in ("docs/V20_R4_TEST_RESULTS.md", "docs/V20_R4_QRW_OPERATOR_GUIDE.md"):
+        if not (root / relative).is_file():
+            fail(f"R4 release history is missing: {relative}")
+
     release_env = (root / "packaging" / "release.env").read_text(encoding="utf-8")
-    if "NLI_VERSION=20.0.0" not in release_env or "NLI_RELEASE=4" not in release_env:
-        fail("packaging release identity is not 20.0.0-4")
+    if "NLI_VERSION=20.0.0" not in release_env or "NLI_RELEASE=6" not in release_env:
+        fail("packaging release identity is not 20.0.0-6")
 
 
 def main() -> None:

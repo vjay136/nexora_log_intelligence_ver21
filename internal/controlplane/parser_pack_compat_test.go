@@ -33,13 +33,15 @@ func legacyParserPayload(t *testing.T, id string) json.RawMessage {
 			map[string]any{"name": "message", "source": "group:message", "type": "string", "required": true},
 		},
 	}
-	pack, err := assuranceRuntimePack(id, "1.0.0", "legacy-author", definition, []assuranceRequest{{Raw: "INFO ready", Service: "auto"}})
+	pack, err := assuranceRuntimePack(id, "1.0.0", "legacy-author", definition, []assuranceRequest{{
+		Raw: "INFO ready", Service: "auto", Desired: map[string]any{"level": "INFO", "message": "ready"},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"id": id, "name": "Legacy parser", "version": pack.Version,
-		"priority": 100, "rules": pack.Rules,
+		"priority": 100, "rules": pack.Rules, "regression_cases": pack.RegressionCases,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +92,7 @@ func TestLegacyRuntimeAndCatalogIDsReconcileOnlyWhenExplicit(t *testing.T) {
 			map[string]any{"name": "level", "source": "group:level", "type": "string", "required": true},
 			map[string]any{"name": "message", "source": "group:message", "type": "string", "required": true},
 		},
-	}, []assuranceRequest{{Raw: "INFO ready", Service: "auto"}})
+	}, []assuranceRequest{{Raw: "INFO ready", Service: "auto", Desired: map[string]any{"level": "INFO", "message": "ready"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +139,7 @@ func TestStrictImportedParserPackUsesItsValidatedRuntimeIdentity(t *testing.T) {
 	pack, err := assuranceRuntimePack("alloy_imap_processor", "7.0.0", "migration", map[string]any{
 		"pattern_type": "regex", "pattern": `^(?P<message>.+)$`,
 		"fields": []any{map[string]any{"name": "message", "source": "group:message", "type": "string", "required": true}},
-	}, []assuranceRequest{{Raw: "imap session opened", Service: "imap"}})
+	}, []assuranceRequest{{Raw: "imap session opened", Service: "imap", Desired: map[string]any{"message": "imap session opened"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +177,7 @@ func TestDirectImportedParserPackRejectsBrokenSeal(t *testing.T) {
 	pack, err := assuranceRuntimePack("sealed-runtime", "1.0.0", "migration", map[string]any{
 		"pattern_type": "regex", "pattern": `^(?P<message>.+)$`,
 		"fields": []any{map[string]any{"name": "message", "source": "group:message", "type": "string", "required": true}},
-	}, []assuranceRequest{{Raw: "hello", Service: "auto"}})
+	}, []assuranceRequest{{Raw: "hello", Service: "auto", Desired: map[string]any{"message": "hello"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +200,7 @@ func TestRuntimeIdentityCollisionFailsDeterministically(t *testing.T) {
 		pack, err := assuranceRuntimePack("shared-runtime-id", "1.0.0", "migration", map[string]any{
 			"pattern_type": "regex", "pattern": `^(?P<message>.+)$`,
 			"fields": []any{map[string]any{"name": "message", "source": "group:message", "type": "string", "required": true}},
-		}, []assuranceRequest{{Raw: catalogID, Service: "auto"}})
+		}, []assuranceRequest{{Raw: catalogID, Service: "auto", Desired: map[string]any{"message": catalogID}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -267,6 +269,53 @@ func TestMalformedLegacyParserIsIsolatedFromControllerAndFleetBundle(t *testing.
 	response, body := fixture.request(http.MethodPost, "/api/v1/parser-packs/broken-old-parser/repair", map[string]any{})
 	if response.StatusCode != http.StatusOK || decodeMap(t, body)["state"] != "rejected" {
 		t.Fatalf("blocked legacy parser did not enter editable repair state: %d %s", response.StatusCode, body)
+	}
+}
+
+func TestParserWithoutReviewedRegressionsIsIsolatedWhileValidParserRemainsLive(t *testing.T) {
+	fixture := newAPIFixture(t)
+	valid := putApprovedLegacyParser(t, fixture, "reviewed-live-parser")
+	valid.State = "published"
+	if _, err := fixture.server.metadata.Put(context.Background(), valid); err != nil {
+		t.Fatal(err)
+	}
+
+	var invalid map[string]any
+	if err := json.Unmarshal(legacyParserPayload(t, "missing-regression-parser"), &invalid); err != nil {
+		t.Fatal(err)
+	}
+	delete(invalid, "regression_cases")
+	invalidPayload, err := json.Marshal(invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.server.metadata.Put(context.Background(), metastore.Document{
+		Collection: "parser-packs", ID: "missing-regression-parser", State: "published",
+		Payload: invalidPayload, CreatedBy: "legacy-import",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle, err := fixture.server.buildActiveParserBundle(context.Background())
+	if err != nil {
+		t.Fatalf("invalid parser disabled the active bundle: %v", err)
+	}
+	foundValid := false
+	for _, asset := range bundle.Assets {
+		switch asset.AssetID {
+		case "reviewed-live-parser":
+			foundValid = true
+		case "missing-regression-parser":
+			t.Fatal("parser without reviewed regressions entered the live bundle")
+		}
+	}
+	if !foundValid {
+		t.Fatal("valid reviewed parser disappeared when an invalid parser was isolated")
+	}
+
+	response, body := fixture.request(http.MethodGet, "/api/v1/parser-packs", nil)
+	if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`"id":"missing-regression-parser"`)) || !bytes.Contains(body, []byte(`"status":"blocked"`)) || !bytes.Contains(body, []byte("no reviewed regression cases")) {
+		t.Fatalf("catalog did not expose the isolated regression diagnostic: %d %s", response.StatusCode, body)
 	}
 }
 

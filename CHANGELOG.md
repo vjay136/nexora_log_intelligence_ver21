@@ -1,5 +1,11 @@
 # Changelog
 
+## [20.0.0-6] - 2026-11-01
+
+- Canonicalize parser bundle content consistently across proposal creation and approval so the reviewed hash can be approved and delivered without changing the bundle bytes.
+- Preserve the R4 parsing/runtime behavior while correcting approval and exact-hash rollout handling.
+- Add Release 6 operator and test evidence; report only the verified Go suite, 24/24 web contracts, and 69/69 browser scenarios. RPM and Rocky lifecycle qualification remain pending.
+
 ## [20.0.0-4] - 2026-11-01
 
 - Complete the Quarantine Resolution Wizard inside one nine-stage workspace, including exact-candidate preview, approval, publication, bundle rollout, acknowledgement, replay, and verification.

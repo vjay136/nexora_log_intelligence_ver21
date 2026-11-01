@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"nexora.local/nli-v20/internal/canonicaljson"
 	"nexora.local/nli-v20/internal/fleet"
 	"nexora.local/nli-v20/internal/middleware"
 	metastore "nexora.local/nli-v20/internal/store"
@@ -35,7 +36,26 @@ type parserAssetBundle struct {
 	BundleHash    string              `json:"bundle_hash"`
 }
 
-func bundleDigest(bundle parserAssetBundle) (string, []byte, error) {
+type parserSyncProposalSnapshot struct {
+	BundleHash string `json:"bundle_hash"`
+	Payload    struct {
+		Bundle     parserAssetBundle `json:"asset_bundle"`
+		BundleHash string            `json:"bundle_hash"`
+	} `json:"payload"`
+}
+
+type verifiedParserSyncProposal struct {
+	Bundle         parserAssetBundle
+	CanonicalHash  string
+	StoredHash     string
+	ValidationMode string
+}
+
+// legacyBundleDigest is the pre-R5 digest. It is retained only to verify and
+// safely migrate pending proposals created by older controllers. New bundles
+// must always use bundleDigest, whose input is independent of JSON storage
+// formatting.
+func legacyBundleDigest(bundle parserAssetBundle) (string, []byte, error) {
 	bundle.BundleHash = ""
 	unsigned, err := json.Marshal(struct {
 		SchemaVersion int                 `json:"schema_version"`
@@ -46,6 +66,153 @@ func bundleDigest(bundle parserAssetBundle) (string, []byte, error) {
 	}
 	digest := sha256.Sum256(unsigned)
 	return hex.EncodeToString(digest[:]), unsigned, nil
+}
+
+// bundleDigest hashes a semantic, canonical JSON representation. Metadata may
+// pass through PostgreSQL jsonb (or another JSON-aware store), which is allowed
+// to reorder object keys and rewrite equivalent numbers. Hashing raw
+// json.RawMessage bytes made an otherwise immutable proposal unverifiable after
+// a store round trip. Canonicalization keeps arrays ordered, sorts object keys,
+// and gives every equivalent JSON number one representation.
+func bundleDigest(bundle parserAssetBundle) (string, []byte, error) {
+	bundle.BundleHash = ""
+	assets := append([]parserBundleAsset(nil), bundle.Assets...)
+	for index := range assets {
+		canonical, err := canonicaljson.Normalize(assets[index].Payload)
+		if err != nil {
+			return "", nil, fmt.Errorf("canonical parser asset %s/%s: %w", assets[index].AssetClass, assets[index].AssetID, err)
+		}
+		assets[index].Payload = canonical
+		assetDigest := sha256.Sum256(canonical)
+		assets[index].SHA256 = hex.EncodeToString(assetDigest[:])
+	}
+	unsigned, err := json.Marshal(struct {
+		SchemaVersion int                 `json:"schema_version"`
+		Assets        []parserBundleAsset `json:"assets"`
+	}{bundle.SchemaVersion, assets})
+	if err != nil {
+		return "", nil, err
+	}
+	digest := sha256.Sum256(unsigned)
+	return hex.EncodeToString(digest[:]), unsigned, nil
+}
+
+func validLegacyBundleHash(hash string) bool {
+	if len(hash) < 16 || len(hash) > sha256.Size*2 {
+		return false
+	}
+	for _, char := range hash {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func storedBundleHashMatches(stored string, candidates ...string) bool {
+	stored = strings.ToLower(strings.TrimSpace(stored))
+	for _, candidate := range candidates {
+		candidate = strings.ToLower(strings.TrimSpace(candidate))
+		if len(stored) == sha256.Size*2 && stored == candidate {
+			return true
+		}
+		if len(stored) < sha256.Size*2 && strings.HasPrefix(candidate, stored) {
+			return true
+		}
+	}
+	return false
+}
+
+// verifyParserSyncProposal validates the immutable stored snapshot before any
+// approval side effect. Legacy hashes are accepted only when they identify the
+// same semantic bundle as the controller's current published bundle. This
+// permits a safe one-way upgrade to the canonical SHA-256 without allowing a
+// stale or arbitrary legacy proposal to bypass the approval gate.
+func (s *Server) verifyParserSyncProposal(ctx context.Context, raw json.RawMessage) (verifiedParserSyncProposal, error) {
+	var snapshot parserSyncProposalSnapshot
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return verifiedParserSyncProposal{}, errors.New("parser sync proposal cannot be approved: bundle snapshot JSON is invalid")
+	}
+	hashFields := []string{snapshot.BundleHash, snapshot.Payload.BundleHash, snapshot.Payload.Bundle.BundleHash}
+	storedHash := ""
+	missingFields := false
+	for _, hash := range hashFields {
+		hash = strings.TrimSpace(hash)
+		if hash == "" {
+			missingFields = true
+			continue
+		}
+		if storedHash == "" {
+			storedHash = hash
+			continue
+		}
+		if !strings.EqualFold(storedHash, hash) {
+			return verifiedParserSyncProposal{}, errors.New("parser sync proposal cannot be approved: stored bundle hash fields disagree; create a new proposal")
+		}
+	}
+	if storedHash == "" {
+		return verifiedParserSyncProposal{}, errors.New("parser sync proposal cannot be approved: no bundle hash is stored; create a new proposal")
+	}
+	if !validLegacyBundleHash(storedHash) {
+		return verifiedParserSyncProposal{}, errors.New("parser sync proposal cannot be approved: stored bundle hash is malformed; create a new proposal")
+	}
+	canonicalSnapshotHash, _, err := bundleDigest(snapshot.Payload.Bundle)
+	if err != nil {
+		return verifiedParserSyncProposal{}, errors.New("parser sync proposal cannot be approved: bundle snapshot cannot be canonicalized")
+	}
+	legacySnapshotHash, _, legacyErr := legacyBundleDigest(snapshot.Payload.Bundle)
+	if legacyErr != nil {
+		return verifiedParserSyncProposal{}, errors.New("parser sync proposal cannot be approved: legacy bundle snapshot cannot be verified")
+	}
+	current, err := s.buildActiveParserBundle(ctx)
+	if err != nil {
+		return verifiedParserSyncProposal{}, errors.New("parser sync proposal cannot be approved while the published parser bundle is unavailable")
+	}
+	if canonicalSnapshotHash != current.BundleHash {
+		return verifiedParserSyncProposal{}, fmt.Errorf("parser sync proposal is stale: snapshot %s does not match current published bundle %s; create a new proposal", canonicalSnapshotHash, current.BundleHash)
+	}
+	legacyCurrentHash, _, legacyCurrentErr := legacyBundleDigest(current)
+	if legacyCurrentErr != nil {
+		return verifiedParserSyncProposal{}, errors.New("parser sync proposal cannot be approved: current legacy bundle cannot be verified")
+	}
+	hashMatched := storedBundleHashMatches(storedHash, canonicalSnapshotHash, legacySnapshotHash, legacyCurrentHash)
+	mode := "canonical_sha256"
+	if !hashMatched {
+		// R4 hashed the raw bytes nested inside the proposal before PostgreSQL
+		// jsonb storage. jsonb may lawfully reorder object keys, so that original
+		// full digest can be impossible to reconstruct. At this point all three
+		// stored hash fields agree, the value is a full SHA-256, and the stored
+		// semantic snapshot has independently been proven identical to the freshly
+		// built published bundle. Migrating that exact current content is safe;
+		// short or malformed unbound values remain rejected.
+		if len(strings.TrimSpace(storedHash)) != sha256.Size*2 {
+			return verifiedParserSyncProposal{}, errors.New("parser sync proposal cannot be safely upgraded: its legacy short hash does not identify the current bundle; create a new proposal")
+		}
+		mode = "legacy_jsonb_hash_migrated"
+	} else if missingFields || !strings.EqualFold(storedHash, canonicalSnapshotHash) || storedHash != strings.ToLower(storedHash) || len(storedHash) != sha256.Size*2 {
+		mode = "legacy_hash_upgraded"
+	}
+	return verifiedParserSyncProposal{
+		// Use the freshly rebuilt, canonically encoded wire bundle after proving
+		// that it is semantically identical to the immutable proposal snapshot.
+		// This also repairs JSONB formatting changes before client-side asset SHA
+		// verification without changing the approved content.
+		Bundle: current, CanonicalHash: canonicalSnapshotHash,
+		StoredHash: storedHash, ValidationMode: mode,
+	}, nil
+}
+
+func setCanonicalProposalBundleHash(proposal map[string]any, hash string) {
+	proposal["bundle_hash"] = hash
+	payload, ok := proposal["payload"].(map[string]any)
+	if !ok {
+		return
+	}
+	payload["bundle_hash"] = hash
+	bundle, ok := payload["asset_bundle"].(map[string]any)
+	if ok {
+		bundle["bundle_hash"] = hash
+	}
 }
 
 func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle, error) {
@@ -87,7 +254,11 @@ func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle
 					return bundle, fmt.Errorf("active parser runtime identity %q conflicts between catalog documents %q and %q", pack.ID, existingCatalogID, doc.ID)
 				}
 				seenRuntimeParserID[pack.ID] = doc.ID
-				digest := sha256.Sum256(encoded)
+				canonicalPayload, canonicalErr := canonicaljson.Normalize(encoded)
+				if canonicalErr != nil {
+					return bundle, fmt.Errorf("canonical parser pack %s: %w", doc.ID, canonicalErr)
+				}
+				digest := sha256.Sum256(canonicalPayload)
 				name, _ := payload["name"].(string)
 				if name == "" {
 					name = pack.ID
@@ -95,11 +266,16 @@ func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle
 				// Runtime synchronization keys parser packs by ParserPack.ID. A legacy
 				// catalog record can have a separate catalog ID, so the bundle must use
 				// the reconciled runtime identity while the controller retains doc.ID.
-				bundle.Assets = append(bundle.Assets, parserBundleAsset{AssetClass: collection, AssetID: pack.ID, Name: name, Revision: doc.Revision, SHA256: hex.EncodeToString(digest[:]), Payload: encoded})
+				bundle.Assets = append(bundle.Assets, parserBundleAsset{AssetClass: collection, AssetID: pack.ID, Name: name, Revision: doc.Revision, SHA256: hex.EncodeToString(digest[:]), Payload: canonicalPayload})
 				continue
 			}
 			name, _ := payload["name"].(string)
-			bundle.Assets = append(bundle.Assets, parserBundleAsset{AssetClass: collection, AssetID: doc.ID, Name: name, Revision: doc.Revision, SHA256: doc.Hash, Payload: append(json.RawMessage(nil), doc.Payload...)})
+			canonicalPayload, canonicalErr := canonicaljson.Normalize(doc.Payload)
+			if canonicalErr != nil {
+				return bundle, fmt.Errorf("canonical parser asset %s/%s: %w", collection, doc.ID, canonicalErr)
+			}
+			digest := sha256.Sum256(canonicalPayload)
+			bundle.Assets = append(bundle.Assets, parserBundleAsset{AssetClass: collection, AssetID: doc.ID, Name: name, Revision: doc.Revision, SHA256: hex.EncodeToString(digest[:]), Payload: canonicalPayload})
 		}
 	}
 	// Stable order makes the same approved asset set produce the same bundle hash.
