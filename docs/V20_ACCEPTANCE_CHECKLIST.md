@@ -1,8 +1,22 @@
 # NLI Ver20 acceptance checklist
 
-Updated: 2026-10-30
+Updated: 2026-11-01
 
-Current package identity: `20.0.0-4`. Release 4 adds exact generated-candidate preview, explicit hash-bound administrator emergency recovery, embedded QRW approval/deployment/replay, deterministic historical parser compatibility, per-user notification state, and the right-side login banner. This note does not mark deployment-specific production acceptance.
+Current package identity: `20.0.0-5`. Release 5 canonicalizes parser bundle digests across controller/client round-trips, permits legacy hash migration only after exact embedded-snapshot verification, refreshes QRW deployment state after approval/cancellation, and preserves the exact applied-hash replay gate. Approval reasons are bound to the exact proposal revision and canonical SHA-256. The responsive login banner displays the complete supplied artwork. This checklist does not mark deployment-specific production acceptance. See [Release 5 test results](V20_R5_TEST_RESULTS.md) and the [QRW operator guide](V20_R5_QRW_OPERATOR_GUIDE.md).
+
+## Release 5 source-level gates
+
+| Gate | State | Evidence or remaining action |
+|---|---|---|
+| Complete Go suite | PASS | `go test ./...` passed in the pinned `golang:1.23` container. |
+| Complete Chromium UI suite | PASS | 69/69 scenarios, including current/legacy hashes, approval paths, rejected hashes, QRW refresh, notifications, and responsive login behavior. |
+| Focused controller/client compatibility | PASS | Current, legacy, stale, malformed, emergency, independent, and client wire-hash cases passed. |
+| JavaScript syntax | PASS | `node --check web/app.js` and `node --check web/ui.spec.js`. |
+| Reproducible RPMs, package payload, Rocky lifecycle, published CI | NOT YET RECORDED | Record evidence after these gates run from the frozen Release 5 commit. |
+
+## Release 4 historical acceptance record
+
+The following Release 4 details are retained as historical evidence; they do not describe the current package identity.
 
 | Gate | State | Evidence or remaining action |
 |---|---|---|

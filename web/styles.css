@@ -195,17 +195,20 @@ tr:last-child td{border-bottom:0}
 @media(max-width:860px){.auth-shell{grid-template-columns:1fr;max-width:680px}.login-banner{width:min(100%,560px);max-height:none}.auth-showcase .brand-large .brand-emblem{width:72px;height:72px}.mobile-brand-mark{display:block!important;width:60px;height:60px}.eagle-orbit{width:86px;height:86px}}
 @media(max-width:560px){.auth-showcase{padding:12px}.login-banner{width:100%;max-width:420px;height:auto}.showcase-header{gap:9px}.auth-showcase .brand-large{gap:9px}.auth-showcase .brand-large .brand-emblem{width:58px;height:58px;border-radius:15px}.auth-showcase .brand-wordmark b{font-size:17px}.auth-showcase .brand-wordmark small{display:none}.eagle-orbit{display:none}.mobile-brand-mark{width:52px;height:52px}.sidebar-brand{grid-template-columns:40px minmax(0,1fr) auto}.topbar-brand{display:none}}
 
-/* R4 operator login: the product banner belongs to the authentication side,
-   directly above the credentials, while the left column explains the control
-   plane. The square containment prevents aspect-ratio shifts on small screens. */
-.auth-shell{grid-template-columns:minmax(360px,.82fr) minmax(430px,1.18fr)}
-.auth-card{align-content:start;align-self:stretch;overflow:auto;padding:clamp(22px,3vw,42px);gap:clamp(14px,2vh,22px)}
-.login-form-banner{justify-self:center;width:min(100%,360px);height:auto;max-width:360px;max-height:none;aspect-ratio:1/1;flex:none}
-.login-form-banner .login-banner-image{width:100%;height:100%;object-fit:contain;object-position:center}
+/* R5 operator login: make the supplied product story the primary visual above
+   the credentials. The stage is intentionally landscape while object-fit keeps
+   every label in the square source artwork visible (never cropped or stretched).
+   A wide form column gives the artwork useful size instead of constraining it
+   to the old 360px square thumbnail. */
+.auth-shell{width:min(1560px,100%);grid-template-columns:minmax(360px,.72fr) minmax(600px,1.28fr)}
+.auth-card{width:100%;max-width:900px;justify-self:stretch;align-content:start;align-self:stretch;overflow:auto;padding:clamp(22px,3vw,42px);gap:clamp(14px,2vh,22px)}
+.login-form-banner{justify-self:center;width:min(100%,760px);height:auto;max-width:760px;max-height:none;aspect-ratio:16/10;flex:none;border-radius:clamp(14px,1.7vw,22px)}
+.login-form-banner .login-banner-image{width:100%;height:100%;aspect-ratio:auto;object-fit:contain;object-position:center}
 .notification-item.read{opacity:.68}.notification-body{min-width:0;flex:1}.notification-actions,.notification-table-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.notification-actions button{font-size:9px;padding:4px 7px}
-@media(max-height:840px) and (min-width:981px){.login-form-banner{width:min(100%,250px);max-width:250px}.auth-card{gap:12px;padding-block:20px}.demo-access{padding-block:10px}}
-@media(max-width:980px){.auth-shell{grid-template-columns:1fr;max-width:620px}.auth-showcase{display:none}.auth-card{border-radius:28px}.login-form-banner{display:grid;width:min(100%,390px);max-width:390px}}
-@media(max-width:560px){.login-form-banner{width:min(100%,310px);max-width:310px}.auth-card{padding:18px 16px}.notification-actions{gap:4px}}
+.rollout-approval-editor{display:grid;gap:7px;min-width:260px;max-width:390px}.rollout-approval-editor label{display:grid;gap:4px;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}.rollout-approval-editor input{min-width:230px;text-transform:none;letter-spacing:normal}.rollout-approval-editor .actions{justify-content:flex-start}.rollout-approval-editor small{display:block;line-height:1.45}.rollout-approval-editor .validation-error{color:var(--bad)}
+@media(max-height:840px) and (min-width:981px){.login-form-banner{width:min(100%,600px);max-width:600px}.auth-card{gap:12px;padding-block:20px}.demo-access{padding-block:10px}}
+@media(max-width:980px){.auth-shell{grid-template-columns:1fr;max-width:760px}.auth-showcase{display:none}.auth-card{max-width:none;border-radius:28px}.login-form-banner{display:grid;width:min(100%,680px);max-width:680px}}
+@media(max-width:560px){.login-form-banner{width:100%;max-width:none;aspect-ratio:16/10}.auth-card{padding:18px 16px}.notification-actions{gap:4px}}
 
 /* V20 canonical synchronization and subsystem observability */
 .subsystem-hero{position:relative;overflow:hidden;padding:23px;border:1px solid rgba(54,215,219,.2);border-radius:18px;background:linear-gradient(125deg,rgba(18,34,65,.94),rgba(12,17,38,.96) 55%,rgba(36,24,69,.82));box-shadow:0 18px 52px rgba(0,0,0,.24)}

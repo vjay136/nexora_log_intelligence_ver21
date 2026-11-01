@@ -1,6 +1,29 @@
 # NLI v20 release infrastructure
 
-## Release 20.0.0-4
+## Release 20.0.0-5
+
+Release 5 corrects parser-bundle digest handling across controller/client JSON
+round-trips. A pending legacy full or shortened hash is migrated only after
+the embedded snapshot is verified as the exact current published bundle;
+malformed, mismatched, and stale proposals remain blocked. Approval reasons
+are recorded and bound to the exact proposal revision and canonical SHA-256.
+Quarantine Resolution Wizard Steps 8–9 refresh from the controller after
+approval or cancellation, and replay requires the origin client's exact
+applied hash. The login banner uses a larger responsive landscape stage that
+shows the complete supplied artwork without cropping or distortion.
+
+See [Release 5 test results](../V20_R5_TEST_RESULTS.md) and the
+[Quarantine Resolution Wizard operator guide](../V20_R5_QRW_OPERATOR_GUIDE.md).
+
+### Operator acceptance for release 5
+
+1. Approve a current canonical bundle and confirm controller/client hashes remain identical after storage round-trip.
+2. Submit a legacy full or shortened hash and confirm migration occurs only when its embedded snapshot exactly matches the current published bundle; confirm stale, malformed, or mismatched proposals remain blocked.
+3. Confirm independent and emergency approvals record a reason and bind approval to the exact proposal revision and canonical SHA-256.
+4. Approve or cancel a proposal and confirm Steps 8–9 refresh from controller state. Confirm replay stays blocked until the origin client reports the exact applied hash.
+5. Check the login artwork on desktop, tablet, and mobile; confirm the complete banner remains visible without cropping or distortion.
+
+## Release 20.0.0-4 (historical)
 
 Release 4 validates the generated quarantine-recovery parser itself before any
 persistence or activation. The nine-stage wizard embeds parser approval,

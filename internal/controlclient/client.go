@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"nexora.local/nli-v20/internal/agent"
+	"nexora.local/nli-v20/internal/canonicaljson"
 	"nexora.local/nli-v20/internal/engine"
 	"nexora.local/nli-v20/internal/protocol"
 	"nexora.local/nli-v20/internal/registry"
@@ -738,10 +739,20 @@ func safeSynchronizedAssetID(value string) bool {
 	return true
 }
 func synchronizedBundleHash(bundle synchronizedAssetBundle) (string, error) {
+	assets := append([]synchronizedAsset(nil), bundle.Assets...)
+	for index := range assets {
+		canonical, err := canonicaljson.Normalize(assets[index].Payload)
+		if err != nil {
+			return "", fmt.Errorf("canonical parser asset %s/%s: %w", assets[index].AssetClass, assets[index].AssetID, err)
+		}
+		assets[index].Payload = canonical
+		assetDigest := sha256.Sum256(canonical)
+		assets[index].SHA256 = hex.EncodeToString(assetDigest[:])
+	}
 	unsigned, err := json.Marshal(struct {
 		SchemaVersion int                 `json:"schema_version"`
 		Assets        []synchronizedAsset `json:"assets"`
-	}{bundle.SchemaVersion, bundle.Assets})
+	}{bundle.SchemaVersion, assets})
 	if err != nil {
 		return "", err
 	}
@@ -787,6 +798,12 @@ func (c *Client) applyAssetBundle(ctx context.Context, data []byte) (string, err
 	}
 	seen := map[string]bool{}
 	for _, asset := range bundle.Assets {
+		canonicalPayload, canonicalErr := canonicaljson.Normalize(asset.Payload)
+		if canonicalErr != nil {
+			_ = os.RemoveAll(staging)
+			return "", fmt.Errorf("parser asset %s/%s payload is not canonicalizable: %w", asset.AssetClass, asset.AssetID, canonicalErr)
+		}
+		asset.Payload = canonicalPayload
 		dir, ok := allowed[asset.AssetClass]
 		if !ok || !safeSynchronizedAssetID(asset.AssetID) || asset.Revision < 1 || len(asset.SHA256) != 64 || !json.Valid(asset.Payload) {
 			_ = os.RemoveAll(staging)

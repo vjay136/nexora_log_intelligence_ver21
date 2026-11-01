@@ -26,14 +26,22 @@ unavailable measurements remain explicit. See the [NUPIRE architecture](docs/V20
 [baseline gap audit](docs/V20_BASELINE_CAPABILITY_GAP.md), and
 [research ledger](docs/V20_RESEARCH_AND_LICENSE_LEDGER.md).
 
-Release `20.0.0-4` completes the governed quarantine lifecycle in one workspace.
-The Quarantine Resolution Wizard validates the exact generated candidate,
-binds approval to the displayed revision and checksum, embeds exact-bundle
-deployment and replay controls, and keeps all nine stages synchronized with
-controller evidence. Compatible historical parsers receive deterministic
-runtime identities; invalid or colliding definitions stay blocked with an
-explicit repair path. Notification state is per user, and the login banner is
-contained above the sign-in form on the right.
+Release `20.0.0-5` strengthens parser-bundle integrity across controller/client
+storage round-trips. It migrates a pending legacy full or shortened hash only
+when the embedded semantic snapshot verifies as the exact current published
+bundle; malformed, mismatched, or stale proposals remain blocked. Quarantine
+Resolution Wizard deployment state refreshes from the controller after
+approval or cancellation, and replay still requires the origin client to
+acknowledge the exact applied hash. Reason-bearing approvals are bound to the
+exact proposal revision and canonical SHA-256. The full login banner artwork
+uses a larger responsive landscape stage without cropping or distortion.
+See the [Release 5 test results](docs/V20_R5_TEST_RESULTS.md) and
+[Quarantine Resolution Wizard operator guide](docs/V20_R5_QRW_OPERATOR_GUIDE.md).
+
+Release 4 established the single-workspace governed quarantine lifecycle,
+deterministic historical parser compatibility, per-user notification state,
+and the right-side login banner. Its details remain in the
+[Release 4 release notes](docs/release/README.md).
 See the [UPES/GPRS architecture and acceptance guide](docs/V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md)
 the [Quarantine Resolution Wizard guide](docs/V20_QUARANTINE_RESOLUTION_WIZARD.md),
 and the [architecture diagram](docs/architecture/NLI_V20_UPES_GPRS_ARCHITECTURE.svg).
@@ -52,7 +60,7 @@ and the [architecture diagram](docs/architecture/NLI_V20_UPES_GPRS_ARCHITECTURE.
 - Fleet, controller, and client management with node identity, heartbeat age, service state, configured inputs, selected outputs, parser/config revisions, resource telemetry, command leases, results, and audit.
 - Family-isolated parsed JSON and quarantine files for ten default inputs, plus simultaneous fan-out to Grafana Loki and ClickHouse with independent batching, retry, and local failure receipts. Authenticated bounded parser telemetry flows separately to the controller for live dashboards. Exact quarantined source records remain in the durable client queue and may be uploaded only when the operator enables bounded raw retention.
 - Pre-parse `default`, `filtered`, and `hybrid` selection by exact event name, service, and hostname, including reviewed presets for ImapDisconnected, AcctBadPswd, auth.loginByToken, MtaRequestingDomainTableUpdate, CARDDAV, and SieveRuleMsg.
-- x86_64 client and controller RPMs, one-use private-CA enrollment, fresh-install packaging and Release 3-to-Release 4 upgrade/rollback acceptance gates (requiring the genuine published Ver20 Release 3 RPMs), WebView/webapp archives, uninstall scripts, SBOM, provenance, and reproducible build checks. Historical V8/V10/V12/V14 packages remain represented in the migration corpus.
+- x86_64 client and controller RPMs, one-use private-CA enrollment, fresh-install packaging and release-to-release upgrade/rollback gates, WebView/webapp archives, uninstall scripts, SBOM, provenance, and reproducible build checks. Release 5 source-level test evidence is documented separately; package and Rocky lifecycle evidence is recorded only after those gates run. Historical V8/V10/V12/V14 packages remain represented in the migration corpus.
 
 ## Accuracy contract
 
@@ -82,7 +90,7 @@ The publishable key is used only for the protected metadata RPC contract. Server
 
 ## Ver19 upgrade and rollback
 
-Ver20 keeps stable RPM package identities, systemd units, `/etc/nli` configuration, and `/var/lib/nli` state paths so RPM can perform an in-place upgrade while retaining configuration and state paths. Release 4 is qualified against the exact published Release 3 client and controller RPMs. Retain those RPMs until post-upgrade checks pass. The Ver19 major migration boundary and the Release 4 rollback procedure are recorded in [the migration and rollback note](docs/release/V20_MIGRATION_AND_ROLLBACK.md).
+Ver20 keeps stable RPM package identities, systemd units, `/etc/nli` configuration, and `/var/lib/nli` state paths so RPM can perform an in-place upgrade while retaining configuration and state paths. For Release 5, retain the exact currently deployed client and controller RPMs until post-upgrade checks pass; consult the migration note for the Release 4-to-5 path and rollback limits. Release 5 source-level tests do not claim that package lifecycle gates have run. The Ver19 major migration boundary and current release procedure are recorded in [the migration and rollback note](docs/release/V20_MIGRATION_AND_ROLLBACK.md).
 
 ## Installation
 

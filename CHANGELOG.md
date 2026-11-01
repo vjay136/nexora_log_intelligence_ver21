@@ -1,5 +1,13 @@
 # Changelog
 
+## [20.0.0-5] - 2026-11-01
+
+- Canonicalize parser bundle digests across controller/client JSON round-trips while preserving strict immutable-bundle verification; migrate a legacy full or shortened hash only when its embedded snapshot exactly matches the current published bundle.
+- Keep malformed, mismatched, and stale proposals blocked with actionable conflict guidance; bind reason-bearing independent or administrator emergency approval to the exact proposal revision and canonical SHA-256.
+- Refresh Quarantine Resolution Wizard deployment and replay state after approval or cancellation, and require the origin client's exact applied hash before replay.
+- Enlarge the login banner in a responsive landscape stage while showing the full supplied artwork without cropping or distortion.
+- Publish the Release 5 test results and Quarantine Resolution Wizard operator guide.
+
 ## [20.0.0-4] - 2026-11-01
 
 - Complete the Quarantine Resolution Wizard inside one nine-stage workspace, including exact-candidate preview, approval, publication, bundle rollout, acknowledgement, replay, and verification.

@@ -38,7 +38,14 @@ func principalHasPermission(principal *middleware.SecurityContext, permission st
 // enabled break-glass path with a reason and exact revision/digest binding.
 func (s *Server) approvalMode(doc metastore.Document, principal *middleware.SecurityContext, request approvalRequest, expectedDigest, digestField string) (string, map[string]string, error) {
 	if doc.CreatedBy != principal.Username {
-		return "independent", map[string]string{"approval_mode": "independent"}, nil
+		details := map[string]string{"approval_mode": "independent"}
+		if reason := strings.TrimSpace(request.Reason); reason != "" {
+			if len(reason) < 3 || len(reason) > 512 {
+				return "", nil, fmt.Errorf("independent approval reason must contain 3..512 characters")
+			}
+			details["approval_reason"] = reason
+		}
+		return "independent", details, nil
 	}
 	if !s.cfg.AllowAdminEmergencySelfApproval {
 		return "", nil, fmt.Errorf("creator cannot approve own change; administrator emergency approval is disabled")
@@ -75,6 +82,9 @@ func (s *Server) approvalMode(doc metastore.Document, principal *middleware.Secu
 func recordEmergencyApproval(payload map[string]any, principal *middleware.SecurityContext, request approvalRequest, mode string) {
 	if mode != "emergency_admin_self" {
 		payload["approval_mode"] = mode
+		if reason := strings.TrimSpace(request.Reason); reason != "" {
+			payload["approval_reason"] = reason
+		}
 		return
 	}
 	payload["approval_mode"] = mode

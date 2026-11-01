@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"nexora.local/nli-v20/internal/canonicaljson"
 	"nexora.local/nli-v20/internal/protocol"
 	"nexora.local/nli-v20/internal/rollout"
 	"nexora.local/nli-v20/parser-policy"
@@ -343,6 +344,10 @@ func TestParserAssetBundleSynchronizesEveryRuntimeAssetClass(t *testing.T) {
 		t.Fatal(err)
 	}
 	packPayload, _ := json.Marshal(pack)
+	packPayload, err = canonicaljson.Normalize(packPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
 	packDigest := sha256.Sum256(packPayload)
 	bundle.Assets = append(bundle.Assets, synchronizedAsset{AssetClass: "parser-packs", AssetID: pack.ID, Name: "Assurance runtime", Revision: 3, SHA256: fmt.Sprintf("%x", packDigest[:]), Payload: packPayload})
 	bundle.BundleHash, err = synchronizedBundleHash(bundle)
@@ -389,6 +394,50 @@ func TestParserAssetBundleSynchronizesEveryRuntimeAssetClass(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && quarantineInfo.Mode().Perm() != 0o750 {
 		t.Fatalf("runtime quarantine mode = %o, want 0750 for the nli-owned agent runtime directory", quarantineInfo.Mode().Perm())
+	}
+}
+
+func TestClientAcceptsCanonicalR5BundleAfterJSONNumericNormalization(t *testing.T) {
+	root := t.TempDir()
+	client, err := New(Config{
+		ControllerURL: "http://127.0.0.1:12345", AllowInsecureHTTP: true,
+		NodeTokenFile: filepath.Join(root, "node.token"), InstallIDFile: filepath.Join(root, "install.id"),
+		JournalFile: filepath.Join(root, "journal.json"), AgentConfigPath: filepath.Join(root, "nli.json"),
+		ParserDir: filepath.Join(root, "parsers"), AssetDir: filepath.Join(root, "parser-assets"),
+		PackageSpoolDir: filepath.Join(root, "packages"), PollSeconds: 5,
+	}, &fakeExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalPayload, err := canonicaljson.Normalize([]byte(`{"name":"numeric fixture","weight":1.0,"threshold":10e-1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloadDigest := sha256.Sum256(canonicalPayload)
+	bundle := synchronizedAssetBundle{SchemaVersion: 1, Assets: []synchronizedAsset{{
+		AssetClass: "regex-patterns", AssetID: "numeric-fixture", Name: "Numeric fixture", Revision: 1,
+		SHA256: fmt.Sprintf("%x", payloadDigest[:]),
+		// Deliberately use a semantically equivalent representation to model a
+		// jsonb/transport round trip between proposal creation and client apply.
+		Payload: json.RawMessage(`{"threshold":1.00,"weight":1,"name":"numeric fixture"}`),
+	}}}
+	bundle.BundleHash, err = synchronizedBundleHash(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.BundleHash) != 64 {
+		t.Fatalf("R5 bundle hash is not full SHA-256: %q", bundle.BundleHash)
+	}
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := client.applyAssetBundle(context.Background(), data)
+	if err != nil {
+		t.Fatalf("client rejected canonical R5 bundle: %v", err)
+	}
+	if !strings.Contains(message, bundle.BundleHash) {
+		t.Fatalf("client did not acknowledge canonical bundle: %q", message)
 	}
 }
 
