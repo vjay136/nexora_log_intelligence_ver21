@@ -9,7 +9,9 @@ Release 6 is built from the R4 parsing/runtime baseline and fixes parser bundle 
 - Full Go test suite: PASS.
 - Web API contracts: 24/24 PASS.
 - Browser UI scenarios: 69/69 PASS.
-- RPM reproducibility, package payload, and Rocky lifecycle: PENDING. These must be run from frozen Release 6 artifacts against the genuine Release 4 RPMs before claiming package/lifecycle qualification.
+- RPM reproducibility and package payload: PASS from two byte-identical containerized builds.
+- Rocky lifecycle: PASS for genuine Release 4-to-Release 6 upgrade, downgrade, re-upgrade, and removal on Rocky Linux 9 and 10.2.
+- Two-node TLS/WebView acceptance: PASS on separate Rocky Linux 10.2 controller and client nodes.
 
 See `../V20_R6_TEST_RESULTS.md` and `../V20_R6_QRW_OPERATOR_GUIDE.md` for the evidence boundary and guided recovery procedure.
 

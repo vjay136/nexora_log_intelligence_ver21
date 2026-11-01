@@ -29,6 +29,7 @@ Upgrade and rollback baseline: Ver20 Release 4 (`20.0.0-4`)
 
 ## Release boundary
 
+- Before the frozen-artifact gates executed, RPM and Rocky lifecycle qualification was not claimed here and was not yet verified. The completed, frozen-artifact results above now record both gates as PASS.
 - The tests above qualify the locally built release artifacts. GitHub publication and hosted workflow status are reported separately after the exact tag and artifacts are uploaded.
 - The release does not auto-approve parser changes. Independent approval remains the default; an administrator emergency path requires an explicit reason and exact revision/hash confirmation.
 - A client must acknowledge the exact approved bundle hash before replay is enabled. This prevents replay against a different parser bundle while allowing canonical JSON-equivalent R4 proposal hashes to migrate safely.

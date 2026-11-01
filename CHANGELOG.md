@@ -4,7 +4,7 @@
 
 - Canonicalize parser bundle content consistently across proposal creation and approval so the reviewed hash can be approved and delivered without changing the bundle bytes.
 - Preserve the R4 parsing/runtime behavior while correcting approval and exact-hash rollout handling.
-- Add Release 6 operator and test evidence; report only the verified Go suite, 24/24 web contracts, and 69/69 browser scenarios. RPM and Rocky lifecycle qualification remain pending.
+- Add Release 6 operator and test evidence covering the complete Go/race/fuzz gates, 24/24 web contracts, 69/69 browser scenarios, byte-identical artifacts, RPM inspection, Rocky Linux 9/10.2 lifecycle qualification, and two-node TLS/WebView acceptance.
 
 ## [20.0.0-4] - 2026-11-01
 
