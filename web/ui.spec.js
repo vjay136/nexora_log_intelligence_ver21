@@ -7,7 +7,7 @@ const origin = 'http://127.0.0.1:4176';
 const tabs = ['operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
 const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'nli-mark.svg', 'nexora-logo-v20.png', 'login-banner-v20.png', 'nexora-poster-v20.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
-async function mockController(page, { role = 'admin', healthIdentity = 'v20', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [] } = {}) {
+async function mockController(page, { role = 'admin', healthIdentity = 'v20', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [] } = {}) {
   const observed = [];
   const cases = [];
   const uploads = [];
@@ -27,6 +27,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v20', up
   const users = [];
   const auditEvents = [];
   const notificationPolicySaves = [];
+  const notificationActions = [];
   const qrwParserActions = [];
   const qrwReplays = [];
   const qrwSyncVerifications = [];
@@ -36,6 +37,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v20', up
   const currentManagedParsers = managedParsers.map(item => structuredClone(item));
   let currentQRWRecords = qrwRecords ? structuredClone(qrwRecords) : null;
   let currentQRWSyncAssets = qrwSyncAssets ? structuredClone(qrwSyncAssets) : null;
+  const currentControllerNotifications = controllerNotifications.map(item => structuredClone(item));
   const currentQRWHistory = [];
   let authenticated = false;
   await page.route(`${origin}/**`, async route => {
@@ -79,6 +81,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v20', up
       return fulfill({ passed: assurancePassed, route: assurancePassed ? 'normal' : 'quarantine', actual: { message: requestBody.raw, service: requestBody.service }, parser: { name: assurancePassed ? 'test-parser' : 'unknown', version: '7', strategy: 'json' }, counts: { actual: 2, attempts: 1 }, trace: [{ stage: 'parser_attempt', parser: assurancePassed ? 'test-parser' : 'unknown', success: assurancePassed, fields: 2 }], evidence_spans: [{ field: 'message', source_backed: true, start: 0, end: requestBody.raw.length }], parser_creation_helper: { normalized_sample: requestBody.raw.replace(/\r\n/g,'\n').split('\n').map(line=>line.replace(/[\t ]+$/,'')).join('\n'), sample_lines: 2, detected_format: 'key_value', requested_family: requestBody.service, selected_parser: assurancePassed ? 'test-parser' : 'unknown', selected_strategy: 'key_value', match_scope: { kind: 'line', prefix: 'level=' }, suggested_regex: 'level=(?P<level>\\S+) user=(?P<user>\\S+)', kv_delimiters: ['='], fields: [{ name: 'level', source: 'group:level', type: 'string' }, { name: 'user', source: 'group:user', type: 'string' }], projection: ['level','user'], template: { level: '{level}', user: '{user}' }, requires_human_approval: true } });
     }
     if (path === '/api/v1/assurance/corpus' && request.method() === 'POST') { const body=request.postDataJSON();assuranceCorpora.push(body);return fulfill({total:body.cases.length,passed:body.cases.length,failed:0,results:[]}); }
+    if (path === '/api/v1/assurance/parser-preview' && request.method() === 'POST') { const body=request.postDataJSON();assuranceCorpora.push(body);const cases=body.cases||[],valid=assurancePassed&&!!body.parser?.pattern&&Array.isArray(body.parser?.fields)&&body.parser.fields.length>0&&cases.length>0&&cases.every(item=>item.raw&&item.desired&&Object.keys(item.desired).length>0);return fulfill({passed:valid,persisted:false,activated:false,artifact_checksum:'f'.repeat(64),validation:{status:valid?'passed':'failed',total:cases.length,passed:valid?cases.length:0,failed:valid?0:cases.length,score:valid?100:0,results:cases.map((item,index)=>({index,passed:valid,actual:valid?item.desired:{},diff:[],errors:valid?[]:['candidate did not match']}))}}); }
     if (path === '/api/v1/assurance/upload' && request.method() === 'POST') { uploads.push(request.postData() || ''); return fulfill({ retained: true, fixture_id: 'fixture-42', encrypted: true, filename: 'sample.log', content_type: 'text/plain', size_bytes: 28, sha256: 'a'.repeat(64), parser_revision: 'smtp@18.0.0', storage_status: 'encrypted_supabase' }); }
     if (path === '/api/v1/assurance/cases/fixture-42/download') return route.fulfill({ status: 200, headers: { ...headers, 'content-type': 'application/octet-stream' }, body: 'service=example user=operator' });
     if (path === '/api/v1/assurance/cases' && request.method() === 'POST') { const body = request.postDataJSON(); cases.push({ id: 'case-1', name: body.name, revision: 1, manual_retention: true, parser_id: 'test-parser', passed: true }); return fulfill(cases.at(-1)); }
@@ -117,7 +120,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v20', up
     if (path === '/api/v1/fleet') return fulfill({ nodes: [{ id: 'node-1', hostname: 'mail-node-1', status: 'online', last_seen: '2026-10-17T05:00:00Z' }] });
     if (path === '/api/v1/fleet/sync') return fulfill({ nodes: currentQRWSyncAssets ? currentQRWSyncAssets.flatMap(asset=>asset.clients||[]).map(client=>({node:{id:client.node_id,hostname:client.node_id,status:client.status||'online',last_seen:'2026-10-17T05:00:00Z'},sync:{drifted:!!client.drifted}})) : [{ node: { id: 'node-1', hostname: 'mail-node-1', status: 'online', last_seen: '2026-10-17T05:00:00Z' }, sync: { drifted: false } }] });
     if (path === '/api/v1/parser-sync' && request.method() === 'GET') return fulfill({ bundle: qrwSyncAssets ? { desired_hash: currentBundleHash, parser_ids: currentQRWParsers.filter(item=>item.state==='published').map(item=>item.id), revision: 2 } : undefined, count: currentQRWSyncAssets?.length || 1, assets: currentQRWSyncAssets || [{ asset_class: 'regex', asset_id: 'nginx-access', name: 'Nginx access pattern', desired: { revision: 3, sha256: 'a'.repeat(64), state: 'published' }, controller: { revision: 3, sha256: 'a'.repeat(64), status: 'applied' }, auto_rollout: { enabled: true, status: 'enabled' }, rollout: { id: 'rollout-1', status: 'complete', total_nodes: 1, done_nodes: 1, failed_nodes: 0, errors: [] }, clients: [{ node_id: 'node-1', desired_revision: 3, desired_hash: 'a'.repeat(64), applied_revision: 3, applied_hash: 'a'.repeat(64), last_seen: '2026-10-09T10:00:00Z', status: 'online', drifted: false }] }] });
-    if (path === '/api/v1/parser-sync/rollout' && request.method() === 'POST') { const body=request.postDataJSON(),proposal={id:`qrw-rollout-${qrwRolloutRequests.length+1}`,created_by:'test-operator',state:'pending_approval',payload:{type:'parser_sync',name:'Parser bundle rollout',target_mode:body.target_mode,target_nodes:body.target_mode==='all_eligible'?currentQRWSyncAssets?.[0]?.clients?.map(item=>item.node_id)||[]:[body.origin_node_id],bundle_hash:body.bundle_hash}};qrwRolloutRequests.push(body);rolloutProposals.push(proposal);return fulfill({proposal},201); }
+    if (path === '/api/v1/parser-sync/rollout' && request.method() === 'POST') { const body=request.postDataJSON(),proposal={id:`qrw-rollout-${qrwRolloutRequests.length+1}`,revision:1,created_by:'test-operator',state:'pending_approval',payload:{type:'parser_sync',name:'Parser bundle rollout',target_mode:body.target_mode,target_nodes:body.target_mode==='all_eligible'?currentQRWSyncAssets?.[0]?.clients?.map(item=>item.node_id)||[]:[body.origin_node_id],bundle_hash:body.bundle_hash}};qrwRolloutRequests.push(body);rolloutProposals.push(proposal);return fulfill({proposal},201); }
     if (path === '/api/v1/parser-sync/verify' && request.method() === 'POST') { const body=request.postDataJSON();qrwSyncVerifications.push(body);const asset=currentQRWSyncAssets?.find(item=>item.asset_id===body.asset_id);const origin=asset?.clients?.find(item=>item.node_id==='node-1');if(origin){origin.applied_hash=origin.desired_hash;origin.drifted=false;}return fulfill({ verified: true, message: 'Reported state refreshed' }); }
     if (path === '/api/v1/parser-sync/retry' && request.method() === 'POST') return fulfill({ proposal_id: 'proposal-1', state: 'pending_approval', message: 'Rollout proposal created; independent approval is required.' });
     if (path.match(/^\/api\/v1\/parser-packs\/[^/]+\/(submit|approve|reject|activate|repair)$/) && request.method() === 'POST') { const [,id,action]=path.match(/^\/api\/v1\/parser-packs\/([^/]+)\/(submit|approve|reject|activate|repair)$/),doc=currentManagedParsers.find(item=>item.id===id);if(!doc)return fulfill({error:'not found'},404);doc.state=({submit:'in_review',approve:'approved',reject:'rejected',activate:'published',repair:'rejected'})[action];doc.runtime_sync=action==='repair'?{status:'not_published'}:doc.runtime_sync;return fulfill(doc); }
@@ -144,14 +147,23 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v20', up
     if (path === '/api/v1/audit') return fulfill({ verification: 'ok', events: auditEvents });
     if (path === '/api/v1/communications/browser-heartbeat' && request.method() === 'POST') return fulfill({ status: 'recorded', observed_at: new Date().toISOString() });
     if (path === '/api/v1/communications/status') return fulfill({ generated_at: new Date().toISOString(), path: [{ hop: 'client_to_controller', state: 'live', evidence: 'client heartbeat', clients: [{ node_id: 'node-1', hostname: 'mail-node-1', state: 'live', last_seen: new Date().toISOString(), age_seconds: 0, heartbeat_status: 'live' }], client_count: 1 }, { hop: 'controller_internal', state: 'live', evidence: 'controller health', observed_at: new Date().toISOString() }, { hop: 'controller_to_webapp', state: 'live', evidence: 'browser heartbeat', browser: { state: 'live', status: 'recorded', observed_at: new Date().toISOString(), age_seconds: 0, username: 'test-operator', evidence: 'heartbeat accepted' } }], canonical: { revision: 7, generated_at: new Date().toISOString(), schema_version: 'nli.sync.v1', target_interval_ms: 1000 } });
-    if (path === '/api/v1/notifications') return fulfill({ notifications: [], count: 0, delivery_history: [], policy: {} });
+    if (path === '/api/v1/notifications') {
+      const visible=currentControllerNotifications.filter(item=>item.status!=='dismissed'&&item.status!=='snoozed');
+      return fulfill({ notifications: visible, count: visible.length, unread_count: visible.filter(item=>!item.read&&item.status!=='read').length, delivery_history: [], policy: {} });
+    }
     if (path === '/api/v1/notifications/config' && request.method() === 'PUT') { const body=request.postDataJSON();notificationPolicySaves.push(body);return fulfill({policy:body,channels:{in_app:{enabled:true,state:'available',status:'available'},email:{enabled:body.channels.email.enabled,state:body.channels.email.enabled?'ready':'not_configured',status:body.channels.email.enabled?'ready':'not_configured'},pagerduty:{enabled:body.channels.pagerduty.enabled,state:body.channels.pagerduty.enabled?'ready':'not_configured',status:body.channels.pagerduty.enabled?'ready':'not_configured'}}}); }
     if (path === '/api/v1/notifications/config') return fulfill({ policy: { channels: { in_app: { enabled: true }, email: { enabled: false, server_env: 'NLI_SMTP_SERVER', sender_env: 'NLI_NOTIFICATION_EMAIL_FROM', recipient_env: 'NLI_NOTIFICATION_EMAIL_RECIPIENTS', username_env:'NLI_SMTP_USERNAME', password_env:'NLI_SMTP_PASSWORD' }, pagerduty: { enabled: false, secret_env: 'NLI_PAGERDUTY_ROUTING_KEY' } }, admin_fallback: true, recipients: ['admin'], events: ['approval','quarantine','sync','system','delivery','security'] }, channels: { in_app: { state: 'available', status: 'available' }, email: { state: 'not_configured', status: 'not_configured' }, pagerduty: { state: 'not_configured', status: 'not_configured' } } });
-    if (path.match(/^\/api\/v1\/notifications\/audit-[^/]+$/) && request.method() === 'POST') return fulfill({ status: 'acknowledged' });
+    if (path.match(/^\/api\/v1\/notifications\/audit-[^/]+$/) && ['POST','DELETE'].includes(request.method())) {
+      const sequence=Number(path.split('audit-').at(-1)),action=request.method()==='DELETE'?'dismissed':request.postDataJSON().action;
+      notificationActions.push({sequence,action,method:request.method()});
+      const item=currentControllerNotifications.find(note=>Number(note.sequence)===sequence);
+      if(item){item.status=action==='snooze'?'snoozed':action;item.read=action==='read';}
+      return fulfill({ status: action });
+    }
     if (path === '/api/v1/system') return fulfill({ version: '20.0.0', health: 'ok', storage: { mode: 'supabase', status: 'connected' }, security: { audit_chain: 'ok' } });
     return fulfill({ error: `Unmocked API: ${path}` }, 500);
   });
-  return { observed, uploads, assuranceRequests, assuranceCorpora, assurancePlans, assuranceRuns, outputSaves, inputSaves, outputProfiles, inputProfiles, inputRolloutSaves, rolloutSaves, rolloutProposals, historyQueries, users, auditEvents, notificationPolicySaves, qrwParserActions, qrwReplays, qrwSyncVerifications, qrwRolloutRequests };
+  return { observed, uploads, assuranceRequests, assuranceCorpora, assurancePlans, assuranceRuns, outputSaves, inputSaves, outputProfiles, inputProfiles, inputRolloutSaves, rolloutSaves, rolloutProposals, historyQueries, users, auditEvents, notificationPolicySaves, notificationActions, qrwParserActions, qrwReplays, qrwSyncVerifications, qrwRolloutRequests };
 }
 
 async function login(page) {
@@ -301,7 +313,8 @@ test('Monitoring exposes eleven canonical dashboards using only the shared recov
   await page.getByRole('tab', { name: 'Assurance & Release Health' }).click();
   await expect(page.locator('[data-monitoring-panel=assurance]')).toContainText('Release readinessready');
   const newRequests = observed.slice(before).filter(item => !item.endsWith('/api/v1/sync/stream'));
-  expect(newRequests.every(item => ['GET /api/v1/sync/snapshot','GET /api/v1/navigation/counts'].includes(item))).toBe(true);
+  const allowed=['GET /api/v1/sync/snapshot','GET /api/v1/metrics/timeseries','GET /api/v1/navigation/counts','GET /api/v1/notifications','POST /api/v1/communications/browser-heartbeat'];
+  expect(newRequests.filter(item=>!allowed.includes(item))).toEqual([]);
 });
 
 test('diagnostics span the dashboard grid and remain usable at narrow widths', async ({ page }) => {
@@ -399,14 +412,19 @@ test('Guided Parser Repair Studio inspects retained failures, uses AI only after
   await expect(page.locator('#gprs-preview-form [name=manual_regex]')).toBeVisible();
   await page.locator('[data-gprs-record="q-1"]').check();
   const desired = page.locator('#gprs-preview-form [name=gprs_desired]');
+  await page.locator('#gprs-preview-form [name=manual_field_names]').fill('user');
+  await page.getByRole('button',{name:/Create mappings from my field names/}).click();
+  await page.locator('[data-wizard-step="2"] button').click();
   await desired.fill('{"user":"alice"}');
   await page.locator('#gprs-preview-form [name=mapping]').fill('{"username":"user"}');
+  await page.locator('[data-wizard-step="5"] button').click();
+  await page.getByRole('button', { name: /Prepare candidate from evidence/ }).click();
   await page.locator('[data-wizard-step="6"] button').click();
   await page.getByRole('button', { name: /Run deterministic preview/ }).click();
   await expect(page.getByTestId('gprs-preview')).toContainText('records_tested');
   await expect(page.getByRole('button', { name: 'Ask AI to diagnose and propose a fix' })).toBeVisible();
   expect(mock.observed).toContain('POST /api/v1/quarantine/records/q-1/analyze');
-  expect(mock.assuranceRequests.at(-1).desired).toEqual({ user: 'alice' });
+  expect(mock.assuranceCorpora.at(-1).cases[0].desired).toEqual({ user: 'exact' });
   await page.getByRole('button', { name: 'Edit generated candidate' }).click();
   await expect(page.getByRole('tab', { name: 'Guided Parser Repair Studio' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#assurance-panel-gprs #gprs-parser-helper-form')).toBeVisible();
@@ -448,8 +466,7 @@ test('Quarantine Resolution Wizard maps the required unstructured fixture withou
   const initialParser=await editor.locator('[name=parser]').inputValue();
   await page.getByRole('button',{name:'Test all fields'}).click();
   await expect(page.locator('#qrw-field-status')).toContainText('2 field mapping error');
-  await page.locator('[data-wizard-step="5"] button').click();
-  await expect(page.getByRole('alert').last()).toContainText('Resolve field mapping errors');
+  await expect(page.locator('[data-wizard-step="5"] button')).toBeDisabled();
   await expect(editor.locator('[name=parser]')).toHaveValue(initialParser);
   const confirmations=page.getByLabel('Confirm delimiter interpretation');
   await expect(confirmations).toHaveCount(2);
@@ -526,13 +543,15 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   await page.getByRole('button',{name:/Review desired schema/}).click();
   await page.getByRole('button',{name:'Suggest from raw log'}).click();
   await page.getByRole('button',{name:'Test all fields'}).click();
+  await page.locator('[data-wizard-step="5"] button').click();
+  await page.getByRole('button',{name:/Prepare candidate from evidence/}).click();
   await page.locator('[data-wizard-step="6"] button').click();
   await page.getByRole('button',{name:/Run deterministic preview/}).click();
-  for(const step of [6,7,8,9]){
-    const button=page.locator(`[data-wizard-step="${step}"] button`);
-    await button.click();
-    await expect(page.locator(`[data-wizard-step="${step}"]`)).toHaveClass(/active/);
-  }
+  await expect(page.locator('[data-wizard-step="7"] button')).toBeEnabled();
+  await page.locator('[data-wizard-step="7"] button').click();
+  await expect(page.locator('[data-wizard-step="7"]')).toHaveClass(/active/);
+  await expect(page.locator('[data-wizard-step="8"] button')).toBeDisabled();
+  await expect(page.locator('[data-wizard-step="9"] button')).toBeDisabled();
   await page.getByTestId('nav-operations').click();
   await page.getByTestId('nav-quarantine-wizard').click();
   await expect(page.locator('.qrw-next-action')).toContainText('Review the candidate independently');
@@ -553,8 +572,8 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   expect(mock.qrwRolloutRequests[0]).toEqual({target_mode:'all_eligible',origin_node_id:'node-1',node_ids:[],bundle_hash:checksum});
   const rolloutRow=page.locator('#page tr').filter({hasText:'qrw-rollout-1'});
   await expect(rolloutRow).toContainText('all_eligible · 2 client(s)');
-  await expect(rolloutRow.getByRole('button',{name:'Approve'})).toBeDisabled();
-  await expect(page.locator('.qrw-next-action')).toContainText('Independent rollout approval is required');
+  await expect(rolloutRow.getByRole('button',{name:'Emergency approve exact bundle'})).toBeEnabled();
+  await expect(page.locator('.qrw-next-action')).toContainText('Approve the exact rollout with audited administrator recovery');
   mock.rolloutProposals[0].state='approved';
   await page.getByTestId('nav-operations').click();
   await page.getByTestId('nav-quarantine-wizard').click();
@@ -599,7 +618,8 @@ test('premium login keeps the square V20 emblem and banner fully contained on de
   const desktop=await banner.evaluate(image=>({width:image.getBoundingClientRect().width,height:image.getBoundingClientRect().height}));
   expect(Math.abs(desktop.width-desktop.height)).toBeLessThanOrEqual(1);
   await page.setViewportSize({width:390,height:844});
-  await expect(page.locator('.auth-showcase')).toBeVisible();
+  await expect(page.locator('.auth-showcase')).toBeHidden();
+  await expect(page.locator('#login-form .login-form-banner')).toBeVisible();
   await expect(page.getByRole('button', {name:'Sign in securely'})).toBeVisible();
   const geometry=await banner.evaluate(image=>({width:image.getBoundingClientRect().width,height:image.getBoundingClientRect().height,scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth}));
   expect(geometry.width).toBeGreaterThan(240);
@@ -648,6 +668,26 @@ test('browser brand, Assurance selection, and account/audit timestamps stay expl
   expect(mock.notificationPolicySaves[0]).toEqual({ channels: { in_app: { enabled: true }, email: { enabled: true, server_env: 'NLI_SMTP_SERVER_ENV', sender_env: 'NLI_MAIL_FROM_ENV', recipient_env: 'NLI_MAIL_TO_ENV', username_env:'NLI_SMTP_USER_ENV', password_env:'NLI_SMTP_PASS_ENV' }, pagerduty: { enabled: true, secret_env: 'NLI_PD_KEY_ENV' } }, admin_fallback: true, recipients: ['admin','oncall-1'], events: ['approval','quarantine','sync','system','delivery','security'] });
   expect(JSON.stringify(mock.notificationPolicySaves[0])).not.toMatch(/secret-value|routing-key-value/i);
   expect(mock.observed).toContain('POST /api/v1/communications/browser-heartbeat');
+});
+
+test('notification count and per-user read, check-later, and delete actions stay synchronized', async ({ page }) => {
+  const mock=await mockController(page,{controllerNotifications:[
+    {id:'audit-41',sequence:41,title:'Parser approval required',resource:'parser-41',severity:'warning',status:'unread',read:false,timestamp:'2026-10-30T02:00:00Z'},
+    {id:'audit-42',sequence:42,title:'Quarantine review required',resource:'record-42',severity:'critical',status:'unread',read:false,timestamp:'2026-10-30T02:01:00Z'},
+  ]});
+  await login(page);
+  await expect(page.locator('#notification-count')).toHaveText('2');
+  await page.locator('#notification-bell').click();
+  await page.locator('[data-notification-id="audit-41"] [data-notification-action="read"]').click();
+  await expect(page.locator('#notification-count')).toHaveText('1');
+  await page.locator('[data-notification-id="audit-42"] [data-notification-action="snooze"]').click();
+  await expect(page.locator('#notification-count')).toBeHidden();
+  await page.getByTestId('nav-notifications').click();
+  await expect(page.getByText('0 unread operator action(s).')).toBeVisible();
+  expect(mock.notificationActions).toEqual([
+    {sequence:41,action:'read',method:'POST'},
+    {sequence:42,action:'snooze',method:'POST'},
+  ]);
 });
 
 test('Assurance Lab tabs isolate each workflow and expose complete generated outputs', async ({ page }) => {
@@ -960,8 +1000,12 @@ test('Assurance helper trims trailing whitespace, generates editable parser, val
   expect(parser.pattern_type).toBe('regex');
   expect(parser.known_fields).toEqual(['level', 'user']);
   await expect(page.locator('#parser-helper-overview')).toContainText('key_value_regex');
+  await form.locator('[name=cases]').fill(JSON.stringify([
+    { raw: 'level=INFO user=alice', service: 'key_value', desired: { level: 'INFO', user: 'alice' } },
+    { raw: 'level=WARN user=bob', service: 'key_value', desired: { level: 'WARN', user: 'bob' } },
+  ], null, 2));
   await page.getByRole('button', { name: 'Validate draft', exact: true }).click();
-  await expect.poll(() => observed.includes('POST /api/v1/assurance/corpus')).toBe(true);
+  await expect.poll(() => observed.includes('POST /api/v1/assurance/parser-preview')).toBe(true);
   await form.getByRole('button', { name: 'Save review-gated draft' }).click();
   await expect.poll(() => observed.includes('POST /api/v1/assurance/parsers')).toBe(true);
   expect(observed.some(path => /assurance\/parsers\/.*\/(approve|publish)/.test(path))).toBe(false);

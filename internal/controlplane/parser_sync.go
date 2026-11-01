@@ -50,11 +50,15 @@ func bundleDigest(bundle parserAssetBundle) (string, []byte, error) {
 
 func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle, error) {
 	bundle := parserAssetBundle{SchemaVersion: 1, Assets: []parserBundleAsset{}}
+	seenRuntimeParserID := map[string]string{}
 	for _, collection := range parserAssetCollections {
 		page, err := s.metadata.List(ctx, collection, metastore.Query{Limit: 1000})
 		if err != nil {
 			return bundle, err
 		}
+		// Storage backends are not required to return the same order. Sort before
+		// compatibility reconciliation so collision diagnostics are deterministic.
+		sort.Slice(page, func(i, j int) bool { return page[i].ID < page[j].ID })
 		for _, doc := range page {
 			if doc.State != "active" || doc.Deleted {
 				if collection != "parser-packs" || doc.State != "published" || doc.Deleted {
@@ -79,6 +83,10 @@ func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle
 				if compatibilityErr != nil {
 					continue
 				}
+				if existingCatalogID, duplicate := seenRuntimeParserID[pack.ID]; duplicate && existingCatalogID != doc.ID {
+					return bundle, fmt.Errorf("active parser runtime identity %q conflicts between catalog documents %q and %q", pack.ID, existingCatalogID, doc.ID)
+				}
+				seenRuntimeParserID[pack.ID] = doc.ID
 				digest := sha256.Sum256(encoded)
 				name, _ := payload["name"].(string)
 				if name == "" {

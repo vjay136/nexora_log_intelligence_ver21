@@ -35,5 +35,6 @@
   "artifact_public_keys": [],
   "max_artifact_bytes": 536870912,
   "rate_limit": 300,
-  "rate_window_seconds": 60
+  "rate_window_seconds": 60,
+  "allow_admin_emergency_self_approval": true
 }

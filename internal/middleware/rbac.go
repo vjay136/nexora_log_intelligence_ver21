@@ -33,16 +33,21 @@ const (
 	PermissionManageUsers    = "users:manage"
 	PermissionTriggerRollout = "rollout:trigger"
 	PermissionApproveRollout = "rollout:approve"
-	PermissionCancelRollout  = "rollout:cancel"
-	PermissionReadTelemetry  = "telemetry:read"
-	PermissionWriteTelemetry = "telemetry:write"
-	PermissionParsePreview   = "parse:preview"
-	PermissionAssuranceSave  = "assurance:save"
-	PermissionMigration      = "migration:manage"
-	PermissionReadArtifacts  = "artifacts:read"
-	PermissionUploadArtifact = "artifacts:upload"
-	PermissionReadAudit      = "audit:read"
-	PermissionSystemHealth   = "system:health"
+	// PermissionEmergencyApprove is deliberately limited to administrators. It
+	// permits an explicitly requested, reason-bearing self approval only when
+	// the controller's break-glass policy is also enabled. Normal approval
+	// endpoints continue to enforce separation of duties.
+	PermissionEmergencyApprove = "approval:emergency_self"
+	PermissionCancelRollout    = "rollout:cancel"
+	PermissionReadTelemetry    = "telemetry:read"
+	PermissionWriteTelemetry   = "telemetry:write"
+	PermissionParsePreview     = "parse:preview"
+	PermissionAssuranceSave    = "assurance:save"
+	PermissionMigration        = "migration:manage"
+	PermissionReadArtifacts    = "artifacts:read"
+	PermissionUploadArtifact   = "artifacts:upload"
+	PermissionReadAudit        = "audit:read"
+	PermissionSystemHealth     = "system:health"
 )
 
 var RolePermissions = map[string][]string{
@@ -77,6 +82,7 @@ var RolePermissions = map[string][]string{
 		PermissionWriteTelemetry, PermissionParsePreview, PermissionAssuranceSave,
 		PermissionMigration, PermissionReadArtifacts, PermissionUploadArtifact,
 		PermissionTriggerRollout, PermissionApproveRollout, PermissionCancelRollout, PermissionReadAudit,
+		PermissionEmergencyApprove,
 		PermissionSystemHealth,
 	},
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,90 @@ func TestNotificationPolicyAndAuditFeed(t *testing.T) {
 	history := feed["delivery_history"].(map[string]any)["attempts"].([]any)
 	if len(history) != 2 {
 		t.Fatalf("expected persisted job and PagerDuty delivery evidence, got %s", body)
+	}
+}
+
+func TestNotificationLifecycleIsPerUserAndUnreadCountIsAuthoritative(t *testing.T) {
+	f := newAPIFixture(t)
+	baselineResponse, baselineBody := f.request(http.MethodGet, "/api/v1/notifications?limit=100", nil)
+	if baselineResponse.StatusCode != http.StatusOK {
+		t.Fatalf("baseline notification feed %d: %s", baselineResponse.StatusCode, baselineBody)
+	}
+	baseline := decodeMap(t, baselineBody)
+	baselineVisible := int(baseline["visible_count"].(float64))
+	baselineUnread := int(baseline["unread_count"].(float64))
+	event, err := f.server.audit.Append(auditEventForTest("quarantine.reprocess", "failure"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertFeed := func(wantVisible, wantUnread int) map[string]any {
+		t.Helper()
+		response, body := f.request(http.MethodGet, "/api/v1/notifications?limit=100", nil)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("notification feed %d: %s", response.StatusCode, body)
+		}
+		feed := decodeMap(t, body)
+		if got := int(feed["visible_count"].(float64)); got != wantVisible {
+			t.Fatalf("visible count=%d, want %d: %s", got, wantVisible, body)
+		}
+		if got := int(feed["unread_count"].(float64)); got != wantUnread {
+			t.Fatalf("unread count=%d, want %d: %s", got, wantUnread, body)
+		}
+		return feed
+	}
+
+	assertFeed(baselineVisible+1, baselineUnread+1)
+	path := "/api/v1/notifications/audit-" + strconv.FormatUint(event.Sequence, 10)
+	response, body := f.request(http.MethodPost, path, map[string]any{"action": "read"})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("mark read %d: %s", response.StatusCode, body)
+	}
+	assertFeed(baselineVisible+1, baselineUnread)
+
+	response, body = f.request(http.MethodPost, path, map[string]any{"action": "unread"})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("mark unread %d: %s", response.StatusCode, body)
+	}
+	assertFeed(baselineVisible+1, baselineUnread+1)
+
+	response, body = f.request(http.MethodPost, path, map[string]any{"action": "snooze", "snooze_minutes": 60})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("snooze %d: %s", response.StatusCode, body)
+	}
+	assertFeed(baselineVisible, baselineUnread)
+
+	response, body = f.request(http.MethodDelete, path, map[string]any{})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("dismiss %d: %s", response.StatusCode, body)
+	}
+	assertFeed(baselineVisible, baselineUnread)
+}
+
+func TestResolvedResourceDoesNotRemainActionable(t *testing.T) {
+	f := newAPIFixture(t)
+	baselineResponse, baselineBody := f.request(http.MethodGet, "/api/v1/notifications?limit=100", nil)
+	if baselineResponse.StatusCode != http.StatusOK {
+		t.Fatalf("baseline notification feed %d: %s", baselineResponse.StatusCode, baselineBody)
+	}
+	baselineUnread := int(decodeMap(t, baselineBody)["unread_count"].(float64))
+	failed := auditEventForTest("quarantine.reprocess", "failure")
+	failed.Resource = "quarantine/q-100"
+	if _, err := f.server.audit.Append(failed); err != nil {
+		t.Fatal(err)
+	}
+	resolved := auditEventForTest("quarantine.resolve", "success")
+	resolved.Resource = failed.Resource
+	if _, err := f.server.audit.Append(resolved); err != nil {
+		t.Fatal(err)
+	}
+	response, body := f.request(http.MethodGet, "/api/v1/notifications?limit=100", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("notification feed %d: %s", response.StatusCode, body)
+	}
+	feed := decodeMap(t, body)
+	if got := int(feed["unread_count"].(float64)); got != baselineUnread {
+		t.Fatalf("resolved resource changed unread notifications from baseline %d to %d: %s", baselineUnread, got, body)
 	}
 }
 

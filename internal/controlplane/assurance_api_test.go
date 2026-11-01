@@ -149,6 +149,35 @@ func TestAssuranceScoreAndParserCandidateLifecycle(t *testing.T) {
 	}
 }
 
+func TestAssuranceParserPreviewValidatesCandidateWithoutPersistence(t *testing.T) {
+	f := newAPIFixture(t)
+	parser := map[string]any{
+		"pattern_type": "regex",
+		"pattern":      `level=(?P<level>\w+) user=(?P<user>\w+)`,
+		"fields": []any{
+			map[string]any{"name": "level", "source": "group:level", "type": "string"},
+			map[string]any{"name": "user", "source": "group:user", "type": "string"},
+		},
+	}
+	cases := []any{map[string]any{
+		"raw":     "level=INFO user=alice",
+		"desired": map[string]any{"level": "INFO", "user": "alice"},
+	}}
+	response, data := f.request(http.MethodPost, "/api/v1/assurance/parser-preview", map[string]any{"parser": parser, "cases": cases})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("candidate preview %d: %s", response.StatusCode, data)
+	}
+	result := decodeMap(t, data)
+	validation, _ := result["validation"].(map[string]any)
+	if result["passed"] != true || result["persisted"] != false || result["activated"] != false || validation["passed"] != float64(1) || validation["failed"] != float64(0) {
+		t.Fatalf("unexpected candidate preview: %s", data)
+	}
+	response, catalog := f.request(http.MethodGet, "/api/v1/assurance/parsers", nil)
+	if response.StatusCode != http.StatusOK || !bytes.Contains(catalog, []byte(`"count":0`)) {
+		t.Fatalf("preview persisted a parser candidate: %d %s", response.StatusCode, catalog)
+	}
+}
+
 func TestAssuranceParserSubmissionCanBeCancelled(t *testing.T) {
 	f := newAPIFixture(t)
 	parser := map[string]any{"pattern_type": "regex", "pattern": `user=(?P<user>\w+)`, "fields": []any{map[string]any{"name": "user", "source": "group:user", "type": "string"}}}

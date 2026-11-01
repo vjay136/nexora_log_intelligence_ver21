@@ -107,6 +107,14 @@ type notificationPolicy struct {
 	UpdatedAt     time.Time                            `json:"updated_at,omitempty"`
 }
 
+type notificationUserState struct {
+	Username     string    `json:"username"`
+	Sequence     uint64    `json:"sequence"`
+	Status       string    `json:"status"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	SnoozedUntil time.Time `json:"snoozed_until,omitempty"`
+}
+
 func defaultNotificationPolicy() notificationPolicy {
 	return notificationPolicy{
 		Channels: map[string]notificationChannelConfig{
@@ -165,26 +173,57 @@ func (s *Server) handleNotificationFeed(w http.ResponseWriter, r *http.Request) 
 		limit = value
 	}
 	policy := s.readNotificationPolicy(r)
-	acknowledged := map[uint64]bool{}
+	userStates := map[uint64]notificationUserState{}
 	acks, _ := s.metadata.List(r.Context(), notificationAckCollection, metastore.Query{Limit: 1000})
 	for _, ack := range acks {
-		var payload struct {
-			Username string `json:"username"`
-			Sequence uint64 `json:"sequence"`
-		}
+		var payload notificationUserState
 		if json.Unmarshal(ack.Payload, &payload) == nil && payload.Username == principal.Username {
-			acknowledged[payload.Sequence] = true
+			// Acknowledgements written by V20 R3 did not have an explicit status.
+			if payload.Status == "" {
+				payload.Status = "read"
+			}
+			userStates[payload.Sequence] = payload
+		}
+	}
+	now := time.Now().UTC()
+	events := s.audit.List(1000)
+	resolvedResources := map[string]uint64{}
+	for _, event := range events {
+		resourceKey := strings.TrimSpace(strings.ToLower(event.Resource))
+		if resourceKey != "" && isNotificationResolutionEvent(event) && event.Sequence > resolvedResources[resourceKey] {
+			resolvedResources[resourceKey] = event.Sequence
 		}
 	}
 	items := make([]map[string]any, 0, limit)
-	for _, event := range s.audit.List(1000) {
-		category, severity, actionable := classifyNotificationEvent(event)
-		if !actionable || !policyWatches(policy, category) || !notificationRecipient(policy, principal.Username, principal.Role, severity) {
+	for _, event := range events {
+		resourceKey := strings.TrimSpace(strings.ToLower(event.Resource))
+		if isNotificationResolutionEvent(event) {
 			continue
 		}
-		items = append(items, map[string]any{"id": fmt.Sprintf("audit-%d", event.Sequence), "sequence": event.Sequence, "timestamp": event.Timestamp, "category": category, "severity": severity, "title": notificationTitle(event, category), "action": event.Action, "resource": event.Resource, "outcome": event.Outcome, "actor": event.Actor, "acknowledged": acknowledged[event.Sequence], "source": "controller_audit_chain"})
+		category, severity, actionable := classifyNotificationEvent(event)
+		if !actionable || resolvedResources[resourceKey] > event.Sequence || !policyWatches(policy, category) || !notificationRecipient(policy, principal.Username, principal.Role, severity) {
+			continue
+		}
+		userState := userStates[event.Sequence]
+		status := userState.Status
+		if status == "" {
+			status = "unread"
+		}
+		if status == "dismissed" || (status == "snoozed" && userState.SnoozedUntil.After(now)) {
+			continue
+		}
+		if status == "snoozed" {
+			status = "unread"
+		}
+		items = append(items, map[string]any{"id": fmt.Sprintf("audit-%d", event.Sequence), "sequence": event.Sequence, "timestamp": event.Timestamp, "category": category, "severity": severity, "title": notificationTitle(event, category), "action": event.Action, "resource": event.Resource, "outcome": event.Outcome, "actor": event.Actor, "status": status, "read": status == "read", "acknowledged": status == "read", "snoozed_until": nullableTime(userState.SnoozedUntil), "source": "controller_audit_chain"})
 		if len(items) == limit {
 			break
+		}
+	}
+	unreadCount := 0
+	for _, item := range items {
+		if item["status"] == "unread" {
+			unreadCount++
 		}
 	}
 	deliveries, _ := s.metadata.List(r.Context(), notificationDeliveryCollection, metastore.Query{Limit: 500})
@@ -195,12 +234,12 @@ func (s *Server) handleNotificationFeed(w http.ResponseWriter, r *http.Request) 
 			history = append(history, map[string]any{"id": attempt.ID, "sequence": attempt.Sequence, "channel": attempt.Channel, "attempt": attempt.Attempt, "status": attempt.Status, "timestamp": attempt.Timestamp, "error": attempt.Error})
 		}
 	}
-	jsonOK(w, map[string]any{"notifications": items, "count": len(items), "delivery_history": map[string]any{"in_app": "derived from persisted audit records", "attempts": history}, "policy": policy})
+	jsonOK(w, map[string]any{"notifications": items, "count": unreadCount, "unread_count": unreadCount, "visible_count": len(items), "delivery_history": map[string]any{"in_app": "derived from persisted audit records", "attempts": history}, "policy": policy})
 }
 
 func (s *Server) handleNotificationAck(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonError(w, "POST required", http.StatusMethodNotAllowed)
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		jsonError(w, "POST or DELETE required", http.StatusMethodNotAllowed)
 		return
 	}
 	principal := s.authorize(w, r, middleware.PermissionReadTelemetry)
@@ -225,16 +264,68 @@ func (s *Server) handleNotificationAck(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "notification not found", http.StatusNotFound)
 			return
 		}
-		payload, _ := json.Marshal(map[string]any{"username": principal.Username, "sequence": sequence, "acknowledged_at": time.Now().UTC()})
+		action := "read"
+		snoozedUntil := time.Time{}
+		if r.Method == http.MethodDelete {
+			action = "dismissed"
+		} else {
+			var request struct {
+				Action        string `json:"action"`
+				SnoozeMinutes int    `json:"snooze_minutes"`
+			}
+			if err := decodeJSON(r, &request, 4<<10); err != nil {
+				jsonError(w, "notification action invalid", http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(request.Action) != "" {
+				action = strings.ToLower(strings.TrimSpace(request.Action))
+			}
+			switch action {
+			case "read", "unread", "dismissed":
+			case "snooze", "snoozed":
+				action = "snoozed"
+				minutes := request.SnoozeMinutes
+				if minutes == 0 {
+					minutes = 60
+				}
+				if minutes < 5 || minutes > 7*24*60 {
+					jsonError(w, "snooze_minutes must be between 5 and 10080", http.StatusBadRequest)
+					return
+				}
+				snoozedUntil = time.Now().UTC().Add(time.Duration(minutes) * time.Minute)
+			default:
+				jsonError(w, "action must be read, unread, snooze, or dismissed", http.StatusBadRequest)
+				return
+			}
+		}
+		state := notificationUserState{Username: principal.Username, Sequence: sequence, Status: action, UpdatedAt: time.Now().UTC(), SnoozedUntil: snoozedUntil}
+		payload, _ := json.Marshal(state)
 		id := safeID(principal.Username + "-" + strconv.FormatUint(sequence, 10))
-		if _, err := s.metadata.Put(r.Context(), metastore.Document{Collection: notificationAckCollection, ID: id, State: "acknowledged", Payload: payload, CreatedBy: principal.Username}); err != nil {
-			jsonError(w, "notification acknowledgement persistence failed", http.StatusServiceUnavailable)
+		if _, err := s.metadata.Put(r.Context(), metastore.Document{Collection: notificationAckCollection, ID: id, State: action, Payload: payload, CreatedBy: principal.Username}); err != nil {
+			jsonError(w, "notification state persistence failed", http.StatusServiceUnavailable)
 			return
 		}
-		jsonOK(w, map[string]any{"status": "acknowledged", "sequence": sequence})
+		jsonOK(w, map[string]any{"status": action, "sequence": sequence, "snoozed_until": nullableTime(snoozedUntil)})
 		return
 	}
 	jsonError(w, "notification not found", http.StatusNotFound)
+}
+
+// isNotificationResolutionEvent suppresses older actionable audit events for
+// the same resource without deleting immutable audit evidence. Only explicit,
+// successful lifecycle actions resolve work; an unrelated success cannot hide
+// a previous operational failure.
+func isNotificationResolutionEvent(event auditlog.Event) bool {
+	if event.Outcome != "success" || strings.TrimSpace(event.Resource) == "" {
+		return false
+	}
+	action := strings.ToLower(event.Action)
+	for _, marker := range []string{".approve", ".publish", ".resolve", ".exclude", ".delete", ".dismiss", ".cancel", ".offboard", ".acknowledge"} {
+		if strings.Contains(action, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) readNotificationPolicy(r *http.Request) notificationPolicy {

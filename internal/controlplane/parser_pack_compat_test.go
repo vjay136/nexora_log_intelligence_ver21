@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	metastore "nexora.local/nli-v20/internal/store"
@@ -128,6 +129,111 @@ func TestLegacyRuntimeAndCatalogIDsReconcileOnlyWhenExplicit(t *testing.T) {
 	doc.Payload = payload
 	if _, _, err := runtimeParserPackForDocument(doc); err == nil {
 		t.Fatal("runtime/catalog alias was accepted without explicit catalog_id")
+	}
+}
+
+func TestStrictImportedParserPackUsesItsValidatedRuntimeIdentity(t *testing.T) {
+	fixture := newAPIFixture(t)
+	pack, err := assuranceRuntimePack("alloy_imap_processor", "7.0.0", "migration", map[string]any{
+		"pattern_type": "regex", "pattern": `^(?P<message>.+)$`,
+		"fields": []any{map[string]any{"name": "message", "source": "group:message", "type": "string", "required": true}},
+	}, []assuranceRequest{{Raw: "imap session opened", Service: "imap"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fixture.server.metadata.Put(context.Background(), metastore.Document{
+		Collection: "parser-packs", ID: "imported-alloy-imap-95a0ef3ca6a6", State: "active", Payload: payload, CreatedBy: "migration",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	converted, _, err := runtimeParserPackForDocument(doc)
+	if err != nil || converted.ID != "alloy_imap_processor" {
+		t.Fatalf("strict imported parser identity was not reconciled: parser=%#v err=%v", converted, err)
+	}
+	bundle, err := fixture.server.buildActiveParserBundle(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, asset := range bundle.Assets {
+		if asset.AssetClass == "parser-packs" && asset.AssetID == "alloy_imap_processor" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("strict imported parser missing from bundle: %#v", bundle.Assets)
+	}
+}
+
+func TestDirectImportedParserPackRejectsBrokenSeal(t *testing.T) {
+	fixture := newAPIFixture(t)
+	pack, err := assuranceRuntimePack("sealed-runtime", "1.0.0", "migration", map[string]any{
+		"pattern_type": "regex", "pattern": `^(?P<message>.+)$`,
+		"fields": []any{map[string]any{"name": "message", "source": "group:message", "type": "string", "required": true}},
+	}, []assuranceRequest{{Raw: "hello", Service: "auto"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack.SHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	payload, _ := json.Marshal(pack)
+	doc, err := fixture.server.metadata.Put(context.Background(), metastore.Document{
+		Collection: "parser-packs", ID: "imported-broken-seal", State: "active", Payload: payload, CreatedBy: "migration",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runtimeParserPackForDocument(doc); err == nil {
+		t.Fatal("direct parser pack with a broken seal was accepted through the legacy fallback")
+	}
+}
+
+func TestRuntimeIdentityCollisionFailsDeterministically(t *testing.T) {
+	fixture := newAPIFixture(t)
+	for _, catalogID := range []string{"import-a", "import-b"} {
+		pack, err := assuranceRuntimePack("shared-runtime-id", "1.0.0", "migration", map[string]any{
+			"pattern_type": "regex", "pattern": `^(?P<message>.+)$`,
+			"fields": []any{map[string]any{"name": "message", "source": "group:message", "type": "string", "required": true}},
+		}, []assuranceRequest{{Raw: catalogID, Service: "auto"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, _ := json.Marshal(pack)
+		if _, err := fixture.server.metadata.Put(context.Background(), metastore.Document{
+			Collection: "parser-packs", ID: catalogID, State: "active", Payload: payload, CreatedBy: "migration",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := fixture.server.buildActiveParserBundle(context.Background()); err == nil || !strings.Contains(err.Error(), `conflicts between catalog documents "import-a" and "import-b"`) {
+		t.Fatalf("runtime identity collision was not rejected deterministically: %v", err)
+	}
+}
+
+func TestValidatedLegacyAssuranceEnvelopeRebuildsRuntimePack(t *testing.T) {
+	fixture := newAPIFixture(t)
+	definition := map[string]any{
+		"pattern_type": "regex", "pattern": `^user=(?P<user>\w+)$`,
+		"fields": []any{map[string]any{"name": "user", "source": "group:user", "type": "string", "required": true}},
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"id": "validated-old-assurance", "name": "Validated old Assurance", "version": "1.0.0",
+		"parser": definition, "cases": []assuranceRequest{{Raw: "user=alice", Service: "auto", Desired: map[string]any{"user": "alice"}}},
+		"validation_passed": true, "artifact_checksum": parserArtifactChecksum(definition),
+	})
+	doc, err := fixture.server.metadata.Put(context.Background(), metastore.Document{
+		Collection: "parser-packs", ID: "validated-old-assurance", State: "active", Payload: payload, CreatedBy: "legacy-author",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack, _, err := runtimeParserPackForDocument(doc)
+	if err != nil || pack.ID != doc.ID || len(pack.Rules) == 0 {
+		t.Fatalf("validated legacy Assurance parser did not reconcile: pack=%#v err=%v", pack, err)
 	}
 }
 

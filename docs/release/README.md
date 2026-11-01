@@ -1,5 +1,28 @@
 # NLI v20 release infrastructure
 
+## Release 20.0.0-4
+
+Release 4 validates the generated quarantine-recovery parser itself before any
+persistence or activation. The nine-stage wizard embeds parser approval,
+publication, exact-bundle rollout, acknowledgement, replay, and verification,
+while retaining the normal independent-review path. A policy-enabled
+administrator emergency path is explicit, reason-bearing, and bound to the
+exact parser revision/checksum or rollout bundle hash.
+
+Historical parser records are converted only when they form a valid current
+runtime pack with a unique runtime identity. Malformed definitions and runtime
+ID collisions remain blocked with repair guidance. Notifications now have
+per-user read, unread, check-later, and dismissed state without removing the
+immutable audit record. The login banner is contained above the right-side
+sign-in form.
+
+### Operator acceptance for release 4
+
+1. Quarantine an unsupported record, enter operator field names, generate a candidate, and confirm preview reports at least one passing case plus the candidate checksum.
+2. Complete Steps 7–9 without leaving the wizard: approve/publish the exact revision, approve/deploy the exact bundle, wait for the origin-client hash, replay, and verify resolution.
+3. Confirm normal creator self-approval is rejected. When emergency approval policy is enabled, confirm an administrator must provide a reason and the exact displayed revision and checksum/hash.
+4. Mark a notification read, unread, check-later, and dismissed; confirm only actionable unread counts change and immutable audit evidence remains.
+
 ## Release 20.0.0-3
 
 Release 3 corrects active-work counting and the guided quarantine recovery path. Excluded records and records whose retained raw evidence was deleted remain auditable but no longer inflate actionable navigation badges. Step 2 accepts operator-defined output field names, creates editable evidence-backed mappings, and updates the nine status cards from the current lifecycle state.

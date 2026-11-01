@@ -527,11 +527,49 @@ type assuranceParserInput struct {
 	SourceQuarantineRecordID string             `json:"source_quarantine_record_id,omitempty"`
 }
 
+// handleAssuranceParserPreview validates a proposed declarative parser against
+// the exact supplied evidence without persisting or activating it.  The QRW
+// uses this endpoint before a draft exists so that its Test step exercises the
+// candidate under review rather than whichever parser happens to be live.
+func (s *Server) handleAssuranceParserPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var input assuranceParserInput
+	if decodeJSON(r, &input, 2<<20) != nil || input.Parser == nil || len(input.Cases) == 0 || len(input.Cases) > 100 {
+		jsonError(w, "declarative parser and 1..100 validation cases are required", http.StatusBadRequest)
+		return
+	}
+	if err := unsafeDeclarative(input.Parser); err != nil {
+		jsonError(w, "unsafe declarative parser", http.StatusBadRequest)
+		return
+	}
+	validation := validateParserCandidate(input.Parser, input.Cases)
+	jsonOK(w, map[string]any{
+		"validation":        validation,
+		"artifact_checksum": parserArtifactChecksum(input.Parser),
+		"passed":            validation["failed"] == 0 && validation["total"] == len(input.Cases),
+		"persisted":         false,
+		"activated":         false,
+	})
+}
+
 func validateParserCandidate(definition map[string]any, cases []assuranceRequest) map[string]any {
 	encoded, _ := json.Marshal(definition)
 	var parser registry.ParserDef
 	if err := json.Unmarshal(encoded, &parser); err != nil {
 		return map[string]any{"status": "invalid_definition", "reason": "parser definition is invalid", "total": len(cases), "passed": 0, "failed": len(cases), "score": 0, "errors": []string{"parser definition is invalid"}}
+	}
+	// Candidate editors intentionally do not assign the durable catalog identity
+	// or revision. Supply bounded ephemeral values for the shared registry
+	// validator; these values are not persisted and are excluded from the
+	// artifact checksum that later binds review and publication.
+	if strings.TrimSpace(parser.ID) == "" {
+		parser.ID = "assurance-preview"
+	}
+	if parser.Version < 1 {
+		parser.Version = 1
 	}
 	if err := registry.Validate(&parser); err != nil {
 		return map[string]any{"status": "invalid_definition", "reason": err.Error(), "total": len(cases), "passed": 0, "failed": len(cases), "score": 0, "errors": []string{err.Error()}}
@@ -805,12 +843,19 @@ func (s *Server) handleAssuranceParser(w http.ResponseWriter, r *http.Request) {
 	var reviewRequest struct {
 		Reason string `json:"reason"`
 	}
+	var approval approvalRequest
 	if action == "reject" {
 		if decodeJSON(r, &reviewRequest, 4<<10) != nil || strings.TrimSpace(reviewRequest.Reason) == "" || len(strings.TrimSpace(reviewRequest.Reason)) > 512 {
 			jsonError(w, "rejection reason must contain 1..512 characters", 400)
 			return
 		}
+	} else if action == "approve" {
+		if decodeJSON(r, &approval, 8<<10) != nil {
+			jsonError(w, "approval request is invalid", http.StatusBadRequest)
+			return
+		}
 	}
+	approvalMode, approvalAudit := "", map[string]string(nil)
 	switch action {
 	case "validate":
 		var cases []assuranceRequest
@@ -860,19 +905,21 @@ func (s *Server) handleAssuranceParser(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "parser is not awaiting review", 409)
 			return
 		}
-		if doc.CreatedBy == p.Username {
-			jsonError(w, "creator cannot approve their own parser", 409)
-			return
-		}
 		definition, _ := body["parser"].(map[string]any)
 		checksum := parserArtifactChecksum(definition)
 		if checksum == "" || checksum != body["submitted_checksum"] || checksum != body["artifact_checksum"] {
 			jsonError(w, "submitted parser artifact changed; approval is invalid", 409)
 			return
 		}
+		approvalMode, approvalAudit, err = s.approvalMode(doc, p, approval, checksum, "parser_checksum")
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
 		body["review_state"] = "approved"
 		body["reviewed_by"] = p.Username
 		body["approved_checksum"] = checksum
+		recordEmergencyApproval(body, p, approval, approvalMode)
 	case "reject":
 		if doc.State != "in_review" {
 			jsonError(w, "parser is not awaiting review", 409)
@@ -959,7 +1006,7 @@ func (s *Server) handleAssuranceParser(w http.ResponseWriter, r *http.Request) {
 		response["rollout_proposal"] = documentView(proposal)
 		response["approval_gate"] = "pending_approval"
 	}
-	s.auditAction(p, "assurance.parser_"+action, "parser-packs/"+id, "success", nil)
+	s.auditAction(p, "assurance.parser_"+action, "parser-packs/"+id, "success", approvalAudit)
 	jsonOK(w, response)
 }
 func (s *Server) recordAssuranceHistory(result map[string]any, actor string) {

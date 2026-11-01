@@ -84,6 +84,10 @@ type Config struct {
 	MaxArtifactBytes                 int64    `json:"max_artifact_bytes,omitempty"`
 	RateLimit                        int      `json:"rate_limit,omitempty"`
 	RateWindowSeconds                int      `json:"rate_window_seconds,omitempty"`
+	// AllowAdminEmergencySelfApproval enables a break-glass path. Callers must
+	// still hold the administrator-only emergency approval permission and send
+	// a reason plus the exact document revision and artifact/bundle checksum.
+	AllowAdminEmergencySelfApproval bool `json:"allow_admin_emergency_self_approval,omitempty"`
 }
 
 type Server struct {
@@ -542,6 +546,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/nupire", s.nupireAPI)
 	s.mux.HandleFunc("/api/v1/assurance/upload", s.handleAssuranceUpload)
 	s.mux.HandleFunc("/api/v1/assurance/corpus", guard(middleware.PermissionParsePreview, s.handleAssuranceCorpus))
+	s.mux.HandleFunc("/api/v1/assurance/parser-preview", guard(middleware.PermissionParsePreview, s.handleAssuranceParserPreview))
 	s.mux.HandleFunc("/api/v1/assurance/cases", s.handleAssuranceCases)
 	s.mux.HandleFunc("/api/v1/assurance/cases/", s.handleAssuranceCase)
 	s.mux.HandleFunc("/api/v1/assurance/parsers", s.handleAssuranceParsers)

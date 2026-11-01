@@ -34,11 +34,46 @@ func runtimeParserPackForDocument(doc metastore.Document) (*parserpolicy.ParserP
 		return normalizeRuntimeParserPack(packDoc, pack)
 	}
 
-	// Imported NLI packs are stored directly as the document payload. Decode
-	// them strictly first so unknown top-level fields cannot be discarded.
-	var direct parserpolicy.ParserPack
-	if strictJSON(doc.Payload, &direct) == nil && direct.ID != "" && len(direct.Rules) != 0 {
-		return normalizeRuntimeParserPack(doc, &direct)
+	// Older Assurance releases persisted the declarative parser and its held-
+	// out cases but did not materialize runtime_pack. Rebuild only when the
+	// stored validation evidence passed and the parser checksum is unchanged.
+	// This is a deterministic compatibility conversion, not fabricated rules.
+	if rawParser := envelope["parser"]; len(rawParser) != 0 && string(rawParser) != "null" {
+		var definition map[string]any
+		var cases []assuranceRequest
+		var validationPassed bool
+		var version, artifactChecksum, approvedChecksum string
+		_ = json.Unmarshal(rawParser, &definition)
+		_ = json.Unmarshal(envelope["cases"], &cases)
+		_ = json.Unmarshal(envelope["validation_passed"], &validationPassed)
+		_ = json.Unmarshal(envelope["version"], &version)
+		_ = json.Unmarshal(envelope["artifact_checksum"], &artifactChecksum)
+		_ = json.Unmarshal(envelope["approved_checksum"], &approvedChecksum)
+		actualChecksum := parserArtifactChecksum(definition)
+		if validationPassed && len(cases) != 0 && actualChecksum != "" && actualChecksum == artifactChecksum && (approvedChecksum == "" || approvedChecksum == actualChecksum) {
+			pack, err := assuranceRuntimePack(doc.ID, version, doc.CreatedBy, definition, cases)
+			if err != nil {
+				return nil, nil, fmt.Errorf("validated legacy Assurance parser is runtime-incompatible: %w", err)
+			}
+			return normalizeRuntimeParserPack(doc, pack)
+		}
+	}
+
+	// Imported NLI packs are stored directly as the document payload. Accept an
+	// aliased catalog identity only after the complete pack (including its
+	// declared SHA-256 seal and semantic rules) passes the production loader.
+	if rawDigest := envelope["sha256"]; len(rawDigest) != 0 && string(rawDigest) != "null" {
+		direct, directErr := parserpolicy.LoadParserPackBytes(doc.Payload)
+		if directErr != nil {
+			return nil, nil, fmt.Errorf("direct imported parser pack failed strict seal validation: %w", directErr)
+		}
+		// A migration catalog entry may have a generated inventory ID while the
+		// strictly validated ParserPack retains its stable runtime ID. The runtime
+		// identity is authoritative for direct ParserPack payloads; its sealed
+		// contents and rules are still verified below.
+		packDoc := doc
+		packDoc.ID = direct.ID
+		return normalizeRuntimeParserPack(packDoc, direct)
 	}
 
 	// The original Parser Catalog editor stored a small envelope containing

@@ -293,10 +293,6 @@ func (s *Server) handleParserAction(w http.ResponseWriter, r *http.Request, id, 
 			jsonError(w, "parser pack is not awaiting review", http.StatusConflict)
 			return
 		}
-		if doc.CreatedBy == principal.Username {
-			jsonError(w, "creator cannot approve own parser pack", http.StatusConflict)
-			return
-		}
 		next = "approved"
 	case "reject":
 		if doc.State != "in_review" {
@@ -328,6 +324,32 @@ func (s *Server) handleParserAction(w http.ResponseWriter, r *http.Request, id, 
 	if err := json.Unmarshal(doc.Payload, &payload); err != nil {
 		jsonError(w, "parser payload is invalid", http.StatusConflict)
 		return
+	}
+	approvalMode, approvalAudit := "", map[string]string(nil)
+	var approval approvalRequest
+	if action == "approve" {
+		if decodeJSON(r, &approval, 8<<10) != nil {
+			jsonError(w, "approval request is invalid", http.StatusBadRequest)
+			return
+		}
+		definition, _ := payload["parser"].(map[string]any)
+		artifactChecksum := parserArtifactChecksum(definition)
+		approvalDigest := doc.Hash
+		if definition != nil {
+			approvalDigest = artifactChecksum
+		}
+		if definition != nil && (artifactChecksum == "" || (payload["artifact_checksum"] != nil && fmt.Sprint(payload["artifact_checksum"]) != artifactChecksum)) {
+			jsonError(w, "parser artifact checksum changed; approval is invalid", http.StatusConflict)
+			return
+		}
+		approvalMode, approvalAudit, err = s.approvalMode(doc, principal, approval, approvalDigest, "parser_checksum")
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		recordEmergencyApproval(payload, principal, approval, approvalMode)
+		payload["approved_checksum"] = approvalDigest
+		payload["approved_revision"] = doc.Revision
 	}
 	if action == "activate" {
 		_, encodedPack, compatibilityErr := runtimeParserPackForDocument(doc)
@@ -378,7 +400,11 @@ func (s *Server) handleParserAction(w http.ResponseWriter, r *http.Request, id, 
 		response["rollout_proposal"] = documentView(proposal)
 		response["approval_gate"] = "pending_approval"
 	}
-	s.auditAction(principal, "parser."+action, "parser-packs/"+id, "success", map[string]string{"state": next})
+	auditDetails := map[string]string{"state": next}
+	for key, value := range approvalAudit {
+		auditDetails[key] = value
+	}
+	s.auditAction(principal, "parser."+action, "parser-packs/"+id, "success", auditDetails)
 	jsonOK(w, response)
 }
 
@@ -1342,12 +1368,28 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 		jsonError(w, "proposal is not awaiting approval", http.StatusConflict)
 		return
 	}
-	if doc.CreatedBy == principal.Username {
-		jsonError(w, "creator cannot approve own rollout", http.StatusConflict)
+	var approval approvalRequest
+	if decodeJSON(r, &approval, 8<<10) != nil {
+		jsonError(w, "approval request is invalid", http.StatusBadRequest)
 		return
 	}
 	var proposal map[string]any
 	_ = json.Unmarshal(doc.Payload, &proposal)
+	proposalType := fmt.Sprint(proposal["type"])
+	proposalBundleHash := strings.TrimSpace(fmt.Sprint(proposal["bundle_hash"]))
+	if doc.CreatedBy == principal.Username && proposalType != rolloutTypeParserSync {
+		jsonError(w, "creator cannot approve own rollout; emergency self-approval is limited to exact parser bundle proposals", http.StatusConflict)
+		return
+	}
+	if doc.CreatedBy == principal.Username && !s.cfg.AllowAdminEmergencySelfApproval {
+		jsonError(w, "creator cannot approve own rollout; administrator emergency approval is disabled", http.StatusConflict)
+		return
+	}
+	approvalMode, approvalAudit, approvalErr := s.approvalMode(doc, principal, approval, proposalBundleHash, "bundle_hash")
+	if approvalErr != nil {
+		jsonError(w, approvalErr.Error(), http.StatusConflict)
+		return
+	}
 	targets := interfaceStrings(proposal["target_nodes"])
 	var parserBundle *parserAssetBundle
 	var parserRolloutPayload any
@@ -1420,6 +1462,7 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 	proposal["approved_by"] = principal.Username
 	proposal["approved_at"] = time.Now().UTC()
 	proposal["live_rollout_id"] = live.ID
+	recordEmergencyApproval(proposal, principal, approval, approvalMode)
 	updated, _ := json.Marshal(proposal)
 	saved, err := s.metadata.Put(r.Context(), metastore.Document{Collection: "rollout-proposals", ID: id, State: "active", Payload: updated, CreatedBy: doc.CreatedBy})
 	if err != nil {
@@ -1430,7 +1473,8 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 	if parserBundle != nil {
 		s.markParserSyncRolloutDesired(r.Context(), principal.Username, doc.ID, *parserBundle, targets)
 	}
-	s.auditAction(principal, "rollout.approve", "rollout-proposals/"+id, "success", map[string]string{"live_rollout_id": live.ID})
+	approvalAudit["live_rollout_id"] = live.ID
+	s.auditAction(principal, "rollout.approve", "rollout-proposals/"+id, "success", approvalAudit)
 	jsonOK(w, documentView(saved))
 }
 func (s *Server) cancelRollout(w http.ResponseWriter, r *http.Request, id string) {
