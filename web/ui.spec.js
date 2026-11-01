@@ -618,6 +618,10 @@ test('Approvals workspace sends reason-bearing independent and exact emergency a
   await independent.getByRole('button',{name:'Approve reviewed proposal'}).click();
   await expect.poll(()=>mock.rolloutApprovalRequests).toHaveLength(1);
   expect(mock.rolloutApprovalRequests[0]).toEqual({id:'independent-proposal',body:{reason:'Validated against the approved parser bundle'}});
+  // The approval handler refreshes the workspace asynchronously. Wait for that
+  // refresh to commit before operating on the second proposal so the following
+  // click can never race the outgoing DOM on slower CI runners.
+  await expect(independent.getByRole('button',{name:'Approve reviewed proposal'})).toHaveCount(0);
   const emergency=page.locator('tr').filter({hasText:'Emergency parser rollout'});
   await emergency.locator('[data-rollout-reason]').fill('Production recovery approved by administrator');
   await emergency.getByRole('button',{name:'Emergency approve exact bundle'}).click();
