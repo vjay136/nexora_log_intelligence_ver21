@@ -53,6 +53,8 @@ class EvidenceGeneratorTest(unittest.TestCase):
                 "V20_R3_QRW_OPERATOR_GUIDE.md",
                 "V20_R4_TEST_RESULTS.md",
                 "V20_R4_QRW_OPERATOR_GUIDE.md",
+                "V20_R6_TEST_RESULTS.md",
+                "V20_R6_QRW_OPERATOR_GUIDE.md",
                 "V20_QUARANTINE_RESOLUTION_WIZARD.md",
                 "NLI_V20_UPES_GPRS_ARCHITECTURE.svg",
                 "PARSER_CATALOG.md",
@@ -67,7 +69,7 @@ class EvidenceGeneratorTest(unittest.TestCase):
                 elif name == "SAMPLE_FIELD_ACCOUNTING.json":
                     content = b'{"verdict":"pass"}\n'
                 elif name == "RELEASE_ID":
-                    content = b"NLI_VERSION=20.0.0\nNLI_RELEASE=2\nNLI_ARCH=x86_64\nSOURCE_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+                    content = b"NLI_VERSION=20.0.0\nNLI_RELEASE=6\nNLI_ARCH=x86_64\nSOURCE_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
                 else:
                     content = f"fixture-{index}".encode()
                 (artifacts / name).write_bytes(content)
@@ -83,7 +85,7 @@ class EvidenceGeneratorTest(unittest.TestCase):
                 str(generator),
                 "--artifacts", str(artifacts),
                 "--version", "20.0.0",
-                "--release", "7",
+                "--release", "6",
                 "--revision", "a" * 40,
                 "--source-date-epoch", "1791200000",
                 "--images", str(images),
