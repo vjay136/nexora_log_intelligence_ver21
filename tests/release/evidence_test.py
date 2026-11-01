@@ -51,6 +51,8 @@ class EvidenceGeneratorTest(unittest.TestCase):
                 "V20_R2_QRW_OPERATOR_GUIDE.md",
                 "V20_R3_TEST_RESULTS.md",
                 "V20_R3_QRW_OPERATOR_GUIDE.md",
+                "V20_R4_TEST_RESULTS.md",
+                "V20_R4_QRW_OPERATOR_GUIDE.md",
                 "V20_QUARANTINE_RESOLUTION_WIZARD.md",
                 "NLI_V20_UPES_GPRS_ARCHITECTURE.svg",
                 "PARSER_CATALOG.md",
