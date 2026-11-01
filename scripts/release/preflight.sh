@@ -7,7 +7,7 @@ source "$ROOT/packaging/release.env"
 
 fail() { printf 'release preflight: %s\n' "$*" >&2; exit 1; }
 
-[[ -d "$ROOT/.git" ]] || fail "source must be a Git checkout"
+git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "source must be a Git checkout"
 [[ -z "$(git -C "$ROOT" status --porcelain)" ]] || fail "source revision is not frozen and clean"
 [[ $(git -C "$ROOT" rev-parse HEAD) == "${SOURCE_REVISION:-$(git -C "$ROOT" rev-parse HEAD)}" ]] || fail "SOURCE_REVISION does not match HEAD"
 [[ $(sed -n 's/^module //p' "$ROOT/go.mod") == "$NLI_MODULE" ]] || fail "go.mod module must be $NLI_MODULE"
