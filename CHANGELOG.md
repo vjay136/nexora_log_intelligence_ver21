@@ -1,5 +1,14 @@
 # Changelog
 
+## [20.0.0-4] - 2026-11-01
+
+- Complete the Quarantine Resolution Wizard inside one nine-stage workspace, including exact-candidate preview, approval, publication, bundle rollout, acknowledgement, replay, and verification.
+- Accept operator-defined field names in evidence inspection and preserve them through deterministic candidate generation and validation.
+- Add an explicit policy-gated administrator emergency approval path bound to the exact revision/checksum or bundle hash while preserving independent review as the normal path.
+- Convert only valid legacy parser definitions into unique current runtime packs; block malformed definitions and runtime identifier collisions with repair guidance.
+- Persist per-user notification read, unread, check-later, and dismissed state while retaining immutable audit evidence and counting only unresolved actionable work.
+- Move and contain the login banner above the right-side sign-in form and publish the Ver20 Release 4 operator and test evidence documents in every release artifact.
+
 ## [20.0.0-3] - 2026-10-30
 
 - Clear Quarantine Wizard, UPES, and Unknown & Quarantine pending badges after exclude, raw-evidence deletion, replay resolution, or other terminal controller states while retaining audit metadata.

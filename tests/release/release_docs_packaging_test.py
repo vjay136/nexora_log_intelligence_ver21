@@ -15,6 +15,8 @@ R2_RESULTS = "V20_R2_TEST_RESULTS.md"
 R2_OPERATOR = "V20_R2_QRW_OPERATOR_GUIDE.md"
 R3_RESULTS = "V20_R3_TEST_RESULTS.md"
 R3_OPERATOR = "V20_R3_QRW_OPERATOR_GUIDE.md"
+R4_RESULTS = "V20_R4_TEST_RESULTS.md"
+R4_OPERATOR = "V20_R4_QRW_OPERATOR_GUIDE.md"
 DIAGRAM = "NLI_V20_UPES_GPRS_ARCHITECTURE.svg"
 
 
@@ -32,6 +34,8 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
         R2_OPERATOR: root / "docs" / R2_OPERATOR,
         R3_RESULTS: root / "docs" / R3_RESULTS,
         R3_OPERATOR: root / "docs" / R3_OPERATOR,
+        R4_RESULTS: root / "docs" / R4_RESULTS,
+        R4_OPERATOR: root / "docs" / R4_OPERATOR,
         DIAGRAM: root / "docs" / "architecture" / DIAGRAM,
     }
     for name, source in sources.items():
@@ -98,6 +102,16 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
         if claim not in operator_r3:
             fail(f"R3 operator guide does not document expected control: {claim!r}")
 
+    results_r4 = sources[R4_RESULTS].read_text(encoding="utf-8")
+    for claim in ("20.0.0-4", "67/67", "emergency", "notification"):
+        if claim not in results_r4:
+            fail(f"R4 test report does not record expected evidence: {claim!r}")
+
+    operator_r4 = sources[R4_OPERATOR].read_text(encoding="utf-8")
+    for claim in ("candidate preview", "administrator emergency recovery", "revision and checksum", "request replay"):
+        if claim not in operator_r4:
+            fail(f"R4 operator guide does not document expected control: {claim!r}")
+
     for relative in (
         "packaging/build-rpms.sh",
         "packaging/rpm/nli-client.spec",
@@ -123,12 +137,12 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
         "packaging/rpm/nli-client.spec",
         "packaging/rpm/nli-controller-agent.spec",
     ):
-        if "20.0.0-3" not in (root / relative).read_text(encoding="utf-8"):
+        if "20.0.0-4" not in (root / relative).read_text(encoding="utf-8"):
             fail(f"{relative} does not identify the current release")
 
     release_env = (root / "packaging" / "release.env").read_text(encoding="utf-8")
-    if "NLI_VERSION=20.0.0" not in release_env or "NLI_RELEASE=3" not in release_env:
-        fail("packaging release identity is not 20.0.0-3")
+    if "NLI_VERSION=20.0.0" not in release_env or "NLI_RELEASE=4" not in release_env:
+        fail("packaging release identity is not 20.0.0-4")
 
 
 def main() -> None:
