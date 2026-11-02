@@ -1,5 +1,5 @@
 // Package catalog provides the audited, read-only parser inventory embedded
-// into V20 binaries so the Controller can seed editable catalog tabs at startup.
+// into Ver21 binaries so the Controller can seed editable catalog tabs at startup.
 package catalog
 
 import (
@@ -29,7 +29,7 @@ func Assets() ([]Asset, error) {
 	if err := json.Unmarshal(asset, &decoded); err != nil {
 		return nil, fmt.Errorf("decode embedded parser catalog: %w", err)
 	}
-	if decoded.SchemaVersion != "1" || decoded.Product != "Nexora Log Intelligence Ver20" || len(decoded.UIAssets) == 0 {
+	if decoded.SchemaVersion != "1" || decoded.Product != "Nexora Log Intelligence Ver21" || len(decoded.UIAssets) == 0 {
 		return nil, fmt.Errorf("embedded parser catalog identity or assets are invalid")
 	}
 	assets := append([]Asset(nil), decoded.UIAssets...)

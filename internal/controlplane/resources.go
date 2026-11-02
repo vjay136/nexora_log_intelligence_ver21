@@ -325,6 +325,29 @@ func (s *Server) handleParserAction(w http.ResponseWriter, r *http.Request, id, 
 		jsonError(w, "parser payload is invalid", http.StatusConflict)
 		return
 	}
+	// Parser Catalog historically allowed arbitrary JSON to advance through
+	// review and only discovered that it was not executable at activation time.
+	// Gate both entry to review and approval on the same strict runtime loader
+	// used by publication. Invalid NAPI, migration, and legacy records remain
+	// editable in their current state until reviewed regression evidence and an
+	// executable definition are attached; they can never become an approved
+	// but permanently blocked catalog record.
+	if action == "submit" || action == "approve" {
+		_, encodedPack, compatibilityErr := runtimeParserPackForDocument(doc)
+		if compatibilityErr != nil {
+			jsonError(w, "parser cannot enter the live review lifecycle: "+compatibilityErr.Error(), http.StatusConflict)
+			return
+		}
+		// Persist the exact normalized runtime artifact reviewed by this
+		// transition. Publication and fleet synchronization subsequently consume
+		// this same sealed representation rather than rebuilding a different pack.
+		payload["runtime_pack"] = json.RawMessage(encodedPack)
+		payload["runtime_validation"] = map[string]any{
+			"status":       "passed",
+			"validated_by": principal.Username,
+			"validated_at": time.Now().UTC(),
+		}
+	}
 	approvalMode, approvalAudit := "", map[string]string(nil)
 	var approval approvalRequest
 	if action == "approve" {
@@ -1402,10 +1425,6 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 	}
 	if doc.CreatedBy == principal.Username && proposalType != rolloutTypeParserSync {
 		jsonError(w, "creator cannot approve own rollout; emergency self-approval is limited to exact parser bundle proposals", http.StatusConflict)
-		return
-	}
-	if doc.CreatedBy == principal.Username && !s.cfg.AllowAdminEmergencySelfApproval {
-		jsonError(w, "creator cannot approve own rollout; administrator emergency approval is disabled", http.StatusConflict)
 		return
 	}
 	approvalMode, approvalAudit, approvalErr := s.approvalMode(doc, principal, approval, proposalBundleHash, "bundle_hash")

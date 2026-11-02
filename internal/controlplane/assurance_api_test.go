@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"nexora.local/nli-v20/internal/aiprovider"
 )
 
 func TestAssuranceScoreAndParserCandidateLifecycle(t *testing.T) {
@@ -561,7 +563,34 @@ func TestAIProviderStatusNeverReturnsCredential(t *testing.T) {
 	}
 }
 
+func TestAIProviderCatalogSupportsReferenceCredentialsWithoutResolvingThem(t *testing.T) {
+	f := newAPIFixture(t)
+	cfg := aiProviderConfig{
+		Provider: "nvidia_nim", BaseURL: "https://integrate.api.nvidia.com/v1", Model: "provider/model",
+		Enabled: true, Priority: 10, FallbackGroup: "review",
+		Credential: aiprovider.Credential{Source: aiprovider.CredentialEnvironment, Reference: "NLI_AI_NVIDIA_KEY"},
+	}
+	if err := f.server.storeAIProvider(context.Background(), cfg, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	// The referenced variable intentionally does not exist. Reading redacted
+	// configuration must not depend on live secret availability.
+	response, data := f.request(http.MethodGet, "/api/v1/admin/ai-provider", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("provider catalog %d: %s", response.StatusCode, data)
+	}
+	for _, expected := range [][]byte{[]byte(`"provider":"nvidia_nim"`), []byte(`"credential_source":"env_ref"`), []byte(`"credential_ref":"NLI_AI_NVIDIA_KEY"`), []byte(`"kind":"gemini"`), []byte(`"kind":"ollama"`)} {
+		if !bytes.Contains(data, expected) {
+			t.Fatalf("provider catalog omitted %s: %s", expected, data)
+		}
+	}
+	if bytes.Contains(data, []byte(`"ciphertext"`)) || bytes.Contains(data, []byte(`"nonce"`)) || bytes.Contains(data, []byte(`"api_key"`)) {
+		t.Fatalf("provider catalog disclosed credential internals: %s", data)
+	}
+}
+
 func TestAIFailureProposalIsDiagnosticReviewOnlyAndDoesNotRetainRaw(t *testing.T) {
+	t.Setenv("NLI_AI_ALLOW_LOOPBACK", "true")
 	f := newAPIFixture(t)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

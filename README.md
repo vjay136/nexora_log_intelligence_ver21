@@ -1,8 +1,10 @@
-# Nexora Log Intelligence Ver20
+# Nexora Log Intelligence Ver21
 
-Nexora Log Intelligence Ver20 is a deterministic, review-gated log parsing and fleet-control platform for x86_64 RHEL/Rocky Linux 8, 9, and 10. It combines a managed client, a central controller, an authenticated WebView/webapp, Supabase-backed control metadata, private file storage for approved workflows, and optional AI-assisted parser proposals.
+Nexora Log Intelligence Ver21 is a deterministic, review-gated log parsing and fleet-control platform for x86_64 RHEL/Rocky Linux 8, 9, and 10. It combines a managed client, a central controller, an authenticated WebView/webapp, Supabase-backed control metadata, private file storage for approved workflows, and optional AI-assisted parser proposals.
 
-> Install from the single versioned release archive in a fresh directory. Verify its external `.sha256` file and the complete internal `SHA256SUMS`; never mix loose files from different V20 releases.
+> Install from the single versioned release archive in a fresh directory. Verify its external `.sha256` file and the complete internal `SHA256SUMS`; never mix loose files from different releases.
+
+Release `21.0.0-1` promotes the Ver20 Release 6 runtime into the Ver21 product line. The Go module path (`nexora.local/nli-v20`), RPM package names (`nli-client` and `nli-controller-agent`), systemd services, WebView installation root, and state/configuration paths intentionally remain stable for in-place compatibility. See [All NLI features](All_NLI_features.md), [Ver21 Release 1 notes](docs/V21_R1_RELEASE_NOTES.md), and [Ver21 Release 1 test results](docs/V21_R1_TEST_RESULTS.md).
 
 ## V18 upgrade baseline architecture
 
@@ -174,7 +176,7 @@ docs/                 Architecture, release, and operating documentation
 
 ## Repository
 
-<https://github.com/vjay136/nexora_log_intelligence_ver20.git>
+<https://github.com/vjay136/nexora_log_intelligence_ver21.git>
 
 ## License
 

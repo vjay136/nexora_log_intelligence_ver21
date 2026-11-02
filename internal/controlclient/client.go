@@ -797,6 +797,7 @@ func (c *Client) applyAssetBundle(ctx context.Context, data []byte) (string, err
 		return "", err
 	}
 	seen := map[string]bool{}
+	managedParserIDs := map[string]bool{}
 	for _, asset := range bundle.Assets {
 		canonicalPayload, canonicalErr := canonicaljson.Normalize(asset.Payload)
 		if canonicalErr != nil {
@@ -832,6 +833,7 @@ func (c *Client) applyAssetBundle(ctx context.Context, data []byte) (string, err
 				_ = os.RemoveAll(parserStaging)
 				return "", err
 			}
+			managedParserIDs[asset.AssetID] = true
 			continue
 		}
 		assetDir := filepath.Join(staging, dir)
@@ -849,6 +851,15 @@ func (c *Client) applyAssetBundle(ctx context.Context, data []byte) (string, err
 			_ = os.RemoveAll(staging)
 			return "", err
 		}
+	}
+	// Parser packs shipped by the RPM and parser packs managed by the controller
+	// share one runtime directory. Track only the controller-managed IDs so an
+	// offboard/rollback can remove a retired custom parser without deleting any
+	// built-in parser. The whole change remains inside the existing atomic swap.
+	if err := reconcileManagedParserFiles(c.cfg.ParserDir, parserStaging, managedParserIDs); err != nil {
+		_ = os.RemoveAll(staging)
+		_ = os.RemoveAll(parserStaging)
+		return "", err
 	}
 	if err := writeSynchronizedAsset(filepath.Join(staging, "bundle.json"), data); err != nil {
 		_ = os.RemoveAll(staging)
@@ -893,6 +904,39 @@ func (c *Client) applyAssetBundle(ctx context.Context, data []byte) (string, err
 	_ = os.RemoveAll(backup)
 	_ = os.RemoveAll(parserBackup)
 	return fmt.Sprintf("%d revisioned parser assets validated and synchronized (bundle %s)", len(bundle.Assets), bundle.BundleHash), nil
+}
+
+const managedParserManifest = ".nli-managed-parsers.json"
+
+func reconcileManagedParserFiles(currentDir, stagingDir string, desired map[string]bool) error {
+	previous := []string{}
+	if data, err := os.ReadFile(filepath.Join(currentDir, managedParserManifest)); err == nil {
+		if err := json.Unmarshal(data, &previous); err != nil {
+			return fmt.Errorf("decode managed parser manifest: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	for _, id := range previous {
+		if !safeSynchronizedAssetID(id) {
+			return fmt.Errorf("managed parser manifest contains unsafe ID %q", id)
+		}
+		if !desired[id] {
+			if err := os.Remove(filepath.Join(stagingDir, id+".json")); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	ids := make([]string, 0, len(desired))
+	for id := range desired {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	manifest, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	return writeSynchronizedAsset(filepath.Join(stagingDir, managedParserManifest), manifest)
 }
 
 func copyParserDirectory(source, destination string) error {

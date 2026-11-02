@@ -111,7 +111,7 @@ test('proxy streams the first SSE event promptly and advertises browser reconnec
     response.destroy = () => {};
     let firstChunk;
     const first = new Promise(resolve => { response.write = chunk => { if (firstChunk === undefined) { firstChunk = String(chunk); resolve(firstChunk); } return true; }; });
-    const handling = handler({ method: 'GET', url: '/api/v1/telemetry/stream', headers: { accept: 'text/event-stream' } }, response);
+    const handling = handler({ method: 'GET', url: '/api/v1/sync/stream', headers: { accept: 'text/event-stream' } }, response);
     assert.match(await Promise.race([first, new Promise((_, reject) => setTimeout(() => reject(new Error('SSE first chunk was buffered')), 1000))]), /event: snapshot/);
     assert.equal(response.headers['x-nli-stream-mode'], 'sse');
     assert.equal(response.headers['content-type'], 'text/event-stream');

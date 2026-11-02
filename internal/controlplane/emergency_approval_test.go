@@ -26,7 +26,6 @@ func TestAdminEmergencyParserSelfApprovalIsExplicitRevisionBoundAndAudited(t *te
 		t.Fatalf("implicit self approval was accepted: %d %s", response.StatusCode, body)
 	}
 
-	fixture.server.cfg.AllowAdminEmergencySelfApproval = true
 	response, body = fixture.request(http.MethodPost, "/api/v1/parser-packs/emergency-parser/approve", map[string]any{
 		"emergency_self_approval": true,
 		"reason":                  "Production recovery requires this exact validated parser revision.",
@@ -45,7 +44,6 @@ func TestAdminEmergencyParserSelfApprovalIsExplicitRevisionBoundAndAudited(t *te
 
 func TestAdminEmergencyParserSelfApprovalRejectsStaleRevisionOrChecksum(t *testing.T) {
 	fixture := newAPIFixture(t)
-	fixture.server.cfg.AllowAdminEmergencySelfApproval = true
 	doc, err := fixture.server.metadata.Put(context.Background(), metastore.Document{
 		Collection: "parser-packs", ID: "stale-emergency-parser", State: "in_review",
 		Payload: legacyParserPayload(t, "stale-emergency-parser"), CreatedBy: "admin",
@@ -66,7 +64,6 @@ func TestAdminEmergencyParserSelfApprovalRejectsStaleRevisionOrChecksum(t *testi
 
 func TestAdminEmergencyAssuranceSelfApprovalPublishesExactValidatedCandidate(t *testing.T) {
 	fixture := newAPIFixture(t)
-	fixture.server.cfg.AllowAdminEmergencySelfApproval = true
 	parser := map[string]any{
 		"pattern_type": "regex", "pattern": `^status=(?P<status>\w+)$`,
 		"fields": []any{map[string]any{"name": "status", "source": "group:status", "type": "string"}},
@@ -116,7 +113,6 @@ func TestAdminEmergencyAssuranceSelfApprovalPublishesExactValidatedCandidate(t *
 
 func TestAdminEmergencyParserRolloutSelfApprovalBindsExactBundle(t *testing.T) {
 	fixture := newAPIFixture(t)
-	fixture.server.cfg.AllowAdminEmergencySelfApproval = true
 	fixture.server.fleet.Register(&fleet.Node{ID: "emergency-node", Hostname: "emergency-node"})
 	if _, err := fixture.server.metadata.Put(context.Background(), metastore.Document{
 		Collection: "regex-patterns", ID: "emergency-rule", State: "active",

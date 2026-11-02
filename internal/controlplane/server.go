@@ -84,9 +84,10 @@ type Config struct {
 	MaxArtifactBytes                 int64    `json:"max_artifact_bytes,omitempty"`
 	RateLimit                        int      `json:"rate_limit,omitempty"`
 	RateWindowSeconds                int      `json:"rate_window_seconds,omitempty"`
-	// AllowAdminEmergencySelfApproval enables a break-glass path. Callers must
-	// still hold the administrator-only emergency approval permission and send
-	// a reason plus the exact document revision and artifact/bundle checksum.
+	// Deprecated in Ver21. Administrator self-approval for parser recovery is
+	// governed by the emergency approval permission plus an explicit reason and
+	// exact revision/hash binding. The field remains readable for compatibility
+	// with Ver20 controller configuration files.
 	AllowAdminEmergencySelfApproval bool `json:"allow_admin_emergency_self_approval,omitempty"`
 }
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [21.0.0-1] - 2026-11-02
+
+- Promote the runtime, web deployment metadata, embedded parser catalog, and release archive identity to Nexora Log Intelligence Ver21.
+- Preserve the `nli-client` and `nli-controller-agent` RPM identities, `nexora.local/nli-v20` Go module path, systemd units, WebView installation root, and durable state/configuration paths for compatible in-place upgrades.
+- Publish a source-grounded feature inventory, Release 1 notes, and an evidence-bound Release 1 test report.
+- Retain the Ver20 documentation set as historical implementation and qualification evidence.
+
 ## [20.0.0-6] - 2026-11-01
 
 - Canonicalize parser bundle content consistently across proposal creation and approval so the reviewed hash can be approved and delivered without changing the bundle bytes.

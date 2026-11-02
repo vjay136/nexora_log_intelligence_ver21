@@ -37,7 +37,7 @@ test('Cloudflare proxy preserves a streaming SSE body and advertises reconnect m
     },
   }), { status: 200, headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' } });
   t.after(() => { globalThis.fetch = originalFetch; });
-  const response = await onRequest({ request: new Request('https://app.example.com/api/v1/telemetry/stream', { headers: { accept: 'text/event-stream' } }), env: { NLI_CONTROLLER_ORIGIN: 'https://controller.example.com' } });
+  const response = await onRequest({ request: new Request('https://app.example.com/api/v1/sync/stream', { headers: { accept: 'text/event-stream' } }), env: { NLI_CONTROLLER_ORIGIN: 'https://controller.example.com' } });
   assert.equal(response.headers.get('x-nli-stream-mode'), 'sse');
   assert.equal(response.headers.get('content-type'), 'text/event-stream');
   assert.equal(response.headers.get('cache-control'), 'no-cache');

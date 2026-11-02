@@ -20,6 +20,10 @@ R4_OPERATOR = "V20_R4_QRW_OPERATOR_GUIDE.md"
 R6_RESULTS = "V20_R6_TEST_RESULTS.md"
 R6_OPERATOR = "V20_R6_QRW_OPERATOR_GUIDE.md"
 DIAGRAM = "NLI_V20_UPES_GPRS_ARCHITECTURE.svg"
+FEATURES = "All_NLI_features.md"
+V21_RELEASE = "V21_R1_RELEASE_NOTES.md"
+V21_RESULTS = "V21_R1_TEST_RESULTS.md"
+V21_PLAN = "VER21_IMPLEMENTATION_PLAN.md"
 
 
 def fail(message: str) -> None:
@@ -41,6 +45,10 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
         R6_RESULTS: root / "docs" / R6_RESULTS,
         R6_OPERATOR: root / "docs" / R6_OPERATOR,
         DIAGRAM: root / "docs" / "architecture" / DIAGRAM,
+        FEATURES: root / FEATURES,
+        V21_RELEASE: root / "docs" / V21_RELEASE,
+        V21_RESULTS: root / "docs" / V21_RESULTS,
+        V21_PLAN: root / "docs" / V21_PLAN,
     }
     for name, source in sources.items():
         if not source.is_file() or source.stat().st_size == 0:
@@ -126,6 +134,17 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
         if claim.lower() not in operator_r6.lower():
             fail(f"R6 operator guide does not document expected workflow: {claim!r}")
 
+    for name, claims in {
+        FEATURES: ("Nexora Log Intelligence Ver21", "Product boundary and compatibility", "Quarantine Resolution Wizard"),
+        V21_RELEASE: ("21.0.0-1", "Compatibility contract", "Evidence boundary"),
+        V21_RESULTS: ("21.0.0-1", "PASS", "PENDING"),
+        V21_PLAN: ("Ver21 implementation plan", "Ver20 R6", "Verification and release gates"),
+    }.items():
+        content = sources[name].read_text(encoding="utf-8")
+        for claim in claims:
+            if claim not in content:
+                fail(f"{name} does not document expected Ver21 evidence: {claim!r}")
+
     for relative in (
         "packaging/build-rpms.sh",
         "packaging/rpm/nli-client.spec",
@@ -144,14 +163,8 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
     if f"![UPES and governed parser-candidate lifecycle]({DIAGRAM})" not in guide:
         fail("guide diagram link must resolve when the archive or RPM docs are read")
 
-    for relative in (
-        "CHANGELOG.md",
-        "docs/release/README.md",
-        "docs/release/V20_MIGRATION_AND_ROLLBACK.md",
-        "packaging/rpm/nli-client.spec",
-        "packaging/rpm/nli-controller-agent.spec",
-    ):
-        if "20.0.0-6" not in (root / relative).read_text(encoding="utf-8"):
+    for relative in ("CHANGELOG.md", "README.md", "docs/V21_R1_RELEASE_NOTES.md", "packaging/rpm/nli-client.spec", "packaging/rpm/nli-controller-agent.spec"):
+        if "21.0.0-1" not in (root / relative).read_text(encoding="utf-8"):
             fail(f"{relative} does not identify the current release")
 
     # Keep the previously released R4 operational evidence available in R6.
@@ -160,8 +173,8 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
             fail(f"R4 release history is missing: {relative}")
 
     release_env = (root / "packaging" / "release.env").read_text(encoding="utf-8")
-    if "NLI_VERSION=20.0.0" not in release_env or "NLI_RELEASE=6" not in release_env:
-        fail("packaging release identity is not 20.0.0-6")
+    if "NLI_VERSION=21.0.0" not in release_env or "NLI_RELEASE=1" not in release_env:
+        fail("packaging release identity is not 21.0.0-1")
 
 
 def main() -> None:

@@ -1,11 +1,11 @@
-%{!?nli_version:%global nli_version 20.0.0}
-%{!?nli_release:%global nli_release 6}
+%{!?nli_version:%global nli_version 21.0.0}
+%{!?nli_release:%global nli_release 1}
 Name:           nli-client
 Version:        %{nli_version}
 Release:        %{nli_release}%{?dist}
-Summary:        Nexora Log Intelligence Ver20 parsing client
+Summary:        Nexora Log Intelligence Ver21 parsing client
 License:        LicenseRef-Proprietary
-URL:            https://github.com/vjay136/nexora_log_intelligence_ver20.git
+URL:            https://github.com/vjay136/nexora_log_intelligence_ver21.git
 Source0:        %{name}-%{version}.tar.gz
 ExclusiveArch:  x86_64
 Provides:       nli-agent = %{version}-%{release}
@@ -21,7 +21,7 @@ AutoReqProv:    no
 %global __os_install_post %{nil}
 
 %description
-NLI v20 client containing the source-derived static parser agent, CLI, benchmark
+NLI v21 client containing the source-derived static parser agent, CLI, benchmark
 utility, and restricted fleet-control sidecar. The nli_clinet_ver20.rpm spelling
 is a byte-identical distribution filename alias, not a second RPM package.
 
@@ -53,6 +53,7 @@ install -m 0644 systemd/nli-agent.service systemd/nli-client-control.service sys
 install -m 0644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 install -m 0644 PARSER_CATALOG.md %{buildroot}%{_docdir}/%{name}/PARSER_CATALOG.md
 install -m 0644 V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md V20_R1_TEST_RESULTS.md V20_R1_QRW_OPERATOR_TEST_GUIDE.md V20_R2_TEST_RESULTS.md V20_R2_QRW_OPERATOR_GUIDE.md V20_R3_TEST_RESULTS.md V20_R3_QRW_OPERATOR_GUIDE.md V20_R4_TEST_RESULTS.md V20_R4_QRW_OPERATOR_GUIDE.md V20_R6_TEST_RESULTS.md V20_R6_QRW_OPERATOR_GUIDE.md V20_QUARANTINE_RESOLUTION_WIZARD.md NLI_V20_UPES_GPRS_ARCHITECTURE.svg %{buildroot}%{_docdir}/%{name}/
+install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
 install -m 0644 metrics/README.md metrics/metric-catalog.json metrics/prometheus-scrape.yml metrics/grafana-dashboard.json %{buildroot}%{_datadir}/nli/metrics/
 
 %pre
@@ -128,8 +129,15 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %doc %{_docdir}/%{name}/V20_R6_QRW_OPERATOR_GUIDE.md
 %doc %{_docdir}/%{name}/V20_QUARANTINE_RESOLUTION_WIZARD.md
 %doc %{_docdir}/%{name}/NLI_V20_UPES_GPRS_ARCHITECTURE.svg
+%doc %{_docdir}/%{name}/All_NLI_features.md
+%doc %{_docdir}/%{name}/V21_R1_RELEASE_NOTES.md
+%doc %{_docdir}/%{name}/V21_R1_TEST_RESULTS.md
+%doc %{_docdir}/%{name}/VER21_IMPLEMENTATION_PLAN.md
 
 %changelog
+* Mon Nov 02 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-1
+- Promote the governed parser runtime to Ver21 while preserving RPM identity and in-place upgrade paths.
+
 * Sun Nov 01 2026 Nexora Engineering <engineering@nexora.local> - 20.0.0-6
 - Preserve the R4 runtime baseline and correct canonical parser bundle hash approval handling; add R6 operator/test evidence.
 

@@ -389,7 +389,10 @@ func TestParserIndependentApproval(t *testing.T) {
 	}
 	f.login("author", "Author-password-12345!")
 	f.refreshCSRF()
-	pack := map[string]any{"id": "mail-pack", "name": "Mail Pack", "version": "1.0.0", "priority": 10, "rules": []any{}}
+	var pack map[string]any
+	if err := json.Unmarshal(legacyParserPayload(t, "mail-pack"), &pack); err != nil {
+		t.Fatal(err)
+	}
 	response, data := f.request(http.MethodPost, "/api/v1/parser-packs", pack)
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create pack %d: %s", response.StatusCode, data)
@@ -409,8 +412,8 @@ func TestParserIndependentApproval(t *testing.T) {
 		t.Fatalf("review approve %d: %s", response.StatusCode, data)
 	}
 	approved := decodeMap(t, data)
-	if approved["catalog_state"] != "approved" || approved["state"] != "blocked" || approved["status"] != "blocked" {
-		t.Fatalf("approval and runtime readiness were not reported separately: %s", data)
+	if approved["state"] != "approved" || approved["status"] != "ready_to_publish" {
+		t.Fatalf("reviewed runtime parser was not ready to publish: %s", data)
 	}
 }
 

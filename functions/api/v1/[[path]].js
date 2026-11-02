@@ -24,7 +24,7 @@ export async function onRequest({ request, env }) {
     for (let i = 0; i < 3; i++) { path = decodeURIComponent(path); if (path.includes('\\') || path.split('/').some(part => part === '.' || part === '..') || /[\u0000-\u001f]/.test(path)) throw new Error('Invalid controller route.'); }
     if (!path.startsWith('/api/v1/')) throw new Error('Invalid controller route.');
     if (path === '/api/v1/stream') return Response.json({ error: 'Hosted proxy uses metadata polling; use the controller endpoint for WebSocket streaming.' }, { status: 426 });
-    isSSE = path === '/api/v1/telemetry/stream';
+    isSSE = path === '/api/v1/sync/stream';
     url = new URL(path + incoming.search, origin);
     if (url.origin !== origin.origin || !url.pathname.startsWith('/api/v1/')) throw new Error('Invalid controller route.');
   } catch (error) {

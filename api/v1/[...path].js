@@ -121,7 +121,10 @@ export default async function handler(request, response) {
     response.status(426).json({ error: 'This hosted proxy uses metadata polling. Use the controller endpoint for WebSocket streaming.' });
     return;
   }
-  const isSSE = target.pathname === '/api/v1/telemetry/stream';
+  // The canonical NURSF transport is /sync/stream. The old telemetry route
+  // was never registered by the controller, so Vercel treated the real stream
+  // as an ordinary 50-second request and generated avoidable recovery loops.
+  const isSSE = target.pathname === '/api/v1/sync/stream';
   if (Number(request.headers?.['content-length'] || 0) > MAX_REQUEST_BYTES) {
     response.status(413).json({ error: 'Hosted requests are limited to 4.4 MB. Open the controller URL to upload larger artifacts.' });
     return;

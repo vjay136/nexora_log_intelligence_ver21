@@ -437,6 +437,13 @@ func validateNotificationPolicy(policy notificationPolicy) bool {
 }
 
 func classifyNotificationEvent(event auditlog.Event) (string, string, bool) {
+	// The browser deliberately probes the current session before presenting the
+	// login form.  An anonymous/expired-session 401 is an expected control-flow
+	// result, not an operational incident.  Keep it in the immutable audit chain
+	// while excluding it from notifications and external dispatch.
+	if isExpectedAnonymousSessionProbe(event) {
+		return "", "", false
+	}
 	action := strings.ToLower(event.Action)
 	category := "system"
 	if strings.Contains(action, "approval") || strings.Contains(action, "rollout.approve") {
@@ -461,6 +468,17 @@ func classifyNotificationEvent(event auditlog.Event) (string, string, bool) {
 		return category, "warning", true
 	}
 	return "", "", false
+}
+
+func isExpectedAnonymousSessionProbe(event auditlog.Event) bool {
+	if !strings.EqualFold(strings.TrimSpace(event.Action), http.MethodGet) ||
+		strings.TrimSpace(event.Resource) != "/api/v1/auth/me" ||
+		event.Outcome != "failure" ||
+		!strings.EqualFold(strings.TrimSpace(event.Actor), "anonymous") {
+		return false
+	}
+	detail := strings.ToLower(event.Details["detail"])
+	return strings.Contains(detail, "status=401")
 }
 
 func notificationTitle(event auditlog.Event, category string) string {

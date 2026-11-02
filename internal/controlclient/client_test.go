@@ -397,6 +397,138 @@ func TestParserAssetBundleSynchronizesEveryRuntimeAssetClass(t *testing.T) {
 	}
 }
 
+func TestParserAssetBundleOffboardsManagedParserAndPreservesBuiltIns(t *testing.T) {
+	root := t.TempDir()
+	parserDir := filepath.Join(root, "parsers")
+	if err := os.MkdirAll(parserDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	builtInPath := filepath.Join(parserDir, "rpm-built-in.json")
+	managedPath := filepath.Join(parserDir, "retired-custom.json")
+	if err := os.WriteFile(builtInPath, []byte(`{"source":"rpm"}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedPath, []byte(`{"source":"controller"}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	manifest, _ := json.Marshal([]string{"retired-custom"})
+	if err := os.WriteFile(filepath.Join(parserDir, managedParserManifest), manifest, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := &fakeExecutor{}
+	client, err := New(Config{
+		ControllerURL: "http://127.0.0.1:12345", AllowInsecureHTTP: true,
+		NodeTokenFile: filepath.Join(root, "node.token"), InstallIDFile: filepath.Join(root, "install.id"),
+		JournalFile: filepath.Join(root, "journal.json"), AgentConfigPath: filepath.Join(root, "nli.json"),
+		ParserDir: parserDir, AssetDir: filepath.Join(root, "parser-assets"),
+		PackageSpoolDir: filepath.Join(root, "packages"), PollSeconds: 5,
+	}, executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := synchronizedAssetBundle{SchemaVersion: 1, Assets: []synchronizedAsset{}}
+	bundle.BundleHash, err = synchronizedBundleHash(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.applyAssetBundle(context.Background(), data); err != nil {
+		t.Fatalf("offboard bundle failed: %v", err)
+	}
+	if _, err := os.Stat(builtInPath); err != nil {
+		t.Fatalf("RPM built-in parser was removed: %v", err)
+	}
+	if _, err := os.Stat(managedPath); !os.IsNotExist(err) {
+		t.Fatalf("retired managed parser still exists: %v", err)
+	}
+	updatedManifest, err := os.ReadFile(filepath.Join(parserDir, managedParserManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(updatedManifest) != "[]" {
+		t.Fatalf("managed parser manifest was not reconciled: %s", updatedManifest)
+	}
+	if executor.restarts != 1 {
+		t.Fatalf("agent restarted %d times, want 1", executor.restarts)
+	}
+}
+
+func TestFailedParserBundlePreservesLiveBundleAndRuntimeState(t *testing.T) {
+	root := t.TempDir()
+	parserDir := filepath.Join(root, "parsers")
+	assetDir := filepath.Join(root, "parser-assets")
+	if err := os.MkdirAll(parserDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(assetDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	builtInPath := filepath.Join(parserDir, "rpm-built-in.json")
+	if err := os.WriteFile(builtInPath, []byte(`{"source":"rpm"}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	previous := synchronizedAssetBundle{SchemaVersion: 1, Assets: []synchronizedAsset{}}
+	var err error
+	previous.BundleHash, err = synchronizedBundleHash(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousJSON, err := json.Marshal(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetDir, "bundle.json"), previousJSON, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := &fakeExecutor{restartError: errors.New("simulated agent restart failure")}
+	client, err := New(Config{
+		ControllerURL: "http://127.0.0.1:12345", AllowInsecureHTTP: true,
+		NodeTokenFile: filepath.Join(root, "node.token"), InstallIDFile: filepath.Join(root, "install.id"),
+		JournalFile: filepath.Join(root, "journal.json"), AgentConfigPath: filepath.Join(root, "nli.json"),
+		ParserDir: parserDir, AssetDir: assetDir,
+		PackageSpoolDir: filepath.Join(root, "packages"), PollSeconds: 5,
+	}, executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := canonicaljson.Normalize([]byte(`{"name":"new runtime rule","pattern":"status=(?P<status>\\w+)"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	next := synchronizedAssetBundle{SchemaVersion: 1, Assets: []synchronizedAsset{{
+		AssetClass: "regex-patterns", AssetID: "new-runtime-rule", Name: "New runtime rule",
+		Revision: 2, SHA256: fmt.Sprintf("%x", digest[:]), Payload: payload,
+	}}}
+	next.BundleHash, err = synchronizedBundleHash(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextJSON, err := json.Marshal(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.applyAssetBundle(context.Background(), nextJSON); err == nil || !strings.Contains(err.Error(), "restored") {
+		t.Fatalf("failed rollout did not report atomic restoration: %v", err)
+	}
+
+	activeHash, revisions := activeAssetBundleStatus(filepath.Join(assetDir, "bundle.json"))
+	if activeHash != previous.BundleHash || len(revisions) != 0 {
+		t.Fatalf("failed rollout changed canonical live bundle status: hash=%q revisions=%v", activeHash, revisions)
+	}
+	if data, err := os.ReadFile(builtInPath); err != nil || string(data) != `{"source":"rpm"}` {
+		t.Fatalf("failed rollout changed runtime parser state: data=%q err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(assetDir, "regex", "new-runtime-rule.json")); !os.IsNotExist(err) {
+		t.Fatalf("failed asset remained live after rollback: %v", err)
+	}
+}
+
 func TestClientAcceptsCanonicalR6BundleAfterJSONNumericNormalization(t *testing.T) {
 	root := t.TempDir()
 	client, err := New(Config{

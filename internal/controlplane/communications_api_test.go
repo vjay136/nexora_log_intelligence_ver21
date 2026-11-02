@@ -215,6 +215,52 @@ func TestResolvedResourceDoesNotRemainActionable(t *testing.T) {
 	}
 }
 
+func TestExpectedAnonymousSessionProbeIsAuditedButNotNotified(t *testing.T) {
+	f := newAPIFixture(t)
+	baselineResponse, baselineBody := f.request(http.MethodGet, "/api/v1/notifications?limit=100", nil)
+	if baselineResponse.StatusCode != http.StatusOK {
+		t.Fatalf("baseline notification feed %d: %s", baselineResponse.StatusCode, baselineBody)
+	}
+	baseline := decodeMap(t, baselineBody)
+
+	event, err := f.server.audit.Append(auditlog.Event{
+		Action:   http.MethodGet,
+		Actor:    "anonymous",
+		Resource: "/api/v1/auth/me",
+		Outcome:  "failure",
+		Details:  map[string]string{"detail": "status=401 duration_ms=0 request_id=req-test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, actionable := classifyNotificationEvent(event); actionable {
+		t.Fatal("expected anonymous session probe must remain audit evidence without becoming a notification")
+	}
+
+	response, body := f.request(http.MethodGet, "/api/v1/notifications?limit=100", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("notification feed %d: %s", response.StatusCode, body)
+	}
+	feed := decodeMap(t, body)
+	if feed["visible_count"] != baseline["visible_count"] || feed["unread_count"] != baseline["unread_count"] {
+		t.Fatalf("session probe changed notification counters: before=%s after=%s", baselineBody, body)
+	}
+}
+
+func TestAuthenticatedAuthFailureRemainsActionable(t *testing.T) {
+	event := auditlog.Event{
+		Action:   http.MethodGet,
+		Actor:    "admin",
+		Resource: "/api/v1/auth/me",
+		Outcome:  "failure",
+		Details:  map[string]string{"detail": "status=403"},
+	}
+	category, severity, actionable := classifyNotificationEvent(event)
+	if !actionable || category != "system" || severity != "critical" {
+		t.Fatalf("unexpected classification: category=%q severity=%q actionable=%v", category, severity, actionable)
+	}
+}
+
 func TestNotificationPolicyWriteRequiresAdminPermission(t *testing.T) {
 	f := newAPIFixture(t)
 	if _, err := f.server.auth.CreateUser("admin", "notify-viewer", "notify-viewer@example.test", "viewer", "Viewer-password-12345!"); err != nil {

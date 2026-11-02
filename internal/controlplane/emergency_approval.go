@@ -34,8 +34,10 @@ func principalHasPermission(principal *middleware.SecurityContext, permission st
 }
 
 // approvalMode preserves independent approval as the normal path. A creator
-// may approve their own change only via the administrator-only, controller-
-// enabled break-glass path with a reason and exact revision/digest binding.
+// may approve their own parser change only via the administrator-only recovery
+// path with a reason and exact revision/digest binding. Ver21 deliberately
+// makes this capability intrinsic to the admin role: an operator must not be
+// stranded merely because a deployment omitted an optional feature flag.
 func (s *Server) approvalMode(doc metastore.Document, principal *middleware.SecurityContext, request approvalRequest, expectedDigest, digestField string) (string, map[string]string, error) {
 	if doc.CreatedBy != principal.Username {
 		details := map[string]string{"approval_mode": "independent"}
@@ -46,9 +48,6 @@ func (s *Server) approvalMode(doc metastore.Document, principal *middleware.Secu
 			details["approval_reason"] = reason
 		}
 		return "independent", details, nil
-	}
-	if !s.cfg.AllowAdminEmergencySelfApproval {
-		return "", nil, fmt.Errorf("creator cannot approve own change; administrator emergency approval is disabled")
 	}
 	if !principalHasPermission(principal, middleware.PermissionEmergencyApprove) {
 		return "", nil, fmt.Errorf("creator cannot approve own change; emergency administrator permission is required")

@@ -57,6 +57,9 @@ done
 for name in V20_R6_TEST_RESULTS.md V20_R6_QRW_OPERATOR_GUIDE.md; do
   cmp -s "$work/pass1-rpm/$name" "$work/pass2-rpm/$name" || { echo "non-deterministic output: $name" >&2; exit 1; }
 done
+for name in All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md; do
+  cmp -s "$work/pass1-rpm/$name" "$work/pass2-rpm/$name" || { echo "non-deterministic output: $name" >&2; exit 1; }
+done
 cp -a "$work/pass1-rpm/." "$OUTPUT_DIR/"
 
 docker run --rm \

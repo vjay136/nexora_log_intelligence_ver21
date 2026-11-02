@@ -60,6 +60,10 @@ install -m 0644 "$ROOT/docs/VERCEL_DEPLOYMENT.md" "$OUTPUT_DIR/VERCEL_DEPLOYMENT
 install -m 0644 "$ROOT/docs/CLOUDFLARE_PAGES_DEPLOYMENT.md" "$OUTPUT_DIR/CLOUDFLARE_PAGES_DEPLOYMENT.md"
 install -m 0644 "$ROOT/docs/PARSER_CATALOG.md" "$OUTPUT_DIR/PARSER_CATALOG.md"
 install -m 0644 "$ROOT/docs/release/V20_MIGRATION_AND_ROLLBACK.md" "$OUTPUT_DIR/V20_MIGRATION_AND_ROLLBACK.md"
+install -m 0644 "$ROOT/All_NLI_features.md" "$OUTPUT_DIR/All_NLI_features.md"
+install -m 0644 "$ROOT/docs/V21_R1_RELEASE_NOTES.md" "$OUTPUT_DIR/V21_R1_RELEASE_NOTES.md"
+install -m 0644 "$ROOT/docs/V21_R1_TEST_RESULTS.md" "$OUTPUT_DIR/V21_R1_TEST_RESULTS.md"
+install -m 0644 "$ROOT/docs/VER21_IMPLEMENTATION_PLAN.md" "$OUTPUT_DIR/VER21_IMPLEMENTATION_PLAN.md"
 cat >"$OUTPUT_DIR/RELEASE_ID" <<EOF
 NLI_VERSION=$NLI_VERSION
 NLI_RELEASE=$NLI_RELEASE
@@ -76,6 +80,7 @@ normalize_lf "$OUTPUT_DIR/install-controller-ver20.sh" "$OUTPUT_DIR/install-clie
   "$OUTPUT_DIR/vercel-preflight.mjs" \
   "$OUTPUT_DIR/INSTALLATION_AND_CONFIGURATION.md" "$OUTPUT_DIR/WEBAPP_OPERATOR_AND_PARSER_GUIDE.md" "$OUTPUT_DIR/V20_OPERATOR_DEMO_GUIDE.md" "$OUTPUT_DIR/V20_PRODUCTION_ACCEPTANCE_TESTS.md" "$OUTPUT_DIR/V20_SUBSYSTEM_ORCHESTRATION.md" "$OUTPUT_DIR/V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md" "$OUTPUT_DIR/V20_R1_TEST_RESULTS.md" "$OUTPUT_DIR/V20_R1_QRW_OPERATOR_TEST_GUIDE.md" "$OUTPUT_DIR/V20_R2_TEST_RESULTS.md" "$OUTPUT_DIR/V20_R2_QRW_OPERATOR_GUIDE.md" "$OUTPUT_DIR/V20_R3_TEST_RESULTS.md" "$OUTPUT_DIR/V20_R3_QRW_OPERATOR_GUIDE.md" "$OUTPUT_DIR/V20_R4_TEST_RESULTS.md" "$OUTPUT_DIR/V20_R4_QRW_OPERATOR_GUIDE.md" "$OUTPUT_DIR/V20_R6_TEST_RESULTS.md" "$OUTPUT_DIR/V20_R6_QRW_OPERATOR_GUIDE.md" "$OUTPUT_DIR/V20_QUARANTINE_RESOLUTION_WIZARD.md" "$OUTPUT_DIR/NLI_V20_UPES_GPRS_ARCHITECTURE.svg" "$OUTPUT_DIR/V20_AWS_RED_HAT_INSTALLATION.md" \
   "$OUTPUT_DIR/V20_CLOUDFLARE_TUNNEL.md" "$OUTPUT_DIR/V20_MIGRATION_AND_ROLLBACK.md" "$OUTPUT_DIR/VERCEL_DEPLOYMENT.md" "$OUTPUT_DIR/CLOUDFLARE_PAGES_DEPLOYMENT.md" "$OUTPUT_DIR/PARSER_CATALOG.md" \
+  "$OUTPUT_DIR/All_NLI_features.md" "$OUTPUT_DIR/V21_R1_RELEASE_NOTES.md" "$OUTPUT_DIR/V21_R1_TEST_RESULTS.md" "$OUTPUT_DIR/VER21_IMPLEMENTATION_PLAN.md" \
   "$OUTPUT_DIR/RELEASE_ID"
 
 for binary in nli nli-agent nli-client-control nli-bench nli-controller-agent; do
@@ -97,6 +102,7 @@ find "$ROOT/configs/parsers" -maxdepth 1 -type f -name '*.json' -print0 | LC_ALL
 install -m 0644 "$ROOT/packaging/systemd/nli-agent.service" "$ROOT/packaging/systemd/nli-client-control.service" "$ROOT/packaging/systemd/nli-client-bootstrap.service" "$CLIENT/systemd/"
 install -m 0644 "$ROOT/README.md" "$CLIENT/README.md"
 install -m 0644 "$ROOT/docs/PARSER_CATALOG.md" "$CLIENT/PARSER_CATALOG.md"
+install -m 0644 "$ROOT/All_NLI_features.md" "$ROOT/docs/V21_R1_RELEASE_NOTES.md" "$ROOT/docs/V21_R1_TEST_RESULTS.md" "$ROOT/docs/VER21_IMPLEMENTATION_PLAN.md" "$CLIENT/"
 install -m 0644 "$ROOT/docs/V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md" "$ROOT/docs/V20_R1_TEST_RESULTS.md" "$ROOT/docs/V20_R1_QRW_OPERATOR_TEST_GUIDE.md" "$ROOT/docs/V20_R2_TEST_RESULTS.md" "$ROOT/docs/V20_R2_QRW_OPERATOR_GUIDE.md" "$ROOT/docs/V20_R3_TEST_RESULTS.md" "$ROOT/docs/V20_R3_QRW_OPERATOR_GUIDE.md" "$ROOT/docs/V20_R4_TEST_RESULTS.md" "$ROOT/docs/V20_R4_QRW_OPERATOR_GUIDE.md" "$ROOT/docs/V20_R6_TEST_RESULTS.md" "$ROOT/docs/V20_R6_QRW_OPERATOR_GUIDE.md" "$ROOT/docs/V20_QUARANTINE_RESOLUTION_WIZARD.md" "$ROOT/docs/architecture/NLI_V20_UPES_GPRS_ARCHITECTURE.svg" "$CLIENT/"
 mkdir -p "$CLIENT/metrics"
 install -m 0644 "$ROOT"/metrics/* "$CLIENT/metrics/"
@@ -105,6 +111,7 @@ while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
 )
 normalize_lf "$CLIENT/README.md"
 normalize_lf "$CLIENT/PARSER_CATALOG.md"
+normalize_lf "$CLIENT/All_NLI_features.md" "$CLIENT/V21_R1_RELEASE_NOTES.md" "$CLIENT/V21_R1_TEST_RESULTS.md" "$CLIENT/VER21_IMPLEMENTATION_PLAN.md"
 while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
   find "$CLIENT/metrics" -type f \( -name '*.md' -o -name '*.yml' -o -name '*.yaml' \) -print0
 )
@@ -149,6 +156,7 @@ install -m 0644 "$ROOT/configs/geoip.env" "$CONTROLLER/configs/geoip.env"
 install -m 0644 "$ROOT/packaging/systemd/nli-controller-agent.service" "$ROOT/packaging/systemd/nli-controller-bootstrap.service" "$ROOT/packaging/systemd/nli-geoip-update.service" "$ROOT/packaging/systemd/nli-geoip-update.timer" "$CONTROLLER/systemd/"
 cp -a "$WEB_ROOT/." "$CONTROLLER/web/"
 install -m 0644 "$ROOT/README.md" "$CONTROLLER/README.md"
+install -m 0644 "$ROOT/All_NLI_features.md" "$ROOT/docs/V21_R1_RELEASE_NOTES.md" "$ROOT/docs/V21_R1_TEST_RESULTS.md" "$ROOT/docs/VER21_IMPLEMENTATION_PLAN.md" "$CONTROLLER/"
 install -m 0644 "$ROOT/docs/V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md" "$ROOT/docs/V20_R1_TEST_RESULTS.md" "$ROOT/docs/V20_R1_QRW_OPERATOR_TEST_GUIDE.md" "$ROOT/docs/V20_R2_TEST_RESULTS.md" "$ROOT/docs/V20_R2_QRW_OPERATOR_GUIDE.md" "$ROOT/docs/V20_R3_TEST_RESULTS.md" "$ROOT/docs/V20_R3_QRW_OPERATOR_GUIDE.md" "$ROOT/docs/V20_R4_TEST_RESULTS.md" "$ROOT/docs/V20_R4_QRW_OPERATOR_GUIDE.md" "$ROOT/docs/V20_R6_TEST_RESULTS.md" "$ROOT/docs/V20_R6_QRW_OPERATOR_GUIDE.md" "$ROOT/docs/V20_QUARANTINE_RESOLUTION_WIZARD.md" "$ROOT/docs/architecture/NLI_V20_UPES_GPRS_ARCHITECTURE.svg" "$CONTROLLER/"
 mkdir -p "$CONTROLLER/metrics"
 install -m 0644 "$ROOT"/metrics/* "$CONTROLLER/metrics/"
@@ -156,6 +164,7 @@ while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
   find "$CONTROLLER/sbin" "$CONTROLLER/configs" "$CONTROLLER/systemd" "$CONTROLLER/supabase" -type f -print0
 )
 normalize_lf "$CONTROLLER/README.md"
+normalize_lf "$CONTROLLER/All_NLI_features.md" "$CONTROLLER/V21_R1_RELEASE_NOTES.md" "$CONTROLLER/V21_R1_TEST_RESULTS.md" "$CONTROLLER/VER21_IMPLEMENTATION_PLAN.md"
 while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
   find "$CONTROLLER/metrics" -type f \( -name '*.md' -o -name '*.yml' -o -name '*.yaml' \) -print0
 )

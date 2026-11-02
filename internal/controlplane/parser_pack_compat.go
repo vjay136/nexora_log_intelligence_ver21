@@ -51,13 +51,26 @@ func runtimeParserPackForDocument(doc metastore.Document) (*parserpolicy.ParserP
 		_ = json.Unmarshal(envelope["artifact_checksum"], &artifactChecksum)
 		_ = json.Unmarshal(envelope["approved_checksum"], &approvedChecksum)
 		actualChecksum := parserArtifactChecksum(definition)
-		if validationPassed && len(cases) != 0 && actualChecksum != "" && actualChecksum == artifactChecksum && (approvedChecksum == "" || approvedChecksum == actualChecksum) {
-			pack, err := assuranceRuntimePack(doc.ID, version, doc.CreatedBy, definition, cases)
-			if err != nil {
-				return nil, nil, fmt.Errorf("validated legacy Assurance parser is runtime-incompatible: %w", err)
-			}
-			return normalizeRuntimeParserPack(doc, pack)
+		if !validationPassed {
+			return nil, nil, fmt.Errorf("parser validation has not passed; validate the exact candidate in Assurance")
 		}
+		if len(cases) == 0 {
+			return nil, nil, fmt.Errorf("parser has no retained reviewed regression cases; attach evidence and revalidate it in Assurance")
+		}
+		if actualChecksum == "" || artifactChecksum == "" {
+			return nil, nil, fmt.Errorf("parser artifact checksum is missing; revalidate the exact candidate in Assurance")
+		}
+		if actualChecksum != artifactChecksum {
+			return nil, nil, fmt.Errorf("parser artifact checksum changed after validation")
+		}
+		if approvedChecksum != "" && approvedChecksum != actualChecksum {
+			return nil, nil, fmt.Errorf("approved parser checksum does not match the validated candidate")
+		}
+		pack, err := assuranceRuntimePack(doc.ID, version, doc.CreatedBy, definition, cases)
+		if err != nil {
+			return nil, nil, fmt.Errorf("validated legacy Assurance parser is runtime-incompatible: %w", err)
+		}
+		return normalizeRuntimeParserPack(doc, pack)
 	}
 
 	// Imported NLI packs are stored directly as the document payload. Accept an

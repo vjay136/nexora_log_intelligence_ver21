@@ -418,6 +418,37 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 		seen[id] = true
 	}
 	sort.Strings(targetIDs)
+	// A bundle hash is the immutable identity of parser content. Reusing an
+	// existing pending proposal for the same content and exact target set keeps
+	// repeated UI actions idempotent. Conversely, once a newer canonical bundle
+	// exists, an older pending parser proposal must not remain actionable: its
+	// approval can only fail the exact-hash gate and was the source of the R6
+	// "bundle hash is invalid/stale" loop. Preserve it as audit history while
+	// removing it from the approval queue.
+	pending, listErr := s.metadata.List(ctx, "rollout-proposals", metastore.Query{Limit: 1000})
+	if listErr != nil {
+		return metastore.Document{}, fmt.Errorf("list parser rollout proposals: %w", listErr)
+	}
+	var superseded []metastore.Document
+	for _, existing := range pending {
+		if existing.State != "pending_approval" || existing.Deleted {
+			continue
+		}
+		var existingPayload map[string]any
+		if json.Unmarshal(existing.Payload, &existingPayload) != nil || fmt.Sprint(existingPayload["type"]) != rolloutTypeParserSync {
+			continue
+		}
+		existingTargets := interfaceStrings(existingPayload["target_nodes"])
+		sort.Strings(existingTargets)
+		existingMode := strings.TrimSpace(fmt.Sprint(existingPayload["target_mode"]))
+		if existingMode == "" || existingMode == "<nil>" {
+			existingMode = "all_eligible"
+		}
+		if strings.EqualFold(strings.TrimSpace(fmt.Sprint(existingPayload["bundle_hash"])), bundle.BundleHash) && existingMode == targetMode && equalStringSlices(existingTargets, targetIDs) {
+			return existing, nil
+		}
+		superseded = append(superseded, existing)
+	}
 	proposal := map[string]any{
 		"name": name, "type": rolloutTypeParserSync, "target_nodes": targetIDs,
 		"target_mode":       targetMode,
@@ -430,7 +461,39 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 		return metastore.Document{}, err
 	}
 	id := fmt.Sprintf("parser-sync-%d", time.Now().UnixNano())
-	return s.metadata.Put(ctx, metastore.Document{Collection: "rollout-proposals", ID: id, State: "pending_approval", Payload: encoded, CreatedBy: actor})
+	created, err := s.metadata.Put(ctx, metastore.Document{Collection: "rollout-proposals", ID: id, State: "pending_approval", Payload: encoded, CreatedBy: actor})
+	if err != nil {
+		return metastore.Document{}, err
+	}
+	for _, stale := range superseded {
+		var stalePayload map[string]any
+		if json.Unmarshal(stale.Payload, &stalePayload) != nil {
+			continue
+		}
+		stalePayload["status"] = "superseded"
+		stalePayload["superseded_by"] = created.ID
+		stalePayload["superseded_by_bundle_hash"] = bundle.BundleHash
+		stalePayload["superseded_at"] = time.Now().UTC()
+		stalePayload["superseded_reason"] = "a newer canonical parser bundle replaced this pending proposal"
+		staleEncoded, marshalErr := json.Marshal(stalePayload)
+		if marshalErr != nil {
+			continue
+		}
+		_, _ = s.metadata.Put(ctx, metastore.Document{Collection: stale.Collection, ID: stale.ID, State: "superseded", Payload: staleEncoded, CreatedBy: stale.CreatedBy})
+	}
+	return created, nil
+}
+
+func equalStringSlices(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) updateDesiredNodeAssetSync(ctx context.Context, nodeID string, bundle parserAssetBundle) {

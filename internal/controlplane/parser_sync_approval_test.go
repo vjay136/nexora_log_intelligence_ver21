@@ -85,7 +85,7 @@ func TestParserSyncProposalApprovalPreservesBundleHashAndRequiresIndependentAppr
 	}
 
 	response, body := f.request(http.MethodPost, "/api/v1/rollouts/"+proposal.ID+"/approve", map[string]any{})
-	if response.StatusCode != http.StatusConflict || !strings.Contains(string(body), "creator cannot approve own rollout") {
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(body), "creator cannot approve own change") {
 		t.Fatalf("proposal creator approval should be rejected, got %d: %s", response.StatusCode, body)
 	}
 
@@ -132,6 +132,54 @@ func TestParserSyncProposalApprovalPreservesBundleHashAndRequiresIndependentAppr
 	var decimalValue map[string]any
 	if json.Unmarshal(decimalPayload, &decimalValue) != nil || decimalValue["config"].(map[string]any)["weight"] != float64(1) {
 		t.Fatalf("live rollout did not preserve parser asset semantics: %s", decimalPayload)
+	}
+}
+
+func TestParserSyncProposalIsIdempotentAndSupersedesOlderBundle(t *testing.T) {
+	f := newAPIFixture(t)
+	f.server.fleet.Register(&fleet.Node{ID: "proposal-node", Hostname: "proposal-node"})
+	firstBundle, err := f.server.buildActiveParserBundle(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := f.server.proposeParserBundleRollout(context.Background(), "admin", "First", "first", "selected", firstBundle, []string{"proposal-node"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := f.server.proposeParserBundleRollout(context.Background(), "admin", "Duplicate click", "duplicate", "selected", firstBundle, []string{"proposal-node"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate.ID != first.ID {
+		t.Fatalf("identical parser rollout produced duplicate proposals: first=%s duplicate=%s", first.ID, duplicate.ID)
+	}
+	if _, err := f.server.metadata.Put(context.Background(), metastore.Document{
+		Collection: "regex-patterns", ID: "new-parser-rule", State: "active",
+		Payload: json.RawMessage(`{"name":"New parser rule"}`), CreatedBy: "admin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	secondBundle, err := f.server.buildActiveParserBundle(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.server.proposeParserBundleRollout(context.Background(), "admin", "Second", "second", "selected", secondBundle, []string{"proposal-node"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID == first.ID || secondBundle.BundleHash == firstBundle.BundleHash {
+		t.Fatal("new parser bundle did not create one new proposal")
+	}
+	superseded, err := f.server.metadata.Get(context.Background(), "rollout-proposals", first.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if superseded.State != "superseded" {
+		t.Fatalf("older proposal remains actionable: state=%s", superseded.State)
+	}
+	var payload map[string]any
+	if json.Unmarshal(superseded.Payload, &payload) != nil || payload["superseded_by"] != second.ID || payload["superseded_by_bundle_hash"] != secondBundle.BundleHash {
+		t.Fatalf("supersession evidence missing: %s", superseded.Payload)
 	}
 }
 

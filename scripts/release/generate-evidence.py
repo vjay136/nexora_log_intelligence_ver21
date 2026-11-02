@@ -53,6 +53,10 @@ DELIVERABLES = (
     "NLI_V20_UPES_GPRS_ARCHITECTURE.svg",
     "PARSER_CATALOG.md",
     "V20_MIGRATION_AND_ROLLBACK.md",
+    "All_NLI_features.md",
+    "V21_R1_RELEASE_NOTES.md",
+    "V21_R1_TEST_RESULTS.md",
+    "VER21_IMPLEMENTATION_PLAN.md",
     "BENCHMARKS.txt",
     "SAMPLE_FIELD_ACCOUNTING.json",
     "RELEASE_ID",
@@ -122,7 +126,7 @@ def main() -> None:
 
     manifest = {
         "schema_version": 1,
-        "product": "Nexora Log Intelligence Ver20",
+        "product": "Nexora Log Intelligence Ver21",
         "version": args.version,
         "release": args.release,
         "source_revision": args.revision,
@@ -140,7 +144,7 @@ def main() -> None:
     namespace_seed = hashlib.sha256((args.revision + args.version + args.release).encode()).hexdigest()
     packages = [{
         "SPDXID": "SPDXRef-Product",
-        "name": "nli-v20-release",
+        "name": "nli-v21-release",
         "versionInfo": f"{args.version}-{args.release}",
         "downloadLocation": "NOASSERTION",
         "filesAnalyzed": False,

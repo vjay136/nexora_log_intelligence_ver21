@@ -94,7 +94,7 @@ done
 query() { rpm -qp --qf "$2" "$1"; }
 [[ $(query "$client" '%{NAME}') == "$NLI_CLIENT_PACKAGE" ]] || fail "client package name mismatch"
 [[ $(query "$controller" '%{NAME}') == "$NLI_CONTROLLER_PACKAGE" ]] || fail "controller package name mismatch"
-expected_repo='https://github.com/vjay136/nexora_log_intelligence_ver20.git'
+expected_repo='https://github.com/vjay136/nexora_log_intelligence_ver21.git'
 [[ $(query "$client" '%{URL}') == "$expected_repo" ]] || fail "client package repository URL mismatch"
 [[ $(query "$controller" '%{URL}') == "$expected_repo" ]] || fail "controller package repository URL mismatch"
 rpm -qp --requires "$controller" | grep -Fxq hostname || fail "controller RPM does not declare the hostname setup dependency"
@@ -183,7 +183,7 @@ assert_normalized_payload "$controller" /usr/sbin/nli-admin-reset "$ROOT/scripts
 assert_normalized_payload "$controller" /usr/lib/systemd/system/nli-controller-agent.service "$ROOT/packaging/systemd/nli-controller-agent.service"
 assert_normalized_payload "$controller" /usr/lib/systemd/system/nli-controller-bootstrap.service "$ROOT/packaging/systemd/nli-controller-bootstrap.service"
 
-for evidence in SHA256SUMS RELEASE_MANIFEST.json SBOM.spdx.json provenance.intoto.json SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS BENCHMARKS.txt INSTALLATION_AND_CONFIGURATION.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md V20_OPERATOR_DEMO_GUIDE.md V20_PRODUCTION_ACCEPTANCE_TESTS.md V20_SUBSYSTEM_ORCHESTRATION.md V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md V20_R1_TEST_RESULTS.md V20_R1_QRW_OPERATOR_TEST_GUIDE.md V20_R2_TEST_RESULTS.md V20_R2_QRW_OPERATOR_GUIDE.md V20_R3_TEST_RESULTS.md V20_R3_QRW_OPERATOR_GUIDE.md V20_R4_TEST_RESULTS.md V20_R4_QRW_OPERATOR_GUIDE.md V20_R6_TEST_RESULTS.md V20_R6_QRW_OPERATOR_GUIDE.md V20_QUARANTINE_RESOLUTION_WIZARD.md NLI_V20_UPES_GPRS_ARCHITECTURE.svg PARSER_CATALOG.md SAMPLE_FIELD_ACCOUNTING.json RELEASE_ID; do
+for evidence in SHA256SUMS RELEASE_MANIFEST.json SBOM.spdx.json provenance.intoto.json SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS BENCHMARKS.txt INSTALLATION_AND_CONFIGURATION.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md V20_OPERATOR_DEMO_GUIDE.md V20_PRODUCTION_ACCEPTANCE_TESTS.md V20_SUBSYSTEM_ORCHESTRATION.md V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md V20_R1_TEST_RESULTS.md V20_R1_QRW_OPERATOR_TEST_GUIDE.md V20_R2_TEST_RESULTS.md V20_R2_QRW_OPERATOR_GUIDE.md V20_R3_TEST_RESULTS.md V20_R3_QRW_OPERATOR_GUIDE.md V20_R4_TEST_RESULTS.md V20_R4_QRW_OPERATOR_GUIDE.md V20_R6_TEST_RESULTS.md V20_R6_QRW_OPERATOR_GUIDE.md V20_QUARANTINE_RESOLUTION_WIZARD.md NLI_V20_UPES_GPRS_ARCHITECTURE.svg PARSER_CATALOG.md All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md SAMPLE_FIELD_ACCOUNTING.json RELEASE_ID; do
   [[ -s "$ARTIFACT_DIR/$evidence" ]] || fail "missing $evidence"
 done
 python3 - "$ARTIFACT_DIR/SAMPLE_FIELD_ACCOUNTING.json" <<'PY'

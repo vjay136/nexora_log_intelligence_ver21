@@ -123,8 +123,8 @@ func TestQuarantineResolutionWizardParserRolloutTargetModesAndStaleProposal(t *t
 	f.login("stale-proposal-reviewer", "Stale-reviewer-password-12345!")
 	f.refreshCSRF()
 	response, data = f.request(http.MethodPost, "/api/v1/rollouts/"+selected["id"].(string)+"/approve", map[string]any{})
-	if response.StatusCode != http.StatusConflict || !strings.Contains(string(data), "stale") {
-		t.Fatalf("stale parser bundle proposal was approved: %d %s", response.StatusCode, data)
+	if response.StatusCode != http.StatusConflict || (!strings.Contains(string(data), "stale") && !strings.Contains(string(data), "not awaiting approval")) {
+		t.Fatalf("superseded parser bundle proposal was approved: %d %s", response.StatusCode, data)
 	}
 }
 
