@@ -25,6 +25,7 @@ import (
     "net/http"
     "os"
     "path/filepath"
+    "time"
 )
 
 const expectedSMTP = `{"action":"disconnect","auth_fail":6,"auth_ok":false,"auth_tries":7,"auth_user":"managers999@012.meg.in","checkpoint":"AUTH","code":"2005/1","date":"20260822","event":"SieveRuleMsg","eventType":"PolicyMsgInfo","event_type":"Note","fromhost":"11.22.33.44","geo":"IL","helo":"Site6","hostname":"severrgo001","id":"6A291BF5048F23DE","major_pid":"230675","minor_pid":"140347436861184","msg":"PolicyMsgInfo","pid_status":0,"policy":"outbound","reason":"badpassword","rule":"INOUT_action","score":0,"service":"smtp","time":"050048557+0200"}`
@@ -33,7 +34,7 @@ func main() {
     name := filepath.Base(os.Args[0])
     if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "version") {
         if name == "nli-controller-agent" { name = "nli-control" }
-        fmt.Println(name, "20.0.0")
+        fmt.Println(name, "21.0.0")
         return
     }
     switch name {
@@ -52,7 +53,7 @@ func main() {
         mux := http.NewServeMux()
         mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
             w.Header().Set("Content-Type", "application/json")
-            w.Header().Set("X-NLI-Controller", "v20")
+            w.Header().Set("X-NLI-Controller", "v21")
             w.Header().Set("Cache-Control", "no-store")
             if r.Method != http.MethodGet {
                 w.Header().Set("Allow", "GET")
@@ -64,7 +65,7 @@ func main() {
         })
         mux.HandleFunc("/api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
             w.Header().Set("Content-Type", "application/json")
-            w.Header().Set("X-NLI-Controller", "v20")
+            w.Header().Set("X-NLI-Controller", "v21")
             w.Header().Set("Cache-Control", "no-store")
             w.Header().Set("Allow", "POST, OPTIONS")
             if r.Method == http.MethodOptions { w.WriteHeader(http.StatusNoContent); return }
@@ -73,10 +74,12 @@ func main() {
             _, _ = io.WriteString(w, `{"username":"admin","role":"admin"}`)
         })
         mux.HandleFunc("/api/v1/auth/me", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"username":"admin","role":"admin"}`) })
-        mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "<!doctype html><html><body>NLI v20 fixture</body></html>") })
+        mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "<!doctype html><html><body>NLI v21 fixture</body></html>") })
         _ = http.ListenAndServe("127.0.0.1:12382", mux)
     case "nli-client-control":
-        select {}
+        for {
+            time.Sleep(time.Hour)
+        }
     }
 }
 GO
@@ -105,9 +108,9 @@ build_rpm_fixture() {
     -e NLI_VERSION_OVERRIDE="$version" -e NLI_RELEASE_OVERRIDE="$release" \
     "$RPM_BUILD_IMAGE" bash -lc "$rpm_command"
 }
-# Synthetic Release 1 payload for local package lifecycle mechanics only;
-# tag CI still downloads the genuine published Ver20 Release 1 RPMs.
-build_rpm_fixture "$work/previous" "$work/previous-work" 20.0.0 1
+# Synthetic Release 6 payload for local package lifecycle mechanics only;
+# tag CI downloads the genuine published Ver20 Release 6 RPMs.
+build_rpm_fixture "$work/previous" "$work/previous-work" 20.0.0 6
 build_rpm_fixture "$work/pass1" "$work/pass1-work" "$NLI_VERSION" "$NLI_RELEASE"
 build_rpm_fixture "$work/pass2" "$work/pass2-work" "$NLI_VERSION" "$NLI_RELEASE"
 for name in nli_client_ver20.rpm nli_clinet_ver20.rpm nli_controller_agent_ver20.rpm webview_ver20.zip webapp_ver20.zip install-controller-ver20.sh install-client-ver20.sh install-controller-aws-ver20.sh install-client-aws-ver20.sh install-controller-aws-cloudflare-ver20.sh aws-rhel-preflight-ver20.sh aws-security-group-plan-ver20.sh setup-cloudflare-tunnel-v20.sh verify-cloudflare-tunnel-v20.sh uninstall-cloudflare-tunnel-v20.sh cloudflare-quick-diagnosis-v20.sh vercel-preflight.mjs uninstall-controller-ver20.sh uninstall-client-ver20.sh INSTALLATION_AND_CONFIGURATION.md V20_AWS_RED_HAT_INSTALLATION.md V20_CLOUDFLARE_TUNNEL.md VERCEL_DEPLOYMENT.md CLOUDFLARE_PAGES_DEPLOYMENT.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md V20_MIGRATION_AND_ROLLBACK.md V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md V20_R1_TEST_RESULTS.md V20_R1_QRW_OPERATOR_TEST_GUIDE.md V20_R2_TEST_RESULTS.md V20_R2_QRW_OPERATOR_GUIDE.md V20_R3_TEST_RESULTS.md V20_R3_QRW_OPERATOR_GUIDE.md V20_R4_TEST_RESULTS.md V20_R4_QRW_OPERATOR_GUIDE.md V20_R6_TEST_RESULTS.md V20_R6_QRW_OPERATOR_GUIDE.md V20_QUARANTINE_RESOLUTION_WIZARD.md NLI_V20_UPES_GPRS_ARCHITECTURE.svg SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS RELEASE_ID; do

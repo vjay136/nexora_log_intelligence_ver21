@@ -137,7 +137,7 @@ replay_status=$(docker exec "$client" bash -c '
   token=$(sed -n "s/^NLI_ENROLLMENT_TOKEN=//p" /bootstrap/nli-client-bootstrap.env)
   curl --silent --show-error --cacert /etc/nli/controller-ca.crt -o /tmp/replayed-enrollment.json -w "%{http_code}" \
     -H "Content-Type: application/json" -H "X-NLI-Enrollment: ${token}" \
-    -d "{\"id\":\"replayed-node\",\"hostname\":\"replayed-node\",\"os\":\"linux\",\"arch\":\"x86_64\",\"version\":\"20.0.0\"}" \
+    -d "{\"id\":\"replayed-node\",\"hostname\":\"replayed-node\",\"os\":\"linux\",\"arch\":\"x86_64\",\"version\":\"21.0.0\"}" \
     https://controller:12382/api/v1/node/register
 ')
 [[ $replay_status == 401 ]] || { echo "two-node acceptance: consumed enrollment token returned HTTP $replay_status" >&2; exit 1; }
@@ -150,7 +150,7 @@ rotated_status=$(docker exec "$client" bash -c '
   token=$(sed -n "s/^NLI_ENROLLMENT_TOKEN=//p" /bootstrap/nli-client-bootstrap.env)
   curl --silent --show-error --cacert /etc/nli/controller-ca.crt -o /tmp/rotated-enrollment.json -w "%{http_code}" \
     -H "Content-Type: application/json" -H "X-NLI-Enrollment: ${token}" \
-    -d "{\"id\":\"rotated-node\",\"hostname\":\"rotated-node\",\"os\":\"linux\",\"arch\":\"x86_64\",\"version\":\"20.0.0\"}" \
+    -d "{\"id\":\"rotated-node\",\"hostname\":\"rotated-node\",\"os\":\"linux\",\"arch\":\"x86_64\",\"version\":\"21.0.0\"}" \
     https://controller:12382/api/v1/node/register
 ')
 [[ $rotated_status == 201 ]] || { echo "two-node acceptance: rotated enrollment token returned HTTP $rotated_status" >&2; exit 1; }

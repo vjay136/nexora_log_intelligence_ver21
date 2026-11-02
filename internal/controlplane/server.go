@@ -641,7 +641,7 @@ func jsonError(w http.ResponseWriter, message string, status int) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("X-NLI-Controller", "v20")
+	w.Header().Set("X-NLI-Controller", "v21")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Allow", "POST, OPTIONS")
 	if r.Method == http.MethodOptions {
@@ -1114,7 +1114,7 @@ func countActive(items []*rolloutRecord) int {
 	return count
 }
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("X-NLI-Controller", "v20")
+	w.Header().Set("X-NLI-Controller", "v21")
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")
