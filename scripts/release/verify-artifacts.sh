@@ -7,36 +7,35 @@ ROOT=${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 source "$ROOT/packaging/release.env"
 fail() { echo "artifact verification: $*" >&2; exit 1; }
 
-client="$ARTIFACT_DIR/nli_client_ver20.rpm"
-alias="$ARTIFACT_DIR/nli_clinet_ver20.rpm"
-controller="$ARTIFACT_DIR/nli_controller_agent_ver20.rpm"
-web="$ARTIFACT_DIR/webview_ver20.zip"
-webapp="$ARTIFACT_DIR/webapp_ver20.zip"
+client="$ARTIFACT_DIR/nli_client_ver21.rpm"
+controller="$ARTIFACT_DIR/nli_controller_agent_ver21.rpm"
+web="$ARTIFACT_DIR/webview_ver21.zip"
+webapp="$ARTIFACT_DIR/webapp_ver21.zip"
 operator_files=(
-  "$ARTIFACT_DIR/install-controller-ver20.sh"
-  "$ARTIFACT_DIR/install-client-ver20.sh"
-  "$ARTIFACT_DIR/uninstall-controller-ver20.sh"
-  "$ARTIFACT_DIR/uninstall-client-ver20.sh"
+  "$ARTIFACT_DIR/install-controller-ver21.sh"
+  "$ARTIFACT_DIR/install-client-ver21.sh"
+  "$ARTIFACT_DIR/uninstall-controller-ver21.sh"
+  "$ARTIFACT_DIR/uninstall-client-ver21.sh"
 )
 aws_scripts=(
-  "$ARTIFACT_DIR/install-controller-aws-ver20.sh"
-  "$ARTIFACT_DIR/install-client-aws-ver20.sh"
-  "$ARTIFACT_DIR/install-controller-aws-cloudflare-ver20.sh"
-  "$ARTIFACT_DIR/aws-rhel-preflight-ver20.sh"
-  "$ARTIFACT_DIR/aws-security-group-plan-ver20.sh"
+  "$ARTIFACT_DIR/install-controller-aws-ver21.sh"
+  "$ARTIFACT_DIR/install-client-aws-ver21.sh"
+  "$ARTIFACT_DIR/install-controller-aws-cloudflare-ver21.sh"
+  "$ARTIFACT_DIR/aws-rhel-preflight-ver21.sh"
+  "$ARTIFACT_DIR/aws-security-group-plan-ver21.sh"
 )
 cloudflare_scripts=(
-  "$ARTIFACT_DIR/setup-cloudflare-tunnel-v20.sh"
-  "$ARTIFACT_DIR/verify-cloudflare-tunnel-v20.sh"
-  "$ARTIFACT_DIR/uninstall-cloudflare-tunnel-v20.sh"
-  "$ARTIFACT_DIR/cloudflare-quick-diagnosis-v20.sh"
+  "$ARTIFACT_DIR/setup-cloudflare-tunnel-v21.sh"
+  "$ARTIFACT_DIR/verify-cloudflare-tunnel-v21.sh"
+  "$ARTIFACT_DIR/uninstall-cloudflare-tunnel-v21.sh"
+  "$ARTIFACT_DIR/cloudflare-quick-diagnosis-v21.sh"
 )
-for file in "$webapp" "$client" "$alias" "$controller" "$web" \
-  "$ARTIFACT_DIR/V20_AWS_RED_HAT_INSTALLATION.md" "${aws_scripts[@]}" "${cloudflare_scripts[@]}" \
-  "$ARTIFACT_DIR/V20_CLOUDFLARE_TUNNEL.md" "$ARTIFACT_DIR/VERCEL_DEPLOYMENT.md" "$ARTIFACT_DIR/CLOUDFLARE_PAGES_DEPLOYMENT.md" "$ARTIFACT_DIR/vercel-preflight.mjs" \
+for file in "$webapp" "$client" "$controller" "$web" \
+  "${aws_scripts[@]}" "${cloudflare_scripts[@]}" \
+  "$ARTIFACT_DIR/VERCEL_DEPLOYMENT.md" "$ARTIFACT_DIR/CLOUDFLARE_PAGES_DEPLOYMENT.md" "$ARTIFACT_DIR/vercel-preflight.mjs" \
   "$ARTIFACT_DIR/INSTALLATION_AND_CONFIGURATION.md" \
   "$ARTIFACT_DIR/WEBAPP_OPERATOR_AND_PARSER_GUIDE.md" \
-  "$ARTIFACT_DIR/PARSER_CATALOG.md" "$ARTIFACT_DIR/V20_MIGRATION_AND_ROLLBACK.md" "${operator_files[@]}"; do
+  "$ARTIFACT_DIR/PARSER_CATALOG.md" "$ARTIFACT_DIR/V21_R2_RELEASE_NOTES.md" "$ARTIFACT_DIR/V21_R2_TEST_RESULTS.md" "${operator_files[@]}"; do
   [[ -s $file ]] || fail "missing $(basename "$file")"
 done
 for script in "${aws_scripts[@]}" "${cloudflare_scripts[@]}"; do
@@ -74,18 +73,17 @@ marker="$bundle_dir/RELEASE_ID"
 [[ $(awk -F= '$1=="NLI_RELEASE" {print $2; exit}' "$marker") == "$NLI_RELEASE" ]] || fail 'RELEASE_ID release mismatch'
 [[ $(awk -F= '$1=="NLI_ARCH" {print $2; exit}' "$marker") == "$NLI_ARCH" ]] || fail 'RELEASE_ID architecture mismatch'
 
-for rpm_file in "$client" "$alias" "$controller"; do
+for rpm_file in "$client" "$controller"; do
   magic=$(od -An -tx1 -N4 "$rpm_file" | tr -d ' \n')
   [[ $magic == edabeedb ]] || fail "$(basename "$rpm_file") has non-RPM magic $magic"
 done
-cmp -s "$client" "$alias" || fail "compatibility alias is not byte-identical to canonical client RPM"
 
 unzip -t "$webapp" >/dev/null || fail "invalid Vercel bundle"
 webapp_entries=$(unzip -Z1 "$webapp")
-for entry in vercel.json package.json api/v1/\[...path\].js functions/api/v1/\[\[path\]\].js web/index.html web/nli-mark.svg web/nexora-logo-v20.png web/login-banner-v20.png web/nexora-poster-v20.png web/package.json web/package-lock.json web/vite.config.js web/_headers; do
+for entry in vercel.json package.json api/v1/\[...path\].js functions/api/v1/\[\[path\]\].js web/index.html web/nli-mark.svg web/nexora-logo-v21.png web/login-banner-v21.png web/nexora-poster-v21.png web/package.json web/package-lock.json web/vite.config.js web/_headers; do
   grep -Fxq "$entry" <<<"$webapp_entries" || fail "Vercel bundle is missing $entry"
 done
-for image in nexora-logo-v20.png login-banner-v20.png nexora-poster-v20.png; do
+for image in nexora-logo-v21.png login-banner-v21.png nexora-poster-v21.png; do
   source_hash=$(sha256sum "$ROOT/web/$image" | awk '{print $1}')
   bundle_hash=$(unzip -p "$webapp" "web/$image" | sha256sum | awk '{print $1}')
   [[ $source_hash == "$bundle_hash" ]] || fail "Vercel bundle changed official binary asset: $image"
@@ -109,8 +107,8 @@ done
 # Exercise the exact operator path that previously rejected valid distro-suffixed
 # releases such as 2.el9. This verifies package identity, V20 version, release
 # syntax, architecture, and the bundle checksum without changing the host.
-bash "$bundle_dir/install-controller-ver20.sh" --verify-only --rpm "$bundle_dir/nli_controller_agent_ver20.rpm"
-bash "$bundle_dir/install-client-ver20.sh" --verify-only --rpm "$bundle_dir/nli_client_ver20.rpm"
+bash "$bundle_dir/install-controller-ver21.sh" --verify-only --rpm "$bundle_dir/nli_controller_agent_ver21.rpm"
+bash "$bundle_dir/install-client-ver21.sh" --verify-only --rpm "$bundle_dir/nli_client_ver21.rpm"
 
 client_payload=$(rpm -qpl "$client")
 controller_payload=$(rpm -qpl "$controller")
@@ -121,9 +119,9 @@ for path in /usr/bin/nli /usr/bin/nli-agent /usr/bin/nli-client-control /usr/bin
   grep -Fxq "$path" <<<"$client_payload" || fail "client payload missing $path"
 done
 for path in /usr/bin/nli-controller-agent /usr/sbin/nli-controller-setup /usr/sbin/nli-supabase-setup /usr/sbin/nli-admin-reset /usr/share/nli/supabase/nli_schema.sql /etc/nli/controller.json \
-  /usr/lib/systemd/system/nli-controller-agent.service /usr/lib/systemd/system/nli-controller-bootstrap.service /usr/share/nli/webview_ver20/index.html \
-  /usr/share/nli/webview_ver20/styles.css /usr/share/nli/webview_ver20/app.js /usr/share/nli/webview_ver20/nli-mark.svg /usr/share/nli/webview_ver20/nexora-logo-v20.png /usr/share/nli/webview_ver20/login-banner-v20.png /usr/share/nli/webview_ver20/nexora-poster-v20.png /usr/share/nli/webview_ver20/README.txt \
-  /usr/share/nli/webview_ver20/Open-NLI-WebView.ps1; do
+  /usr/lib/systemd/system/nli-controller-agent.service /usr/lib/systemd/system/nli-controller-bootstrap.service /usr/share/nli/webview_ver21/index.html \
+  /usr/share/nli/webview_ver21/styles.css /usr/share/nli/webview_ver21/app.js /usr/share/nli/webview_ver21/nli-mark.svg /usr/share/nli/webview_ver21/nexora-logo-v21.png /usr/share/nli/webview_ver21/login-banner-v21.png /usr/share/nli/webview_ver21/nexora-poster-v21.png /usr/share/nli/webview_ver21/README.txt \
+  /usr/share/nli/webview_ver21/Open-NLI-WebView.ps1; do
   grep -Fxq "$path" <<<"$controller_payload" || fail "controller payload missing $path"
 done
 ! grep -Eq 'webview_ver1(/|$)' <<<"$controller_payload" || fail "controller payload contains webview_ver1"
@@ -131,15 +129,15 @@ done
 expected_assets=$(wc -l <"$ARTIFACT_DIR/WEBVIEW_SHA256SUMS")
 web_entries=$(unzip -Z1 "$web")
 zip_assets=$(grep -vc '/$' <<<"$web_entries")
-rpm_assets=$(rpm -qp --dump "$controller" | awk '$1 ~ "^/usr/share/nli/webview_ver20/" && $5 ~ /^010/ {count++} END {print count+0}')
+rpm_assets=$(rpm -qp --dump "$controller" | awk '$1 ~ "^/usr/share/nli/webview_ver21/" && $5 ~ /^010/ {count++} END {print count+0}')
 [[ $expected_assets -eq 9 && $expected_assets -eq $zip_assets && $expected_assets -eq $rpm_assets ]] || fail "WebView asset counts differ or include unexpected files: manifest=$expected_assets zip=$zip_assets rpm=$rpm_assets"
 for forbidden in e2e.spec.js package.json playwright.config.js; do
   ! grep -Fq "/$forbidden" <<<"$web_entries" || fail "WebView ZIP contains development-only asset $forbidden"
-  ! grep -Fq "/usr/share/nli/webview_ver20/$forbidden" <<<"$controller_payload" || fail "controller RPM contains development-only asset $forbidden"
+  ! grep -Fq "/usr/share/nli/webview_ver21/$forbidden" <<<"$controller_payload" || fail "controller RPM contains development-only asset $forbidden"
 done
 while read -r expected relative; do
-  zip_hash=$(unzip -p "$web" "webview_ver20/$relative" | sha256sum | awk '{print $1}')
-  rpm_hash=$(rpm -qp --dump "$controller" | awk -v path="/usr/share/nli/webview_ver20/$relative" '$1==path {print $4}')
+  zip_hash=$(unzip -p "$web" "webview_ver21/$relative" | sha256sum | awk '{print $1}')
+  rpm_hash=$(rpm -qp --dump "$controller" | awk -v path="/usr/share/nli/webview_ver21/$relative" '$1==path {print $4}')
   [[ $expected == "$zip_hash" && $expected == "$rpm_hash" ]] || fail "WebView asset mismatch: $relative"
 done <"$ARTIFACT_DIR/WEBVIEW_SHA256SUMS"
 
@@ -183,7 +181,7 @@ assert_normalized_payload "$controller" /usr/sbin/nli-admin-reset "$ROOT/scripts
 assert_normalized_payload "$controller" /usr/lib/systemd/system/nli-controller-agent.service "$ROOT/packaging/systemd/nli-controller-agent.service"
 assert_normalized_payload "$controller" /usr/lib/systemd/system/nli-controller-bootstrap.service "$ROOT/packaging/systemd/nli-controller-bootstrap.service"
 
-for evidence in SHA256SUMS RELEASE_MANIFEST.json SBOM.spdx.json provenance.intoto.json SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS BENCHMARKS.txt INSTALLATION_AND_CONFIGURATION.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md V20_OPERATOR_DEMO_GUIDE.md V20_PRODUCTION_ACCEPTANCE_TESTS.md V20_SUBSYSTEM_ORCHESTRATION.md V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md V20_R1_TEST_RESULTS.md V20_R1_QRW_OPERATOR_TEST_GUIDE.md V20_R2_TEST_RESULTS.md V20_R2_QRW_OPERATOR_GUIDE.md V20_R3_TEST_RESULTS.md V20_R3_QRW_OPERATOR_GUIDE.md V20_R4_TEST_RESULTS.md V20_R4_QRW_OPERATOR_GUIDE.md V20_R6_TEST_RESULTS.md V20_R6_QRW_OPERATOR_GUIDE.md V20_QUARANTINE_RESOLUTION_WIZARD.md NLI_V20_UPES_GPRS_ARCHITECTURE.svg PARSER_CATALOG.md All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md SAMPLE_FIELD_ACCOUNTING.json RELEASE_ID; do
+for evidence in SHA256SUMS RELEASE_MANIFEST.json SBOM.spdx.json provenance.intoto.json SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS BENCHMARKS.txt INSTALLATION_AND_CONFIGURATION.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md SAMPLE_FIELD_ACCOUNTING.json RELEASE_ID; do
   [[ -s "$ARTIFACT_DIR/$evidence" ]] || fail "missing $evidence"
 done
 python3 - "$ARTIFACT_DIR/SAMPLE_FIELD_ACCOUNTING.json" <<'PY'

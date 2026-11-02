@@ -4,7 +4,7 @@ Nexora Log Intelligence Ver21 is a deterministic, review-gated log parsing and f
 
 > Install from the single versioned release archive in a fresh directory. Verify its external `.sha256` file and the complete internal `SHA256SUMS`; never mix loose files from different releases.
 
-Release `21.0.0-1` promotes the Ver20 Release 6 runtime into the Ver21 product line. The Go module path (`nexora.local/nli-v20`), RPM package names (`nli-client` and `nli-controller-agent`), systemd services, WebView installation root, and state/configuration paths intentionally remain stable for in-place compatibility. See [All NLI features](All_NLI_features.md), [Ver21 Release 1 notes](docs/V21_R1_RELEASE_NOTES.md), and [Ver21 Release 1 test results](docs/V21_R1_TEST_RESULTS.md).
+Release `21.0.0-2` is the current Ver21 release. Public RPM aliases, archives, installers, uninstallers, AWS helpers, and Cloudflare helpers use Ver21-only filenames. The Go module path (`nexora.local/nli-v20`), RPM package names (`nli-client` and `nli-controller-agent`), systemd services, and state/configuration paths intentionally remain stable for in-place compatibility; the WebView payload is installed under `/usr/share/nli/webview_ver21`. See [All NLI features](All_NLI_features.md), [Ver21 Release 2 notes](docs/V21_R2_RELEASE_NOTES.md), and [Ver21 Release 2 test results](docs/V21_R2_TEST_RESULTS.md).
 
 ## V18 upgrade baseline architecture
 
@@ -89,7 +89,7 @@ Ver20 keeps stable RPM package identities, systemd units, `/etc/nli` configurati
 On the Rocky/RHEL controller, the lowest-interaction path is:
 
 ```bash
-sudo bash install-controller-ver20.sh --automatic
+sudo bash install-controller-ver21.sh --automatic
 ```
 
 This discovers private/public AWS and host identities, persists generated secrets in root-owned files, creates TLS material, configures the listener/firewall, and prints concrete diagnostics. Run without `--automatic` to choose private-network TLS, public Nginx/ACME, Cloudflare Tunnel, a corporate certificate, or an existing public HTTPS proxy. The installer creates a root-only, one-use `/root/nli-client-bootstrap.env` and a recoverable root-only `/root/nli-controller-credentials.env`; it does not print secret values to the terminal.
@@ -97,7 +97,7 @@ This discovers private/public AWS and host identities, persists generated secret
 On each client, provision all reviewed families and standard paths with:
 
 ```bash
-sudo bash install-client-ver20.sh --all-log-files
+sudo bash install-client-ver21.sh --all-log-files
 ```
 
 The interactive installer remains available for custom log paths, parser families, event/service/hostname selection, and destinations. Enter `automatic` for both paths and parser families to create and verify one reviewed sample path for every bundled parser. For each additional client, first create a new one-use enrollment file on the controller:
@@ -109,8 +109,8 @@ sudo nli-controller-setup --rotate-enrollment
 Use the separate uninstall scripts when required:
 
 ```bash
-sudo bash uninstall-client-ver20.sh
-sudo bash uninstall-controller-ver20.sh
+sudo bash uninstall-client-ver21.sh
+sudo bash uninstall-controller-ver21.sh
 ```
 
 See [INSTALLATION_AND_CONFIGURATION.md](docs/INSTALLATION_AND_CONFIGURATION.md) for VMware/MobaXterm steps, connectivity checks, Vercel/Cloudflare configuration, Supabase bootstrap, upgrades, and optional purge behavior.
@@ -121,8 +121,8 @@ single additive controller command that installs private VPC TLS and then
 starts a named Cloudflare Tunnel is:
 
 ```bash
-sudo bash install-controller-aws-cloudflare-ver20.sh \
-  --rpm ./nli_controller_agent_ver20.rpm \
+sudo bash install-controller-aws-cloudflare-ver21.sh \
+  --rpm ./nli_controller_agent_ver21.rpm \
   --private-endpoint 10.20.1.10 \
   --public-hostname nli-controller.example.com \
   --tunnel-token-file /root/cloudflare-tunnel-token.txt

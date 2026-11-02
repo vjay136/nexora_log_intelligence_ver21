@@ -57,10 +57,10 @@ if (-not (Test-NLIController $baseUrl)) {
         Start-Sleep -Seconds 1
     }
     if (-not $ready) {
-        throw "The SSH tunnel opened, but $baseUrl does not expose the NLI Ver20 health and login contracts. Check nli-controller-agent on Rocky."
+        throw "The SSH tunnel opened, but $baseUrl does not expose the NLI Ver21 health and login contracts. Check nli-controller-agent on Rocky."
     }
 }
 
-Write-Host "Verified Nexora Log Intelligence Ver20 controller and login API: $baseUrl" -ForegroundColor Green
+Write-Host "Verified Nexora Log Intelligence Ver21 controller and login API: $baseUrl" -ForegroundColor Green
 Write-Host 'Sign in as admin. If the stored password is unknown, run sudo nli-admin-reset on the controller.'
 if (-not $NoBrowser) { Start-Process "$baseUrl/" }

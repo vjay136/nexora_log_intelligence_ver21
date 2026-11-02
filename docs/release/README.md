@@ -1,4 +1,12 @@
-# NLI v20 release infrastructure
+# NLI Ver21 release infrastructure
+
+## Release 21.0.0-2
+
+Release 2 publishes Ver21-only artifact and helper filenames: `nli_client_ver21.rpm`, `nli_controller_agent_ver21.rpm`, `nli-v21.0.0-2-x86_64.tar.gz`, `webview_ver21.zip`, `webapp_ver21.zip`, and the Ver21 installer/uninstaller helpers. The obsolete misspelling `nli_clinet_*` is not generated. Stable RPM package names, services, configuration, and state paths remain unchanged for safe upgrades; compatibility is not represented by legacy release filenames.
+
+Current R2 acceptance requires the complete quarantine lifecycle to remain inside QRW, administrator self-approval to carry an audited reason bound to the exact revision/hash, immediate client acknowledgement of a durably applied bundle, and an inline retryable replay gate that cannot poison canonical live-sync health. Historical parsing measurements remain visible when quarantine evidence becomes terminal or is removed.
+
+See `../V21_R2_RELEASE_NOTES.md` and `../V21_R2_TEST_RESULTS.md` for the current release contract. The Ver20 sections below are retained as historical release evidence only and are not copied as current R2 deliverables.
 
 ## Release 20.0.0-6
 
@@ -190,14 +198,14 @@ Operational additions include queued SMTP and PagerDuty notifications, persisten
 
 Use `V20_PRODUCTION_ACCEPTANCE_TESTS.md` for the exact 49-record acceptance test and `V20_OPERATOR_DEMO_GUIDE.md` for the complete tab-by-tab demonstration. `V20_SUBSYSTEM_ORCHESTRATION.md` explains which subsystems run on ordinary traffic and which run only during evidence-gated recovery.
 
-This directory documents the supported V20 release path. It builds source-derived static Linux binaries in a digest-pinned Go image, creates genuine RPMs with `rpmbuild` in a digest-pinned Rocky image, performs a two-pass byte-for-byte reproducibility check, and emits checksums, SPDX SBOM, release manifest, binary provenance, and an in-toto/SLSA provenance statement.
+This directory documents the supported Ver21 Release 2 path. It builds source-derived static Linux binaries in a digest-pinned Go image, creates genuine RPMs with `rpmbuild` in a digest-pinned Rocky image, performs a two-pass byte-for-byte reproducibility check, and emits checksums, SPDX SBOM, release manifest, binary provenance, and an in-toto/SLSA provenance statement.
 
 ## Safety and prerequisites
 
 - Release input must be one clean, committed, frozen Git revision. Dirty or untracked source is refused.
 - Outputs go to `NLI_BUILD_SCRATCH` or an explicit output directory; the repository `dist` directory is never used.
-- `nli_clinet_ver20.rpm` is a byte-identical filename alias of `nli_client_ver20.rpm`. Both contain the same `nli-client` NEVRA and must not be treated as separate packages.
-- Release 2 acceptance uses the genuine published Ver20 Release 1 client and controller RPMs, then proves upgrade, rollback, re-upgrade, restart, state preservation, and uninstall behavior on Rocky Linux 9 and Rocky Linux 10.2.
+- Public R2 RPM aliases are `nli_client_ver21.rpm` and `nli_controller_agent_ver21.rpm`; no misspelled `nli_clinet_*` artifact is generated.
+- Release 2 acceptance preserves the stable `nli-client` and `nli-controller-agent` package identities and validates upgrade, rollback, re-upgrade, restart, state preservation, and uninstall behavior on Rocky Linux 9 and Rocky Linux 10.2 when genuine baseline RPMs are supplied.
 - The release remains unsigned unless an explicit signing key is supplied. Unsigned output must never be described as signed.
 - Operators receive one `nli-v<version>-<release>-x86_64.tar.gz` archive plus its external `.sha256`. The archive contains `RELEASE_ID`, all RPM/web/operator artifacts, and the complete internal checksum manifest. It must be extracted into a fresh versioned directory.
 
@@ -209,9 +217,9 @@ make release-static
 make release-package-test
 make release-lifecycle-test
 make release-preflight
-make release-build OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v20-release"
+make release-build OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r2-release"
 make release-rocky \
-  OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v20-release" \
+  OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r2-release" \
   PREVIOUS_DIR=/absolute/path/to/genuine/previous-rpms
 ```
 
@@ -219,7 +227,7 @@ Windows PowerShell uses the same pinned two-pass build:
 
 ```powershell
 $env:NLI_BUILD_SCRATCH = 'C:\absolute\session-owned\scratch'
-.\packaging\build-release.ps1 -OutputDirectory "$env:NLI_BUILD_SCRATCH\nli-v20-release"
+.\packaging\build-release.ps1 -OutputDirectory "$env:NLI_BUILD_SCRATCH\nli-v21-r2-release"
 ```
 
 ## Signing hooks
@@ -228,10 +236,10 @@ Unsigned reproducibility is checked before signing because signatures intentiona
 
 ```bash
 REQUIRE_SIGNATURES=1 RPM_GPG_NAME='NLI Release' \
-  make release-sign-rpm OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v20-release"
-make release-evidence OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v20-release"
+  make release-sign-rpm OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r2-release"
+make release-evidence OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r2-release"
 REQUIRE_SIGNATURES=1 COSIGN_KEY=... \
-  make release-sign OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v20-release"
+  make release-sign OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r2-release"
 ```
 
 To use GPG detached signatures instead, set `GPG_KEY_ID`. Private keys are never read from the repository and are not mounted by the default build.
@@ -240,14 +248,14 @@ Verify promotion signatures with an explicit trust root:
 
 ```bash
 COSIGN_PUBLIC_KEY=/absolute/path/to/cosign.pub \
-  make release-sign-verify OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v20-release"
+  make release-sign-verify OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r2-release"
 ```
 
 ## Rocky acceptance
 
 `tests/rocky/run-matrix.sh` builds systemd-capable containers from digest-pinned Rocky Linux 9.6 and official Rocky Linux 10.2 images. It validates:
 - RPM magic, digest, name/version/architecture, payload, ownership, and modes;
-- byte-identical compatibility alias behavior;
+- Ver21 public artifact naming and stable RPM identity behavior;
 - clean install, real previous-release upgrade, downgrade rollback, and re-upgrade;
 - all three systemd services and `systemd-analyze verify`;
 - exact 26-field SMTP CLI output;
@@ -259,7 +267,7 @@ COSIGN_PUBLIC_KEY=/absolute/path/to/cosign.pub \
 A final release run must wait until other writers stop and one integrated revision is frozen. That revision must provide:
 
 1. compiling and passing Go source, vet, race, and fuzz gates;
-2. runtime binaries reporting `20.0.0` with clean `nexora.local/nli-v20` VCS provenance;
+2. runtime binaries reporting `21.0.0` with clean VCS provenance (the stable Go module remains `nexora.local/nli-v20` for source compatibility);
 3. exact SMTP CLI output matching `tests/release/smtp_expected.json`;
 4. a complete WebView without stale `0.4.0`, `v1.0.0`, or `webview_ver1` identifiers;
 5. no disabled tests; and

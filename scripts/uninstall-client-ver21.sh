@@ -3,10 +3,10 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Uninstall the NLI v20 client.
+Uninstall the NLI Ver21 client.
 
 Usage:
-  sudo bash uninstall-client-ver20.sh [--yes] [--purge]
+  sudo bash uninstall-client-ver21.sh [--yes] [--purge]
 
 The default removal preserves client configuration, node identity, spool,
 cache, and logs for recovery or reinstall. --purge permanently removes those
@@ -15,8 +15,8 @@ are never deleted by this script.
 EOF
 }
 
-fail() { printf 'uninstall-client-ver20: %s\n' "$*" >&2; exit 1; }
-info() { printf 'uninstall-client-ver20: %s\n' "$*"; }
+fail() { printf 'uninstall-client-ver21: %s\n' "$*" >&2; exit 1; }
+info() { printf 'uninstall-client-ver21: %s\n' "$*"; }
 
 assume_yes=0
 purge=0

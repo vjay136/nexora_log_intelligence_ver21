@@ -1,6 +1,6 @@
 # Nexora Log Intelligence Ver21 — Implemented Feature Inventory
 
-Release identity: `21.0.0-1`  
+Release identity: `21.0.0-2`
 Document scope: behavior implemented in this repository; this is not a performance guarantee or a substitute for deployment qualification.
 
 ## Product boundary and compatibility
@@ -15,8 +15,8 @@ Ver21 deliberately preserves the following compatibility identities:
 - Controller services: `nli-controller-agent` and `nli-controller-bootstrap`.
 - Configuration roots: `/etc/nli`.
 - Durable state roots: `/var/lib/nli`, `/var/lib/nli-control-client`, and `/var/lib/nli-controller`.
-- Installed WebView root: `/usr/share/nli/webview_ver20`.
-- Compatibility artifact aliases containing `ver20` remain valid distribution names; the release archive and RPM metadata carry the authoritative `21.0.0-1` identity.
+- Installed WebView root: `/usr/share/nli/webview_ver21`.
+- Release artifacts use Ver21 names: `nli_client_ver21.rpm`, `nli_controller_agent_ver21.rpm`, `webview_ver21.zip`, `webapp_ver21.zip`, and `nli-v21.0.0-2-x86_64.tar.gz`.
 
 These stable names allow RPM to perform an in-place major-version upgrade without creating duplicate services or abandoning existing configuration and state. They do not mean the product is still Ver20.
 
@@ -73,7 +73,7 @@ The parser lifecycle is revisioned and auditable:
 6. Submit the exact candidate for review.
 7. Publish an approved parser into the canonical bundle.
 8. Propose a rollout for the origin client, selected clients, or eligible online clients.
-9. Approve the exact revision and bundle hash according to policy.
+9. Approve the exact revision and bundle hash according to policy. An administrator may approve an administrator-created parser or rollout only with an explicit audited reason; non-administrator separation of duties remains enforced.
 10. Deliver the immutable bundle and record each client's applied revision/hash acknowledgement.
 11. Replay only eligible quarantined records after exact-hash acknowledgement.
 12. Verify the replay outcome; retain audit evidence and permit rollback/offboarding through the same governed path.
@@ -89,14 +89,16 @@ The Quarantine Resolution Wizard (QRW) consolidates recovery into nine state-der
 3. Define the desired JSON schema.
 4. Map raw evidence to fields.
 5. Generate the parser candidate and validation fixtures.
-6. Run deterministic preview/Assurance.
-7. Review and publish.
+6. Run the deterministic preview without leaving QRW.
+7. Review, approve, and publish using QRW's controller-owned lifecycle controls.
 8. Deploy the exact bundle and request targeted replay after acknowledgement.
 9. Verify the replay result.
 
 Operator-defined field names, indexes, delimiters, safe regex, templates, type/presence policies, transforms, defaults, and validation constraints are available in the mapping flow. The wizard derives Completed, Current, Locked, Waiting, and Blocked states from controller records rather than from clicks alone. Ignore/exclude, return-to-queue, retained-evidence deletion, raw download, diagnosis, repair, replay, rollback, and offboarding remain explicit audited actions.
 
 The Guided Parser Repair Studio exposes the same controller-owned evidence and parser lifecycle from Assurance Lab. The QRW duplicates relevant controls for operator convenience; it does not create a second approval or rollout system.
+
+Ver21 R2 posts the client's exact applied revision and bundle hash immediately after persistence, while retaining the normal heartbeat as a recovery path. A replay attempted before that acknowledgement returns an inline, retryable QRW gate and does not mark canonical live synchronization stale. Quarantine deletion, exclusion, or resolution changes actionable queue state without erasing retained historical parsing measurements from Command Center charts.
 
 ## Assurance Lab (NAL)
 
@@ -189,11 +191,11 @@ Authoritative Ver21 identity is:
 
 - Product: Nexora Log Intelligence Ver21.
 - Runtime version: `21.0.0`.
-- Package release: `1`.
-- Release archive root: `nli-v21.0.0-1-x86_64`.
+- Package release: `2`.
+- Release archive root: `nli-v21.0.0-2-x86_64`.
 - Git repositories: `nexora_log_intelligence_ver21` and its dedicated web-deployment repository.
 
-Historical Ver20 filenames and documents remain present as compatibility aliases and evidence. They must not override `RELEASE_ID`, RPM metadata, binary version output, or the Ver21 release notes.
+Historical Ver20 documents remain as evidence only. Current public artifacts, helper scripts, `RELEASE_ID`, RPM metadata, binary version output, and release notes use the Ver21 R2 identity.
 
 ## Operational safety boundaries
 

@@ -903,6 +903,7 @@ func (s *Server) handleNodeCommandResult(w http.ResponseWriter, r *http.Request)
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.recordParserSyncRolloutResult(r.Context(), commandID, result)
 	s.recordInputPathRolloutResult(commandID, result.NodeID, result.Status, result.Message)
 	s.recordQuarantineReplayResult(r.Context(), commandID, result.NodeID, result.Status, result.Message)
 	jsonOK(w, map[string]string{"status": "recorded"})

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast, platform-neutral V20 release invariants for the cached quick suite."""
+"""Fast, platform-neutral Ver21 release invariants for the cached quick suite."""
 
 from __future__ import annotations
 
@@ -16,19 +16,19 @@ def fail(message: str) -> None:
 root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).parents[2]).resolve()
 
 required = (
-    "scripts/install-controller-ver20.sh",
-    "scripts/install-client-ver20.sh",
-    "scripts/install-controller-aws-ver20.sh",
-    "scripts/install-client-aws-ver20.sh",
-    "scripts/install-controller-aws-cloudflare-ver20.sh",
-    "scripts/setup-cloudflare-tunnel-v20.sh",
-    "scripts/verify-cloudflare-tunnel-v20.sh",
-    "scripts/uninstall-cloudflare-tunnel-v20.sh",
-    "scripts/cloudflare-quick-diagnosis-v20.sh",
+    "scripts/install-controller-ver21.sh",
+    "scripts/install-client-ver21.sh",
+    "scripts/install-controller-aws-ver21.sh",
+    "scripts/install-client-aws-ver21.sh",
+    "scripts/install-controller-aws-cloudflare-ver21.sh",
+    "scripts/setup-cloudflare-tunnel-v21.sh",
+    "scripts/verify-cloudflare-tunnel-v21.sh",
+    "scripts/uninstall-cloudflare-tunnel-v21.sh",
+    "scripts/cloudflare-quick-diagnosis-v21.sh",
     "scripts/vercel-preflight.mjs",
     "wrangler.jsonc",
-    "scripts/uninstall-controller-ver20.sh",
-    "scripts/uninstall-client-ver20.sh",
+    "scripts/uninstall-controller-ver21.sh",
+    "scripts/uninstall-client-ver21.sh",
     "scripts/release/create-bundle.sh",
     "configs/parser-catalog/nli-v20-parser-catalog.json",
     "configs/catalog/nli-v20-parser-catalog.json",
@@ -52,7 +52,7 @@ required = (
 )
 for name in required:
     if not (root / name).is_file():
-        fail(f"missing V20 release input: {name}")
+        fail(f"missing Ver21 release input: {name}")
 
 scan_roots = ("README.md", "docs", "packaging", "scripts", "web", ".github")
 files: list[Path] = []
@@ -160,4 +160,4 @@ for installer_name in required[:2]:
         if marker not in installer:
             fail(f"{installer_name} is missing mixed-release protection {marker!r}")
 
-print("V20 quick static release invariants: PASS")
+print("Ver21 quick static release invariants: PASS")

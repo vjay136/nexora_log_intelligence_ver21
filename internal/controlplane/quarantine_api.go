@@ -899,8 +899,30 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 	if syncErr == nil {
 		_ = json.Unmarshal(syncDoc.Payload, &syncState)
 	}
-	if bundle.BundleHash == "" || fmt.Sprint(syncState["desired_asset_bundle_hash"]) != bundle.BundleHash || fmt.Sprint(syncState["active_asset_bundle_hash"]) != bundle.BundleHash || fmt.Sprint(syncState["asset_sync_status"]) != "applied" {
-		jsonError(w, "target client has not acknowledged the current published parser bundle; replay remains gated", http.StatusConflict)
+	stateString := func(key string) string {
+		value, exists := syncState[key]
+		if !exists || value == nil {
+			return ""
+		}
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+	desiredBundleHash := stateString("desired_asset_bundle_hash")
+	activeBundleHash := stateString("active_asset_bundle_hash")
+	syncStatus := stateString("asset_sync_status")
+	if bundle.BundleHash == "" || desiredBundleHash != bundle.BundleHash || activeBundleHash != bundle.BundleHash || syncStatus != "applied" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":                "target client has not acknowledged the current published parser bundle; replay remains gated",
+			"code":                 "parser_bundle_not_acknowledged",
+			"retryable":            true,
+			"live_sync_impact":     false,
+			"expected_bundle_hash": bundle.BundleHash,
+			"desired_bundle_hash":  desiredBundleHash,
+			"active_bundle_hash":   activeBundleHash,
+			"sync_status":          syncStatus,
+			"next_action":          "wait for the parser-sync command acknowledgement, then retry; inspect Parser Fleet Sync if the client reports failed or drifted",
+		})
 		return
 	}
 	if len(unique) == 0 {

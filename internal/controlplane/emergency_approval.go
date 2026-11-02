@@ -33,11 +33,11 @@ func principalHasPermission(principal *middleware.SecurityContext, permission st
 	return false
 }
 
-// approvalMode preserves independent approval as the normal path. A creator
-// may approve their own parser change only via the administrator-only recovery
-// path with a reason and exact revision/digest binding. Ver21 deliberately
-// makes this capability intrinsic to the admin role: an operator must not be
-// stranded merely because a deployment omitted an optional feature flag.
+// approvalMode preserves independent approval as the normal path. An
+// administrator may also approve their own parser change when they provide an
+// auditable reason. Emergency self-approval remains available for callers that
+// want to bind the decision to an exact revision and digest, but is no longer
+// the only way for an administrator to finish the governed QRW workflow.
 func (s *Server) approvalMode(doc metastore.Document, principal *middleware.SecurityContext, request approvalRequest, expectedDigest, digestField string) (string, map[string]string, error) {
 	if doc.CreatedBy != principal.Username {
 		details := map[string]string{"approval_mode": "independent"}
@@ -50,14 +50,19 @@ func (s *Server) approvalMode(doc metastore.Document, principal *middleware.Secu
 		return "independent", details, nil
 	}
 	if !principalHasPermission(principal, middleware.PermissionEmergencyApprove) {
-		return "", nil, fmt.Errorf("creator cannot approve own change; emergency administrator permission is required")
-	}
-	if !request.EmergencySelfApproval {
-		return "", nil, fmt.Errorf("creator cannot approve own change; explicitly request emergency_self_approval with reason and exact revision/hash")
+		return "", nil, fmt.Errorf("creator cannot approve own change; administrator approval permission is required")
 	}
 	reason := strings.TrimSpace(request.Reason)
 	if len(reason) < 12 || len(reason) > 512 {
-		return "", nil, fmt.Errorf("emergency self-approval reason must contain 12..512 characters")
+		return "", nil, fmt.Errorf("administrator self-approval reason must contain 12..512 characters")
+	}
+	if !request.EmergencySelfApproval {
+		return "admin_self", map[string]string{
+			"approval_mode":     "admin_self",
+			"approval_reason":   reason,
+			"approved_revision": fmt.Sprint(doc.Revision),
+			digestField:         expectedDigest,
+		}, nil
 	}
 	if request.ExpectedRevision != doc.Revision {
 		return "", nil, fmt.Errorf("emergency self-approval revision mismatch: expected %d", doc.Revision)

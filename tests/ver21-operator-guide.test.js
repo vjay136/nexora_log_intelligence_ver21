@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-test('V20 operator guide inventories every current primary navigation route', async () => {
+test('Ver21 operator-guide contract inventories every current primary navigation route', async () => {
   const app = await readFile(resolve(root, 'web/app.js'), 'utf8');
   const guide = await readFile(resolve(root, 'docs/V20_OPERATOR_DEMO_GUIDE.md'), 'utf8');
   const nav = app.match(/const NAV = \[([\s\S]*?)\n  \];/)?.[1];

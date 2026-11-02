@@ -86,13 +86,15 @@ type Command struct {
 }
 
 type CommandResult struct {
-	NodeID     string    `json:"node_id"`
-	CommandID  string    `json:"command_id"`
-	Status     string    `json:"status"` // completed or failed
-	Message    string    `json:"message,omitempty"`
-	StartedAt  time.Time `json:"started_at"`
-	FinishedAt time.Time `json:"finished_at"`
-	ConfigHash string    `json:"config_hash,omitempty"`
+	NodeID                string         `json:"node_id"`
+	CommandID             string         `json:"command_id"`
+	Status                string         `json:"status"` // completed or failed
+	Message               string         `json:"message,omitempty"`
+	StartedAt             time.Time      `json:"started_at"`
+	FinishedAt            time.Time      `json:"finished_at"`
+	ConfigHash            string         `json:"config_hash,omitempty"`
+	ActiveAssetBundleHash string         `json:"active_asset_bundle_hash,omitempty"`
+	ActiveAssetRevisions  map[string]int `json:"active_asset_revisions,omitempty"`
 }
 
 type EventBatch struct {

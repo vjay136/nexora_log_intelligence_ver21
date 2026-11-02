@@ -247,6 +247,19 @@ func TestExpectedAnonymousSessionProbeIsAuditedButNotNotified(t *testing.T) {
 	}
 }
 
+func TestExpiredSessionProbeWithStaleActorIsNotNotified(t *testing.T) {
+	event := auditlog.Event{
+		Action:   http.MethodGet,
+		Actor:    "previous-admin",
+		Resource: "/api/v1/auth/me",
+		Outcome:  "failure",
+		Details:  map[string]string{"detail": "status=401 duration_ms=0 request_id=req-expired"},
+	}
+	if _, _, actionable := classifyNotificationEvent(event); actionable {
+		t.Fatal("expired session bootstrap must not become a notification when the audit actor label is stale")
+	}
+}
+
 func TestAuthenticatedAuthFailureRemainsActionable(t *testing.T) {
 	event := auditlog.Event{
 		Action:   http.MethodGet,

@@ -3,18 +3,18 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Install and configure the NLI v20 controller on Rocky Linux 9 or 10.
+Install and configure the NLI Ver21 controller on Rocky Linux 9 or 10.
 
 Usage:
-  sudo bash install-controller-ver20.sh [--rpm /path/to/nli_controller_agent_ver20.rpm]
-  sudo bash install-controller-ver20.sh --quickstart [--rpm /path/to/nli_controller_agent_ver20.rpm]
-  sudo bash install-controller-ver20.sh --automatic [--rpm /path/to/nli_controller_agent_ver20.rpm]
-  sudo bash install-controller-ver20.sh --mode 3|9 [--rpm /path/to/nli_controller_agent_ver20.rpm]
-  sudo bash install-controller-ver20.sh --mode 10 [--rpm /path/to/nli_controller_agent_ver20.rpm]
-  sudo bash install-controller-ver20.sh --rotate-enrollment [--rpm /path/to/rpm]
-  sudo bash install-controller-ver20.sh --verify-only [--rpm /path/to/rpm]
+  sudo bash install-controller-ver21.sh [--rpm /path/to/nli_controller_agent_ver21.rpm]
+  sudo bash install-controller-ver21.sh --quickstart [--rpm /path/to/nli_controller_agent_ver21.rpm]
+  sudo bash install-controller-ver21.sh --automatic [--rpm /path/to/nli_controller_agent_ver21.rpm]
+  sudo bash install-controller-ver21.sh --mode 3|9 [--rpm /path/to/nli_controller_agent_ver21.rpm]
+  sudo bash install-controller-ver21.sh --mode 10 [--rpm /path/to/nli_controller_agent_ver21.rpm]
+  sudo bash install-controller-ver21.sh --rotate-enrollment [--rpm /path/to/rpm]
+  sudo bash install-controller-ver21.sh --verify-only [--rpm /path/to/rpm]
 
-With no --rpm option, the script finds nli_controller_agent_ver20.rpm beside
+With no --rpm option, the script finds nli_controller_agent_ver21.rpm beside
 this script or in the current directory. Configuration is collected through
 the packaged interactive nli-controller-setup utility.
 
@@ -35,8 +35,8 @@ it needs no domain and its URL changes whenever the tunnel process restarts.
 EOF
 }
 
-fail() { printf 'install-controller-ver20: %s\n' "$*" >&2; exit 1; }
-info() { printf 'install-controller-ver20: %s\n' "$*"; }
+fail() { printf 'install-controller-ver21: %s\n' "$*" >&2; exit 1; }
+info() { printf 'install-controller-ver21: %s\n' "$*"; }
 
 validate_rpm_release() {
   local value=$1 label=$2 expected=$3 numeric
@@ -61,10 +61,10 @@ load_release_identity() {
 verify_release_bundle() {
   local checksum_file=$1 required
   [[ -f $checksum_file ]] || fail 'SHA256SUMS is missing; extract the complete versioned release archive into a fresh directory'
-  for required in RELEASE_ID nli_client_ver20.rpm nli_clinet_ver20.rpm nli_controller_agent_ver20.rpm \
-    webview_ver20.zip webapp_ver20.zip install-controller-ver20.sh install-client-ver20.sh \
-    uninstall-controller-ver20.sh uninstall-client-ver20.sh INSTALLATION_AND_CONFIGURATION.md \
-    WEBAPP_OPERATOR_AND_PARSER_GUIDE.md V20_OPERATOR_DEMO_GUIDE.md V20_PRODUCTION_ACCEPTANCE_TESTS.md V20_SUBSYSTEM_ORCHESTRATION.md \
+  for required in RELEASE_ID nli_client_ver21.rpm nli_controller_agent_ver21.rpm \
+    webview_ver21.zip webapp_ver21.zip install-controller-ver21.sh install-client-ver21.sh \
+    uninstall-controller-ver21.sh uninstall-client-ver21.sh INSTALLATION_AND_CONFIGURATION.md \
+    WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md \
     BENCHMARKS.txt SAMPLE_FIELD_ACCOUNTING.json; do
     awk -v name="$required" '$2==name && $1 ~ /^[0-9a-f]{64}$/ {found=1} END {exit !found}' "$checksum_file" ||
       fail "SHA256SUMS is incomplete: missing $required"
@@ -123,12 +123,12 @@ load_release_identity "$script_dir/RELEASE_ID"
 verify_release_bundle "$script_dir/SHA256SUMS"
 
 if [[ -z $rpm_path ]]; then
-  for candidate in "$script_dir/nli_controller_agent_ver20.rpm" "$PWD/nli_controller_agent_ver20.rpm"; do
+  for candidate in "$script_dir/nli_controller_agent_ver21.rpm" "$PWD/nli_controller_agent_ver21.rpm"; do
     if [[ -f $candidate ]]; then rpm_path=$candidate; break; fi
   done
 fi
 if [[ -z $rpm_path && -t 0 ]]; then
-  read -r -p 'Path to nli_controller_agent_ver20.rpm: ' rpm_path
+  read -r -p 'Path to nli_controller_agent_ver21.rpm: ' rpm_path
 fi
 [[ -f $rpm_path ]] || fail 'controller RPM was not found; place it beside this script or pass --rpm PATH'
 rpm_path=$(readlink -f -- "$rpm_path")
@@ -140,7 +140,7 @@ validate_rpm_release "$rpm_release" controller "$expected_release"
 [[ $(rpm -qp --qf '%{ARCH}' "$rpm_path") == "$expected_arch" ]] || fail "the selected controller RPM is not $expected_arch"
 
 checksum_file="$script_dir/SHA256SUMS"
-expected=$(awk '$2=="nli_controller_agent_ver20.rpm" {print $1; exit}' "$checksum_file")
+expected=$(awk '$2=="nli_controller_agent_ver21.rpm" {print $1; exit}' "$checksum_file")
 actual=$(sha256sum "$rpm_path" | awk '{print $1}')
 [[ $actual == "$expected" ]] || fail 'controller RPM SHA-256 does not match this release bundle'
 info 'controller RPM SHA-256 verified'
@@ -192,5 +192,5 @@ fi
 systemctl is-active --quiet nli-controller-agent.service || fail 'controller service is not active after setup'
 info 'PASS: controller RPM is installed, configured, and healthy'
 info 'one-use client bundle: /root/nli-client-bootstrap.env'
-info 'copy that file securely to exactly one client, then run install-client-ver20.sh there'
+info 'copy that file securely to exactly one client, then run install-client-ver21.sh there'
 info 'for another client, rerun this script with --rotate-enrollment or run sudo nli-controller-setup --rotate-enrollment'

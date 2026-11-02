@@ -1,5 +1,5 @@
 %{!?nli_version:%global nli_version 21.0.0}
-%{!?nli_release:%global nli_release 1}
+%{!?nli_release:%global nli_release 2}
 Name:           nli-controller-agent
 Version:        %{nli_version}
 Release:        %{nli_release}%{?dist}
@@ -20,7 +20,7 @@ AutoReqProv:    no
 
 %description
 NLI v21 controller providing authenticated enrollment, fleet synchronization,
-rollouts, telemetry APIs, and the byte-verified webview_ver20 console.
+rollouts, telemetry APIs, and the byte-verified webview_ver21 console.
 
 %prep
 %autosetup -n %{name}-%{version}
@@ -30,7 +30,7 @@ rollouts, telemetry APIs, and the byte-verified webview_ver20 console.
 
 %install
 install -d %{buildroot}%{_bindir} %{buildroot}%{_sbindir} %{buildroot}%{_sysconfdir}/nli
-install -d %{buildroot}/usr/lib/systemd/system %{buildroot}%{_datadir}/nli/webview_ver20 %{buildroot}%{_datadir}/nli/supabase
+install -d %{buildroot}/usr/lib/systemd/system %{buildroot}%{_datadir}/nli/webview_ver21 %{buildroot}%{_datadir}/nli/supabase
 install -d %{buildroot}%{_datadir}/nli/metrics
 install -d %{buildroot}%{_docdir}/%{name} %{buildroot}/var/lib/nli-controller
 install -m 0755 bin/nli-controller-agent bin/nli %{buildroot}%{_bindir}/
@@ -40,12 +40,11 @@ install -m 0755 sbin/nli-admin-reset %{buildroot}%{_sbindir}/nli-admin-reset
 install -m 0644 supabase/nli_schema.sql %{buildroot}%{_datadir}/nli/supabase/nli_schema.sql
 install -m 0640 configs/controller.json configs/controller.env configs/geoip.env %{buildroot}%{_sysconfdir}/nli/
 install -m 0644 systemd/nli-controller-agent.service systemd/nli-controller-bootstrap.service systemd/nli-geoip-update.service systemd/nli-geoip-update.timer %{buildroot}/usr/lib/systemd/system/
-cp -a web/. %{buildroot}%{_datadir}/nli/webview_ver20/
-find %{buildroot}%{_datadir}/nli/webview_ver20 -type d -exec chmod 0755 {} +
-find %{buildroot}%{_datadir}/nli/webview_ver20 -type f -exec chmod 0644 {} +
+cp -a web/. %{buildroot}%{_datadir}/nli/webview_ver21/
+find %{buildroot}%{_datadir}/nli/webview_ver21 -type d -exec chmod 0755 {} +
+find %{buildroot}%{_datadir}/nli/webview_ver21 -type f -exec chmod 0644 {} +
 install -m 0644 README.md %{buildroot}%{_docdir}/%{name}/README.md
-install -m 0644 V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md V20_R1_TEST_RESULTS.md V20_R1_QRW_OPERATOR_TEST_GUIDE.md V20_R2_TEST_RESULTS.md V20_R2_QRW_OPERATOR_GUIDE.md V20_R3_TEST_RESULTS.md V20_R3_QRW_OPERATOR_GUIDE.md V20_R4_TEST_RESULTS.md V20_R4_QRW_OPERATOR_GUIDE.md V20_R6_TEST_RESULTS.md V20_R6_QRW_OPERATOR_GUIDE.md V20_QUARANTINE_RESOLUTION_WIZARD.md NLI_V20_UPES_GPRS_ARCHITECTURE.svg %{buildroot}%{_docdir}/%{name}/
-install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
+install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
 install -m 0644 metrics/README.md metrics/metric-catalog.json metrics/prometheus-scrape.yml metrics/grafana-dashboard.json %{buildroot}%{_datadir}/nli/metrics/
 
 %pre
@@ -54,8 +53,8 @@ getent passwd nli >/dev/null || useradd -r -g nli -d /var/lib/nli-controller -s 
 
 %post
 config_file=%{_sysconfdir}/nli/controller.json
-if grep -Eq '"web_dir"[[:space:]]*:[[:space:]]*"/usr/share/nli/webview_ver[15678]"' "$config_file"; then
-  sed -i -E 's#/usr/share/nli/webview_ver[15678](["/])#/usr/share/nli/webview_ver20\1#g' "$config_file"
+if grep -Eq '"web_dir"[[:space:]]*:[[:space:]]*"/usr/share/nli/webview_ver(1|5|6|7|8|20)"' "$config_file"; then
+  sed -i -E 's#/usr/share/nli/webview_ver(1|5|6|7|8|20)(["/])#/usr/share/nli/webview_ver21\2#g' "$config_file"
 fi
 secret_file=%{_sysconfdir}/nli/controller.env
 chown root:nli "$secret_file"
@@ -90,8 +89,8 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) /usr/lib/systemd/system/nli-geoip-update.service
 %attr(0644,root,root) /usr/lib/systemd/system/nli-geoip-update.timer
 %dir %attr(0755,root,root) %{_datadir}/nli
-%dir %attr(0755,root,root) %{_datadir}/nli/webview_ver20
-%attr(0644,root,root) %{_datadir}/nli/webview_ver20/*
+%dir %attr(0755,root,root) %{_datadir}/nli/webview_ver21
+%attr(0644,root,root) %{_datadir}/nli/webview_ver21/*
 %dir %attr(0755,root,root) %{_datadir}/nli/supabase
 %attr(0644,root,root) %{_datadir}/nli/supabase/nli_schema.sql
 %dir %attr(0755,root,root) %{_datadir}/nli/metrics
@@ -101,25 +100,17 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %attr(0644,root,root) %{_datadir}/nli/metrics/grafana-dashboard.json
 %dir %attr(0750,nli,nli) /var/lib/nli-controller
 %doc %{_docdir}/%{name}/README.md
-%doc %{_docdir}/%{name}/V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md
-%doc %{_docdir}/%{name}/V20_R1_TEST_RESULTS.md
-%doc %{_docdir}/%{name}/V20_R1_QRW_OPERATOR_TEST_GUIDE.md
-%doc %{_docdir}/%{name}/V20_R2_TEST_RESULTS.md
-%doc %{_docdir}/%{name}/V20_R2_QRW_OPERATOR_GUIDE.md
-%doc %{_docdir}/%{name}/V20_R3_TEST_RESULTS.md
-%doc %{_docdir}/%{name}/V20_R3_QRW_OPERATOR_GUIDE.md
-%doc %{_docdir}/%{name}/V20_R4_TEST_RESULTS.md
-%doc %{_docdir}/%{name}/V20_R4_QRW_OPERATOR_GUIDE.md
-%doc %{_docdir}/%{name}/V20_R6_TEST_RESULTS.md
-%doc %{_docdir}/%{name}/V20_R6_QRW_OPERATOR_GUIDE.md
-%doc %{_docdir}/%{name}/V20_QUARANTINE_RESOLUTION_WIZARD.md
-%doc %{_docdir}/%{name}/NLI_V20_UPES_GPRS_ARCHITECTURE.svg
 %doc %{_docdir}/%{name}/All_NLI_features.md
 %doc %{_docdir}/%{name}/V21_R1_RELEASE_NOTES.md
 %doc %{_docdir}/%{name}/V21_R1_TEST_RESULTS.md
+%doc %{_docdir}/%{name}/V21_R2_RELEASE_NOTES.md
+%doc %{_docdir}/%{name}/V21_R2_TEST_RESULTS.md
 %doc %{_docdir}/%{name}/VER21_IMPLEMENTATION_PLAN.md
 
 %changelog
+* Mon Nov 02 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-2
+- Publish Ver21 Release 2 artifacts and migrate compatible legacy WebView roots to webview_ver21.
+
 * Mon Nov 02 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-1
 - Promote the governed parser runtime to Ver21 while preserving RPM identity and in-place upgrade paths.
 

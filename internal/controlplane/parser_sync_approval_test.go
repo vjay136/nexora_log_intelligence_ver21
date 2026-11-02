@@ -85,8 +85,8 @@ func TestParserSyncProposalApprovalPreservesBundleHashAndRequiresIndependentAppr
 	}
 
 	response, body := f.request(http.MethodPost, "/api/v1/rollouts/"+proposal.ID+"/approve", map[string]any{})
-	if response.StatusCode != http.StatusConflict || !strings.Contains(string(body), "creator cannot approve own change") {
-		t.Fatalf("proposal creator approval should be rejected, got %d: %s", response.StatusCode, body)
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(body), "self-approval reason") {
+		t.Fatalf("administrator self approval without its mandatory audit reason should be rejected, got %d: %s", response.StatusCode, body)
 	}
 
 	loginParserSyncApprover(t, f)

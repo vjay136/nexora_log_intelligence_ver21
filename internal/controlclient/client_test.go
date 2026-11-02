@@ -34,6 +34,69 @@ type fakeExecutor struct {
 	replayIDs    []string
 }
 
+func TestRunOnceReportsExactAppliedParserBundleInCommandResult(t *testing.T) {
+	root := t.TempDir()
+	payload := json.RawMessage(`{"delimiter":"="}`)
+	digest := sha256.Sum256(payload)
+	bundle := synchronizedAssetBundle{SchemaVersion: 1, Assets: []synchronizedAsset{{
+		AssetClass: "kv-config", AssetID: "ack-kv", Name: "Ack", Revision: 3,
+		SHA256: fmt.Sprintf("%x", digest[:]), Payload: payload,
+	}}}
+	var err error
+	bundle.BundleHash, err = synchronizedBundleHash(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleJSON, _ := json.Marshal(bundle)
+	commandPayload, _ := json.Marshal(map[string]json.RawMessage{"asset_bundle": bundleJSON})
+	command := protocol.Command{ID: "parser-sync-ack", Type: rollout.TypeParserSync, Payload: commandPayload}
+	var captured protocol.CommandResult
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/node/heartbeat":
+			response.WriteHeader(http.StatusOK)
+			_, _ = response.Write([]byte(`{}`))
+		case "/api/v1/node/commands/next":
+			_ = json.NewEncoder(response).Encode(command)
+		case "/api/v1/node/commands/parser-sync-ack/result":
+			if err := json.NewDecoder(request.Body).Decode(&captured); err != nil {
+				t.Errorf("decode command result: %v", err)
+			}
+			response.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected request path: %s", request.URL.Path)
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	nodeToken := filepath.Join(root, "node.token")
+	installID := filepath.Join(root, "install.id")
+	if err := os.WriteFile(nodeToken, []byte("node-token-12345678901234567890\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installID, []byte("ack-node\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := New(Config{
+		ControllerURL: server.URL, AllowInsecureHTTP: true, NodeTokenFile: nodeToken, InstallIDFile: installID,
+		JournalFile: filepath.Join(root, "journal.json"), AgentConfigPath: filepath.Join(root, "nli.json"),
+		AssetDir: filepath.Join(root, "assets"), ParserDir: filepath.Join(root, "parsers"),
+		PackageSpoolDir: filepath.Join(root, "packages"), MetricsURL: "http://127.0.0.1:1/metrics", PollSeconds: 5,
+	}, &fakeExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if captured.Status != rollout.StatusCompleted || captured.ActiveAssetBundleHash != bundle.BundleHash {
+		t.Fatalf("command result omitted exact applied bundle acknowledgement: %+v", captured)
+	}
+	if captured.ActiveAssetRevisions["kv-config/ack-kv"] != 3 {
+		t.Fatalf("command result omitted applied bundle revisions: %+v", captured.ActiveAssetRevisions)
+	}
+}
+
 func (executor *fakeExecutor) RestartAgent(context.Context) error {
 	executor.mu.Lock()
 	defer executor.mu.Unlock()

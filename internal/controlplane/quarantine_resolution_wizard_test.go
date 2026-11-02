@@ -12,7 +12,7 @@ import (
 	parserpolicy "nexora.local/nli-v20/parser-policy"
 )
 
-func TestQuarantineResolutionWizardParserRolloutRequiresExactIndependentApproval(t *testing.T) {
+func TestQuarantineResolutionWizardAllowsAdminCreatorApprovalWithReason(t *testing.T) {
 	f := newAPIFixture(t)
 	definition := map[string]any{"pattern_type": "regex", "pattern": `status=(?P<status>\w+)`, "fields": []any{map[string]any{"name": "status", "source": "group:status", "type": "string"}}}
 	pack, err := assuranceRuntimePack("qrw-rollout", "1.0.0", "author", definition, []assuranceRequest{{
@@ -42,16 +42,11 @@ func TestQuarantineResolutionWizardParserRolloutRequiresExactIndependentApproval
 	}
 	response, data = f.request(http.MethodPost, "/api/v1/rollouts/"+proposalID+"/approve", map[string]any{})
 	if response.StatusCode != http.StatusConflict {
-		t.Fatalf("rollout author approved their own parser rollout: %d %s", response.StatusCode, data)
+		t.Fatalf("admin creator approval without mandatory reason was accepted: %d %s", response.StatusCode, data)
 	}
-	if _, err := f.server.auth.CreateUser("admin", "independent-rollout-reviewer", "rollout-reviewer@example.test", "admin", "Rollout-reviewer-password-12345!"); err != nil {
-		t.Fatal(err)
-	}
-	f.login("independent-rollout-reviewer", "Rollout-reviewer-password-12345!")
-	f.refreshCSRF()
-	response, data = f.request(http.MethodPost, "/api/v1/rollouts/"+proposalID+"/approve", map[string]any{})
+	response, data = f.request(http.MethodPost, "/api/v1/rollouts/"+proposalID+"/approve", map[string]any{"reason": "Admin reviewed and approved the QRW parser bundle."})
 	if response.StatusCode != http.StatusOK {
-		t.Fatalf("independent parser rollout approval %d: %s", response.StatusCode, data)
+		t.Fatalf("admin creator parser rollout approval %d: %s", response.StatusCode, data)
 	}
 	var syncState map[string]any
 	doc, err := f.server.metadata.Get(context.Background(), "fleet-sync", "qrw-node", 0)

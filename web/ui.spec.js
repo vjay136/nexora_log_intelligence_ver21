@@ -5,9 +5,9 @@ import { readFile } from 'node:fs/promises';
 // and database availability. e2e.spec.js separately exercises a real controller.
 const origin = 'http://127.0.0.1:4176';
 const tabs = ['operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
-const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'nli-mark.svg', 'nexora-logo-v20.png', 'login-banner-v20.png', 'nexora-poster-v20.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
+const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
-async function mockController(page, { role = 'admin', healthIdentity = 'v21', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [], rolloutSeed = [], rolloutApprovalFailure = null } = {}) {
+async function mockController(page, { role = 'admin', healthIdentity = 'v21', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [], rolloutSeed = [], rolloutApprovalFailure = null, replayFailure = null } = {}) {
   const observed = [];
   const cases = [];
   const uploads = [];
@@ -114,7 +114,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
     if (path === '/api/v1/quarantine/history') return fulfill({ events: currentQRWHistory });
     if (path.match(/^\/api\/v1\/quarantine\/records\/[^/]+\/exclude$/) && request.method() === 'POST') { const id=decodeURIComponent(path.split('/').at(-2)),record=(currentQRWRecords||[]).find(item=>item.id===id);if(record)record.status='excluded';return fulfill({ status:'excluded', record_id:id }); }
     if (path.match(/^\/api\/v1\/quarantine\/records\/[^/]+\/raw$/) && request.method() === 'DELETE') { const id=decodeURIComponent(path.split('/').at(-2)),record=(currentQRWRecords||[]).find(item=>item.id===id);if(record){record.status='evidence_deleted';record.raw_available=false;}return fulfill({ status:'evidence_deleted', record_id:id }); }
-    if (path === '/api/v1/quarantine/reprocess' && request.method() === 'POST') { const body=request.postDataJSON();qrwReplays.push(body);for(const record of currentQRWRecords||[])if(body.record_ids.includes(record.id))record.status='resolved';currentQRWHistory.push({record_id:'q-1',status:'resolved',outcome:'success'});return fulfill({ rollout_id: 'replay-1', status: 'pending' }, 202); }
+    if (path === '/api/v1/quarantine/reprocess' && request.method() === 'POST') { const body=request.postDataJSON();qrwReplays.push(body);if(replayFailure)return fulfill({error:replayFailure.message},replayFailure.status);for(const record of currentQRWRecords||[])if(body.record_ids.includes(record.id))record.status='resolved';currentQRWHistory.push({record_id:'q-1',status:'resolved',outcome:'success'});return fulfill({ rollout_id: 'replay-1', status: 'pending' }, 202); }
     if (path.startsWith('/api/v1/metrics/timeseries')) { const params=new URL(request.url()).searchParams;historyQueries.push(params);const key=params.toString(),call=historyCounts[key]=(historyCounts[key]||0)+1,read=key.includes('range=24h')&&call>1?'42':'9007199254740993',parsed=read==='42'?'40':'9007199254740990'; return fulfill({ from: '2026-10-25T00:00:00Z', to: '2026-10-25T01:00:00Z', canonical_history: { bucket_width_seconds: 60, points: [{timestamp:'2026-10-25T00:59:00Z',read_delta:read,parsed_delta:parsed,quarantine_delta:'2',errors:1}] }, points: [{ timestamp: '2026-10-25T00:59:00Z', received: read, parsed, quarantine: 2, errors: 1, logs_received: read, logs_parsed: parsed, logs_quarantined: 2 }] }); }
     if (path === '/api/v1/verification/sample-corpus') return fulfill({ verdict: 'pass', known_key_inventory: { declared_family_keys: 278, covered_family_keys: 278, unmapped_family_keys: 0 }, totals: { records: 728, accounted_records: 728, parsed_records: 723, exact_parity_records: 723, failing_records: 0, expected_quarantined_records: 5, unexpected_quarantined_records: 0, parsed_comparable_raw_fields: 13101, parsed_generated_json_fields: 13101 }, families: [{ family: 'IMAP', records: 52, passing_records: 52, comparable_raw_fields: 1154, generated_json_fields: 1154, duplicate_occurrences: 0 }], records: [{ corpus: 'samples.log', source_line: 50, family: 'SMTP-OUT', expected_disposition: 'quarantined', disposition_reason: 'truncated record', record_sha256: 'a'.repeat(64) }] });
     if (path === '/api/v1/admin/ai-usage') return fulfill({ requests: 0, tokens: 0, pending_drafts: 0 });
@@ -519,6 +519,9 @@ test('QRW accepts operator field names in Inspect and updates live completion st
 test('terminal quarantine actions clear actionable navigation badges while retaining records', async ({ page }) => {
   await mockController(page,{qrwRecords:[{id:'q-1',node_id:'node-1',service:'smtp',first_seen:'2026-10-30T00:00:00Z',attempt_count:1,status:'waiting',error_codes:['no_match'],raw_available:true}]});
   await login(page);
+  // Historical KPIs are retained telemetry, not a projection of the current
+  // quarantine queue. A terminal queue action must never rewrite them.
+  await expect(page.locator('[data-chart-category="Parsed"]').first()).toHaveAttribute('data-chart-value','9007199254740990');
   await expect(page.locator('[data-nav-count="quarantine-wizard"]')).toHaveText('1');
   await page.getByTestId('nav-quarantine-wizard').click();
   page.once('dialog',dialog=>dialog.accept('not applicable to this source'));
@@ -527,6 +530,8 @@ test('terminal quarantine actions clear actionable navigation badges while retai
   await expect(page.locator('[data-nav-count="upes"]')).toBeHidden();
   await page.getByTestId('nav-quarantine-wizard').click();
   await expect(page.locator('#page')).toContainText(/excluded/i);
+  await page.getByTestId('nav-operations').click();
+  await expect(page.locator('[data-chart-category="Parsed"]').first()).toHaveAttribute('data-chart-value','9007199254740990');
 });
 
 test('QRW stages 6–9 give the next action and gate replay on the exact origin bundle before verify and rollback', async ({ page }) => {
@@ -652,8 +657,8 @@ test('premium login presents the complete V21 banner in a responsive landscape s
   await page.goto(origin);
   const lockup=page.locator('.showcase-header .brand-emblem');
   const banner=page.locator('.login-banner-image');
-  await expect(lockup).toHaveAttribute('src','./nexora-poster-v20.png');
-  await expect(banner).toHaveAttribute('src','./login-banner-v20.png');
+  await expect(lockup).toHaveAttribute('src','./nexora-poster-v21.png');
+  await expect(banner).toHaveAttribute('src','./login-banner-v21.png');
   await expect(page.locator('.showcase-header .brand-wordmark b')).toHaveText('Nexora Log Intelligence');
   await expect(page.locator('.showcase-header .brand-wordmark strong')).toHaveText('Nexora');
   await expect.poll(()=>banner.evaluate(image=>image.naturalWidth)).toBeGreaterThan(0);
@@ -1073,18 +1078,16 @@ test('Assurance helper trims trailing whitespace, generates editable parser, val
   expect(observed.some(path => /assurance\/parsers\/.*\/(approve|publish)/.test(path))).toBe(false);
 });
 
-test('quarantine diagnosis opens a truthful guided parser recovery workspace', async ({ page }) => {
+test('quarantine diagnosis stays in the self-contained Resolution Wizard', async ({ page }) => {
   const { observed } = await mockController(page);
   await login(page);
   await page.getByTestId('nav-unknowns').click();
-  await page.getByRole('button', { name: 'View evidence & diagnose' }).click();
+  await page.getByRole('button', { name: 'Open in Resolution Wizard' }).click();
   await expect.poll(() => observed.includes('POST /api/v1/quarantine/records/q-1/analyze')).toBe(true);
-  await expect(page.getByRole('heading', { name: 'Recovery Workspace' })).toBeVisible();
-  await expect(page.getByText(/Replay stays blocked until node-1 acknowledges the published bundle/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Prepare replay' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Edit or test parser' }).click();
-  await expect(page.locator('#gprs-parser-helper-form')).toBeVisible();
-  await expect(page.locator('#gprs-parser-helper-form [name=samples]')).toHaveValue('exact raw source line');
+  await expect(page.locator('#page h1').filter({hasText:'Quarantine Resolution Wizard'})).toBeVisible();
+  await expect(page.locator('#gprs-preview-form [name=raw_evidence]')).toHaveValue('exact raw source line');
+  await expect(page.locator('#gprs-parser-helper-form')).toHaveCount(1);
+  await expect(page.getByRole('heading', { name: 'Assurance Lab' })).toHaveCount(0);
 });
 
 test('Parser Creation Workspace builds a complete editable draft without publishing', async ({ page }) => {
@@ -1233,9 +1236,9 @@ test('Quarantine queue exposes exact raw access, exports and auditable replay co
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download exact raw' }).click();
   expect((await download).suggestedFilename()).toBe('nli-quarantine-q-1.log');
-  await page.getByRole('button', { name: 'View evidence & diagnose' }).click();
-  await expect(page.getByRole('heading', { name: 'Assurance Lab' })).toBeVisible();
-  await expect(page.getByTestId('assurance-raw')).toHaveValue('exact raw source line');
+  await page.getByRole('button', { name: 'Open in Resolution Wizard' }).click();
+  await expect(page.locator('#page h1').filter({hasText:'Quarantine Resolution Wizard'})).toBeVisible();
+  await expect(page.locator('#gprs-preview-form [name=raw_evidence]')).toHaveValue('exact raw source line');
   await page.getByTestId('nav-unknowns').click();
   await page.getByLabel('Record IDs').fill('q-1');
   await page.getByLabel('Target client ID').fill('node-1');
@@ -1244,6 +1247,24 @@ test('Quarantine queue exposes exact raw access, exports and auditable replay co
   await page.getByTestId('nav-api-monitor').click();
   await expect(page.getByRole('heading', { name: 'API monitor', exact: true })).toBeVisible();
   await expect(page.getByText('/system', { exact: true })).toBeVisible();
+});
+
+test('expected replay acknowledgement gates stay inline and never poison notifications or live sync', async ({ page }) => {
+  const gate='target client has not acknowledged the current published parser bundle; replay remains gated';
+  await mockController(page,{
+    replayFailure:{status:409,message:gate},
+    controllerNotifications:[{id:'audit-replay',sequence:91,title:'System issue: POST',resource:'/api/v1/quarantine/reprocess',severity:'critical',timestamp:'2026-11-02T00:00:00Z',read:false,status:'unread'}]
+  });
+  await login(page);
+  await expect(page.locator('#notification-count')).toBeHidden();
+  await page.getByTestId('nav-unknowns').click();
+  await page.getByLabel('Record IDs').fill('q-1');
+  await page.getByLabel('Target client ID').fill('node-1');
+  await page.getByRole('button', { name: 'Request replay' }).click();
+  await expect(page.locator('#quarantine-reprocess-form [data-replay-status]')).toContainText(/Waiting for the origin client/i);
+  await expect(page.locator('#toast-region')).not.toContainText('System issue');
+  await expect(page.getByText(/Live synchronization is unavailable/i)).toHaveCount(0);
+  await expect(page.locator('#notification-count')).toBeHidden();
 });
 
 test('Assurance enables clear and download immediately and preserves results across navigation', async ({ page }) => {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [21.0.0-2] - 2026-11-02
+
+- Publish only Ver21-named RPM aliases, archives, installation helpers, and release evidence.
+- Remove the misspelled historical `nli_clinet_*` output while retaining upgrade-compatible RPM package, service, configuration, and state identities.
+- Move the installed WebView payload to `/usr/share/nli/webview_ver21` with migration logic for supported upgrades.
+- Add Release 2 notes and packaging verification evidence.
+
 ## [21.0.0-1] - 2026-11-02
 
 - Promote the runtime, web deployment metadata, embedded parser catalog, and release archive identity to Nexora Log Intelligence Ver21.

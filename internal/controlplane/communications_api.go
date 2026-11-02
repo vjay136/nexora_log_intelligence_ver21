@@ -473,10 +473,14 @@ func classifyNotificationEvent(event auditlog.Event) (string, string, bool) {
 func isExpectedAnonymousSessionProbe(event auditlog.Event) bool {
 	if !strings.EqualFold(strings.TrimSpace(event.Action), http.MethodGet) ||
 		strings.TrimSpace(event.Resource) != "/api/v1/auth/me" ||
-		event.Outcome != "failure" ||
-		!strings.EqualFold(strings.TrimSpace(event.Actor), "anonymous") {
+		event.Outcome != "failure" {
 		return false
 	}
+	// A 401 is authoritative evidence that the request had no accepted
+	// principal. Older audit writers can retain a stale actor label while the
+	// browser probes an expired session, so actor text must not turn the normal
+	// login bootstrap into an operator incident. Authenticated 403 failures
+	// remain actionable.
 	detail := strings.ToLower(event.Details["detail"])
 	return strings.Contains(detail, "status=401")
 }

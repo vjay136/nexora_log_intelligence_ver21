@@ -7,9 +7,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"nexora.local/nli-v20/internal/fleet"
+	"nexora.local/nli-v20/internal/protocol"
+	rolloutmodel "nexora.local/nli-v20/internal/rollout"
 	metastore "nexora.local/nli-v20/internal/store"
+	"nexora.local/nli-v20/telemetry"
 )
 
 func TestPublishedAssurancePackIsOnlyRuntimeBundleHandoff(t *testing.T) {
@@ -81,9 +85,24 @@ func TestPublishedAssurancePackIsOnlyRuntimeBundleHandoff(t *testing.T) {
 	f.login("admin", "Admin-password-12345!")
 	f.refreshCSRF()
 	replayBody := map[string]any{"node_id": "recovery-node", "record_ids": []string{"recovery-q"}}
+	telemetryUpdatedAt := time.Now().UTC().Add(-2 * time.Second)
+	f.server.streamTelemetry.Publish(telemetry.StreamFileTelemetry{
+		NodeID: "recovery-node", Source: "/var/log/recovery.log", ReadLines: 11, UpdatedAt: telemetryUpdatedAt,
+	})
 	response, body := f.request(http.MethodPost, "/api/v1/quarantine/reprocess", replayBody)
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("replay must wait for target applied acknowledgement, got %d: %s", response.StatusCode, body)
+	}
+	conflict := decodeMap(t, body)
+	if conflict["code"] != "parser_bundle_not_acknowledged" || conflict["retryable"] != true || conflict["live_sync_impact"] != false {
+		t.Fatalf("replay gate is not a stable, actionable conflict: %#v", conflict)
+	}
+	if conflict["expected_bundle_hash"] != bundle.BundleHash || conflict["desired_bundle_hash"] != bundle.BundleHash {
+		t.Fatalf("replay gate omitted the safe expected/desired hash: %#v", conflict)
+	}
+	snapshot := f.server.streamTelemetry.Snapshot()
+	if len(snapshot) != 1 || snapshot[0].ReadLines != 11 || !snapshot[0].UpdatedAt.Equal(telemetryUpdatedAt) {
+		t.Fatalf("gated replay changed canonical telemetry freshness: %#v", snapshot)
 	}
 	stateBytes, _ := json.Marshal(map[string]any{"node_id": "recovery-node", "desired_asset_bundle_hash": "stale-desired-hash", "active_asset_bundle_hash": bundle.BundleHash, "asset_sync_status": "applied"})
 	if _, err := f.server.metadata.Put(context.Background(), metastore.Document{Collection: "fleet-sync", ID: "recovery-node", State: "reported", Payload: stateBytes, CreatedBy: "node:recovery-node"}); err != nil {
@@ -101,9 +120,20 @@ func TestPublishedAssurancePackIsOnlyRuntimeBundleHandoff(t *testing.T) {
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("matching hash without applied acknowledgement must remain gated, got %d: %s", response.StatusCode, body)
 	}
-	stateBytes, _ = json.Marshal(map[string]any{"node_id": "recovery-node", "desired_asset_bundle_hash": bundle.BundleHash, "active_asset_bundle_hash": bundle.BundleHash, "asset_sync_status": "applied"})
-	if _, err := f.server.metadata.Put(context.Background(), metastore.Document{Collection: "fleet-sync", ID: "recovery-node", State: "reported", Payload: stateBytes, CreatedBy: "node:recovery-node"}); err != nil {
+	f.server.recordParserSyncRolloutResult(context.Background(), rollout.ID, protocol.CommandResult{
+		NodeID:                "recovery-node",
+		CommandID:             rollout.ID,
+		Status:                rolloutmodel.StatusCompleted,
+		ActiveAssetBundleHash: bundle.BundleHash,
+		ActiveAssetRevisions:  bundleRevisionMap(bundle),
+	})
+	acknowledgement, err := f.server.metadata.Get(context.Background(), "fleet-sync", "recovery-node", 0)
+	if err != nil {
 		t.Fatal(err)
+	}
+	var acknowledgedState map[string]any
+	if json.Unmarshal(acknowledgement.Payload, &acknowledgedState) != nil || acknowledgedState["active_asset_bundle_hash"] != bundle.BundleHash || acknowledgedState["asset_sync_status"] != "applied" {
+		t.Fatalf("successful command result did not immediately acknowledge the exact bundle: %#v", acknowledgedState)
 	}
 	response, body = f.request(http.MethodPost, "/api/v1/quarantine/reprocess", replayBody)
 	if response.StatusCode != http.StatusCreated {

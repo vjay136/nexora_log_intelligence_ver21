@@ -17,6 +17,8 @@ import (
 	"nexora.local/nli-v20/internal/canonicaljson"
 	"nexora.local/nli-v20/internal/fleet"
 	"nexora.local/nli-v20/internal/middleware"
+	"nexora.local/nli-v20/internal/protocol"
+	"nexora.local/nli-v20/internal/rollout"
 	metastore "nexora.local/nli-v20/internal/store"
 )
 
@@ -527,6 +529,61 @@ func (s *Server) markParserSyncRolloutDesired(ctx context.Context, actor, propos
 			"rollout_approved_by": actor, "rollout_approved_at": time.Now().UTC(), "status": "rolling_out",
 		}), CreatedBy: actor,
 	})
+}
+
+// recordParserSyncRolloutResult closes the acknowledgement gap between a
+// successful client-side atomic swap and the client's next heartbeat. The
+// reported hash is never trusted on its own: it must equal the exact immutable
+// bundle carried by this rollout. A failure remains isolated to fleet-sync
+// diagnostics and does not mutate canonical live telemetry or the active
+// controller bundle.
+func (s *Server) recordParserSyncRolloutResult(ctx context.Context, rolloutID string, result protocol.CommandResult) {
+	item, ok := s.rollouts.Get(rolloutID)
+	if !ok || item == nil || item.Type != rolloutTypeParserSync {
+		return
+	}
+	var payload struct {
+		Bundle     parserAssetBundle `json:"asset_bundle"`
+		BundleHash string            `json:"bundle_hash"`
+	}
+	if json.Unmarshal(item.Payload, &payload) != nil {
+		return
+	}
+	expected := strings.TrimSpace(payload.BundleHash)
+	if expected == "" {
+		expected = strings.TrimSpace(payload.Bundle.BundleHash)
+	}
+	id := safeID(result.NodeID)
+	doc, _ := s.metadata.Get(ctx, "fleet-sync", id, 0)
+	state := map[string]any{"node_id": result.NodeID}
+	_ = json.Unmarshal(doc.Payload, &state)
+	creator := doc.CreatedBy
+	if creator == "" {
+		creator = "node:" + result.NodeID
+	}
+	state["desired_asset_bundle_hash"] = expected
+	state["asset_result_at"] = time.Now().UTC()
+	state["asset_result_rollout_id"] = rolloutID
+	if result.Status != rollout.StatusCompleted {
+		state["asset_sync_status"] = "failed"
+		state["asset_drifted"] = true
+		state["asset_sync_error"] = strings.TrimSpace(result.Message)
+	} else if expected == "" || result.ActiveAssetBundleHash != expected {
+		state["asset_sync_status"] = "drifted"
+		state["asset_drifted"] = true
+		state["asset_sync_error"] = fmt.Sprintf("client command completed but reported bundle %q; expected %q", result.ActiveAssetBundleHash, expected)
+	} else {
+		state["active_asset_bundle_hash"] = result.ActiveAssetBundleHash
+		state["active_asset_revisions"] = result.ActiveAssetRevisions
+		state["asset_sync_status"] = "applied"
+		state["asset_drifted"] = false
+		state["asset_sync_error"] = ""
+		state["last_asset_acknowledgement_at"] = time.Now().UTC()
+	}
+	encoded, err := json.Marshal(state)
+	if err == nil {
+		_, _ = s.metadata.Put(ctx, metastore.Document{Collection: "fleet-sync", ID: id, State: "reported", Payload: encoded, CreatedBy: creator})
+	}
 }
 
 func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {

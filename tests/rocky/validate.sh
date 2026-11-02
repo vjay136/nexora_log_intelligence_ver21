@@ -7,15 +7,12 @@ TEST_ROOT=${TEST_ROOT:-/tests}
 REQUIRE_PREVIOUS=${REQUIRE_PREVIOUS:-1}
 fail() { echo "Rocky validation: $*" >&2; exit 1; }
 
-client="$ARTIFACT_DIR/nli_client_ver20.rpm"
-alias="$ARTIFACT_DIR/nli_clinet_ver20.rpm"
-controller="$ARTIFACT_DIR/nli_controller_agent_ver20.rpm"
-for rpm_file in "$client" "$alias" "$controller"; do
+client="$ARTIFACT_DIR/nli_client_ver21.rpm"
+controller="$ARTIFACT_DIR/nli_controller_agent_ver21.rpm"
+for rpm_file in "$client" "$controller"; do
   [[ -s $rpm_file ]] || fail "missing $(basename "$rpm_file")"
   [[ $(od -An -tx1 -N4 "$rpm_file" | tr -d ' \n') == edabeedb ]] || fail "invalid RPM magic: $(basename "$rpm_file")"
 done
-cmp -s "$client" "$alias" || fail "compatibility alias differs from canonical client RPM"
-[[ $(rpm -qp --qf '%{NAME}' "$alias") == nli-client ]] || fail "alias creates a conflicting package identity"
 
 previous_client=''
 previous_controller=''
@@ -44,8 +41,8 @@ if [[ -n $previous_client && -n $previous_controller ]]; then
   previous_controller_release=$(rpm -qp --qf '%{RELEASE}' "$previous_controller")
   current_client_release=$(rpm -qp --qf '%{RELEASE}' "$client")
   current_controller_release=$(rpm -qp --qf '%{RELEASE}' "$controller")
-  [[ ${previous_client_release%%.*} == 6 && ${current_client_release%%.*} == 1 ]] || fail "client lifecycle baseline is not Ver20 R6 to Ver21 R1"
-  [[ ${previous_controller_release%%.*} == 6 && ${current_controller_release%%.*} == 1 ]] || fail "controller lifecycle baseline is not Ver20 R6 to Ver21 R1"
+  [[ ${previous_client_release%%.*} == 6 && ${current_client_release%%.*} == 2 ]] || fail "client lifecycle baseline is not Ver20 R6 to Ver21 R2"
+  [[ ${previous_controller_release%%.*} == 6 && ${current_controller_release%%.*} == 2 ]] || fail "controller lifecycle baseline is not Ver20 R6 to Ver21 R2"
   dnf -y install "$previous_client" "$previous_controller"
   install -d -o nli -g nli -m 0750 /var/lib/nli /var/lib/nli-controller
   echo pre-upgrade-client >/var/lib/nli/release-test.marker
@@ -259,7 +256,7 @@ grep -Fq '.auth-shell' /tmp/webview-styles.css || fail "premium WebView styles a
 grep -Fq 'const NAV' /tmp/webview-app.js || fail "WebView application script is missing"
 grep -Fq "method: 'OPTIONS'" /tmp/webview-app.js || fail "WebView does not verify the controller login contract"
 grep -Fq '<svg' /tmp/webview-logo.svg || fail "WebView logo is missing or invalid"
-[[ ! -e /usr/share/nli/webview_ver20/e2e.spec.js && ! -e /usr/share/nli/webview_ver20/package.json && ! -e /usr/share/nli/webview_ver20/playwright.config.js ]] || fail "development-only WebView files were installed"
+[[ ! -e /usr/share/nli/webview_ver21/e2e.spec.js && ! -e /usr/share/nli/webview_ver21/package.json && ! -e /usr/share/nli/webview_ver21/playwright.config.js ]] || fail "development-only WebView files were installed"
 curl --fail --silent --show-error -c /tmp/nli.cookies -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"ReleaseTestAdminPassword-2026"}' \
   http://127.0.0.1:12382/api/v1/auth/login >/tmp/login.json

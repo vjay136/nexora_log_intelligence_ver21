@@ -3,10 +3,10 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Uninstall the NLI v20 controller.
+Uninstall the NLI Ver21 controller.
 
 Usage:
-  sudo bash uninstall-controller-ver20.sh [--yes] [--purge]
+  sudo bash uninstall-controller-ver21.sh [--yes] [--purge]
 
 The default removal preserves controller configuration, users, TLS material,
 and state for recovery or reinstall. --purge permanently removes those local
@@ -15,8 +15,8 @@ deleted by this script.
 EOF
 }
 
-fail() { printf 'uninstall-controller-ver20: %s\n' "$*" >&2; exit 1; }
-info() { printf 'uninstall-controller-ver20: %s\n' "$*"; }
+fail() { printf 'uninstall-controller-ver21: %s\n' "$*" >&2; exit 1; }
+info() { printf 'uninstall-controller-ver21: %s\n' "$*"; }
 
 assume_yes=0
 purge=0

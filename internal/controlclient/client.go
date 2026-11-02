@@ -357,6 +357,13 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	result.FinishedAt = time.Now().UTC()
 	result.Message = message
 	result.ConfigHash = fileSHA256(c.cfg.AgentConfigPath)
+	// A parser bundle is acknowledged with the command result itself. Waiting
+	// for the next periodic heartbeat left a successfully applied bundle looking
+	// unacknowledged for an entire poll interval (or indefinitely when the
+	// subsequent heartbeat was interrupted), which in turn blocked quarantine
+	// replay. The controller still verifies this hash against the immutable
+	// rollout payload before recording it as applied.
+	result.ActiveAssetBundleHash, result.ActiveAssetRevisions = activeAssetBundleStatus(filepath.Join(c.cfg.AssetDir, "bundle.json"))
 	if applyErr != nil {
 		result.Status = rollout.StatusFailed
 		result.Message = applyErr.Error()

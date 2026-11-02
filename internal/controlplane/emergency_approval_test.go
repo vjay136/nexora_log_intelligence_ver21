@@ -7,8 +7,17 @@ import (
 	"testing"
 
 	"nexora.local/nli-v20/internal/fleet"
+	"nexora.local/nli-v20/internal/middleware"
 	metastore "nexora.local/nli-v20/internal/store"
 )
+
+func TestNonAdminCreatorCannotSelfApprove(t *testing.T) {
+	principal := &middleware.SecurityContext{Username: "parser-author", Role: "parser_author", Permissions: []string{middleware.PermissionApproveRollout}}
+	document := metastore.Document{ID: "candidate", Revision: 7, CreatedBy: "parser-author"}
+	if _, _, err := (&Server{}).approvalMode(document, principal, approvalRequest{Reason: "I reviewed my own parser candidate."}, "hash", "checksum"); err == nil {
+		t.Fatal("non-administrator creator self approval was accepted")
+	}
+}
 
 func TestAdminEmergencyParserSelfApprovalIsExplicitRevisionBoundAndAudited(t *testing.T) {
 	fixture := newAPIFixture(t)
