@@ -43,7 +43,7 @@ const liveWorkspaceContracts = {
   artifacts: { paths: ['/api/v1/artifacts'], text: 'Signed immutable artifacts' },
   security: { paths: ['/api/v1/rbac/roles', '/api/v1/users', '/api/v1/audit'], text: 'Immutable audit chain' },
   system: { paths: ['/api/v1/system'], text: 'Storage adapter' },
-  ai: { paths: ['/api/v1/admin/ai-provider'], text: 'AI API key integration' },
+  ai: { paths: ['/api/v1/admin/ai-provider'], text: 'AI connection manager' },
 };
 const adminUser = process.env.NLI_ADMIN_USER || 'admin';
 const adminPassword = process.env.NLI_ADMIN_PASSWORD;
@@ -116,7 +116,7 @@ test('premium login loads runtime assets and rejects invalid credentials', async
   await expect(page.getByTestId('nav-operations')).toBeVisible();
 });
 
-test('V20 blank-panel regressions: every workspace renders authenticated controller responses', async ({ page }) => {
+test('V21 blank-panel regressions: every workspace renders authenticated controller responses', async ({ page }) => {
   // This single regression walks every authenticated workspace and validates
   // each API contract.  Give the packaged two-node gate enough time on a
   // cold, resource-constrained CI/Docker host without weakening per-action
