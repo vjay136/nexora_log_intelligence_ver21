@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       previous_release_tag:
-        description: 'Previous production tag used for upgrade/rollback qualification; defaults to Ver20 R6'
+        description: 'Previous production tag used for upgrade/rollback qualification; defaults to Ver21 R1'
         required: false
         type: string
 
@@ -75,8 +75,8 @@ jobs:
       - name: Download genuine previous release RPMs
         env:
           GH_TOKEN: ${{ github.token }}
-          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v20.0.0-6' }}
-          PREVIOUS_RELEASE_REPO: vjay136/nexora_log_intelligence_ver20
+          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-1' }}
+          PREVIOUS_RELEASE_REPO: ${{ github.repository }}
         run: |
           mkdir -p '${{ runner.temp }}/previous'
           previous_release_tag="$PREVIOUS_RELEASE_TAG"
@@ -86,7 +86,7 @@ jobs:
               --jq 'map(select(.isDraft == false and .isPrerelease == false)) | sort_by(.publishedAt) | reverse | .[0].tagName')
           fi
           if [[ -z "$previous_release_tag" || "$previous_release_tag" == "null" ]]; then
-            echo "No published Ver20 lifecycle baseline is available in $PREVIOUS_RELEASE_REPO" >&2
+            echo "No published previous lifecycle baseline is available in $PREVIOUS_RELEASE_REPO" >&2
             exit 1
           fi
           echo "Using previous lifecycle baseline $PREVIOUS_RELEASE_REPO@$previous_release_tag"

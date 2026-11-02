@@ -133,13 +133,15 @@ if "REQUIRE_PREVIOUS=0" in workflow:
 
 rocky_validation = (root / "tests/rocky/validate.sh").read_text(encoding="utf-8")
 for marker in (
-    "previous client must be the genuine Ver20 R6 RPM",
-    "previous controller must be the genuine Ver20 R6 RPM",
+    "previous client must be the genuine Ver21 R1 RPM",
+    "previous controller must be the genuine Ver21 R1 RPM",
 ):
     if marker not in rocky_validation:
         fail(f"Rocky lifecycle validation is missing previous-release gate {marker!r}")
-if "PREVIOUS_RELEASE_REPO: vjay136/nexora_log_intelligence_ver20" not in workflow:
-    fail("Ver21 lifecycle validation does not use the published Ver20 R6 baseline")
+if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-1' }}" not in workflow:
+    fail("Ver21 lifecycle validation does not use the published Ver21 R1 baseline")
+if "PREVIOUS_RELEASE_REPO: ${{ github.repository }}" not in workflow:
+    fail("Ver21 lifecycle validation does not use the current published repository")
 
 research_ledger = (root / "docs/V20_RESEARCH_AND_LICENSE_LEDGER.md").read_text(encoding="utf-8")
 if "| **Total** | **100** |" not in research_ledger:
