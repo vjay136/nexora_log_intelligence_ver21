@@ -131,7 +131,7 @@ test('V21 blank-panel regressions: every workspace renders authenticated control
     if (path.startsWith('/api/v1/') && response.ok()) successfulAPIs.add(path);
   });
   // Authentication bootstraps canonical sync before the response listener is
-  // registered. Fetch it once here so this test explicitly proves the V20
+  // registered. Fetch it once here so this test explicitly proves the V21
   // source-of-truth contract instead of requiring the legacy dashboard poll.
   const syncStatus = await page.evaluate(async () => {
     const response = await fetch('/api/v1/sync/snapshot', { credentials: 'same-origin' });

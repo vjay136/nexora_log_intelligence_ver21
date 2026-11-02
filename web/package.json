@@ -1,6 +1,6 @@
 {
-  "name": "nexora-log-intelligence-v20-web",
-  "version": "20.0.0",
+  "name": "nexora-log-intelligence-v21-web",
+  "version": "21.0.0",
   "private": true,
   "type": "module",
   "scripts": {

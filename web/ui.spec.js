@@ -7,7 +7,7 @@ const origin = 'http://127.0.0.1:4176';
 const tabs = ['operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
 const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'nli-mark.svg', 'nexora-logo-v20.png', 'login-banner-v20.png', 'nexora-poster-v20.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
-async function mockController(page, { role = 'admin', healthIdentity = 'v20', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [], rolloutSeed = [], rolloutApprovalFailure = null } = {}) {
+async function mockController(page, { role = 'admin', healthIdentity = 'v21', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [], rolloutSeed = [], rolloutApprovalFailure = null } = {}) {
   const observed = [];
   const cases = [];
   const uploads = [];
@@ -647,7 +647,7 @@ test('legacy parser proposals reach controller verification and a hash rejection
   await expect(refreshed.getByRole('button',{name:'Cancel'})).toBeEnabled();
 });
 
-test('premium login presents the complete V20 banner in a responsive landscape stage', async ({ page }) => {
+test('premium login presents the complete V21 banner in a responsive landscape stage', async ({ page }) => {
   await mockController(page);
   await page.goto(origin);
   const lockup=page.locator('.showcase-header .brand-emblem');
@@ -830,7 +830,7 @@ test('AI provider manager exposes every supported provider and redacted credenti
   await expect(page.locator('body')).not.toContainText('ciphertext');
 });
 
-test('V20 security identity and task navigation remain accessible', async ({ page }) => {
+test('V21 security identity and task navigation remain accessible', async ({ page }) => {
   await mockController(page);
   await page.goto(origin);
   const officialLogo = page.getByAltText('Nexora Log Intelligence logo').first();
