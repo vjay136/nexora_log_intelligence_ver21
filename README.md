@@ -4,7 +4,7 @@ Nexora Log Intelligence Ver21 is a deterministic, review-gated log parsing and f
 
 > Install from the single versioned release archive in a fresh directory. Verify its external `.sha256` file and the complete internal `SHA256SUMS`; never mix loose files from different releases.
 
-Release `21.0.0-2` is the current Ver21 release. Public RPM aliases, archives, installers, uninstallers, AWS helpers, and Cloudflare helpers use Ver21-only filenames. The Go module path (`nexora.local/nli-v20`), RPM package names (`nli-client` and `nli-controller-agent`), systemd services, and state/configuration paths intentionally remain stable for in-place compatibility; the WebView payload is installed under `/usr/share/nli/webview_ver21`. See [All NLI features](All_NLI_features.md), [Ver21 Release 2 notes](docs/V21_R2_RELEASE_NOTES.md), and [Ver21 Release 2 test results](docs/V21_R2_TEST_RESULTS.md).
+Release `21.0.0-3` is the current Ver21 release. Public RPM aliases, archives, installers, uninstallers, AWS helpers, and Cloudflare helpers use Ver21-only filenames. The Go module path (`nexora.local/nli-v20`), RPM package names (`nli-client` and `nli-controller-agent`), systemd services, and state/configuration paths intentionally remain stable for in-place compatibility; the WebView payload is installed under `/usr/share/nli/webview_ver21`. See [All NLI features](All_NLI_features.md), [Ver21 Release 3 notes](docs/V21_R3_RELEASE_NOTES.md), and [Ver21 Release 3 test results](docs/V21_R3_TEST_RESULTS.md).
 
 ## V18 upgrade baseline architecture
 
@@ -12,7 +12,11 @@ Release `21.0.0-2` is the current Ver21 release. Public RPM aliases, archives, i
 
 The V18 architecture SVG is retained as the upgrade baseline reference. Its 8K PNG is included for presentations and offline documentation.
 
-## Ver20 NUPIRE and EGPE
+## Historical Ver20 and Ver19 implementation notes
+
+The sections below preserve Ver20-era architecture and qualification history. Current release identity and installation commands are Ver21; use the Ver21 archive and helper names shown below.
+
+### Ver20 NUPIRE and EGPE
 
 Ver20 adds the Nexora Universal Parser Intelligence and Runtime Evolution
 (NUPIRE) control plane and its evidence-gated parser evolution workflow. It
@@ -38,7 +42,7 @@ explicit repair path. Notification state is per user, and the login banner is
 contained above the sign-in form on the right.
 See the [Release 6 test results](docs/V20_R6_TEST_RESULTS.md), [Release 6 Quarantine Resolution operator guide](docs/V20_R6_QRW_OPERATOR_GUIDE.md), [UPES/GPRS architecture and acceptance guide](docs/V20_UPES_GPRS_ARCHITECTURE_AND_ACCEPTANCE.md), the [Quarantine Resolution Wizard guide](docs/V20_QUARANTINE_RESOLUTION_WIZARD.md), and the [architecture diagram](docs/architecture/NLI_V20_UPES_GPRS_ARCHITECTURE.svg).
 
-## Ver19 capabilities retained in Ver20
+### Ver19 capabilities retained in Ver20
 
 - Reviewed first-tier ParserPacks for IMAP, POP, MTA, SMTP-IN, SMTP-OUT, WebTop/Webmail, PSS/PABD, and MSS/CAPD, derived from the supplied working Alloy/Vector parser sources.
 - A versioned catalog for known keys, delimiter rules, static layouts, regex, templates, projections, field mappings, semantic extraction, and bounded generic fallback.
@@ -80,9 +84,9 @@ File buckets are private. Browsers never receive `SUPABASE_SECRET_KEY`, object p
 
 The publishable key is used only for the protected metadata RPC contract. Server-side private Storage requires a dedicated `sb_secret_...` key in the root-owned controller environment; it must never be committed, sent to Vercel, copied to a client RPM, or placed in a `NEXT_PUBLIC_` variable.
 
-## Ver19 upgrade and rollback
+## Ver21 upgrade and rollback
 
-Ver20 keeps stable RPM package identities, systemd units, `/etc/nli` configuration, and `/var/lib/nli` state paths so RPM can perform an in-place upgrade while retaining configuration and state paths. Release 4 was qualified against the exact published Release 3 client and controller RPMs. Release 6 package lifecycle is still pending; its planned upgrade/rollback baseline is the genuine Release 4 client and controller RPMs. Retain those RPMs until post-upgrade checks pass. The Ver19 major migration boundary and Release 6 rollback procedure are recorded in [the migration and rollback note](docs/release/V20_MIGRATION_AND_ROLLBACK.md).
+Ver21 retains the stable RPM package identities, systemd units, `/etc/nli` configuration, and `/var/lib/nli` state paths for compatible upgrades. Ver20 release lifecycle statements below this section are historical. For the Ver20-to-Ver21 migration boundary and current rollback process, use the release archive's verified checksums and follow the target environment's approved recovery procedure; the legacy [Ver20 migration and rollback note](docs/release/V20_MIGRATION_AND_ROLLBACK.md) describes the earlier boundary.
 
 ## Installation
 

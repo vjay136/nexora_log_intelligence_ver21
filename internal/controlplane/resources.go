@@ -1252,7 +1252,7 @@ func (s *Server) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 			request.Name = "Upgrade " + fmt.Sprint(artifact["name"])
 		}
 	}
-	proposal := map[string]any{"name": request.Name, "type": rolloutType, "target_nodes": request.TargetNodes, "artifact_id": request.ArtifactID, "payload": map[string]any{"version": "20.0.0", "artifact_type": artifactType, "download_url": s.signedArtifactURL(r, request.ArtifactID), "checksum": artifact["sha256"], "size": artifact["size"], "media_type": artifact["media_type"]}, "approval_required": true}
+	proposal := map[string]any{"name": request.Name, "type": rolloutType, "target_nodes": request.TargetNodes, "artifact_id": request.ArtifactID, "payload": map[string]any{"version": "21.0.0", "artifact_type": artifactType, "download_url": s.signedArtifactURL(r, request.ArtifactID), "checksum": artifact["sha256"], "size": artifact["size"], "media_type": artifact["media_type"]}, "approval_required": true}
 	s.createRolloutProposal(w, r, principal, proposal)
 }
 

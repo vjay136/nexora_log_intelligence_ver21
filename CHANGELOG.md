@@ -1,5 +1,10 @@
 # Changelog
 
+## [21.0.0-3] - 2026-11-03
+- Publish Ver21 Release 3 notes and test commands with the package and release evidence.
+- Document the `nli.sync.v1` schema, bounded latest-state behavior, and existing 1,000-node correctness test without presenting it as production capacity qualification.
+- Preserve stable RPM package, service, configuration, module, and state identities for in-place upgrades.
+
 ## [21.0.0-2] - 2026-11-02
 
 - Publish only Ver21-named RPM aliases, archives, installation helpers, and release evidence.

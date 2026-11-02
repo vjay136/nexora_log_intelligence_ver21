@@ -133,13 +133,15 @@ if "REQUIRE_PREVIOUS=0" in workflow:
 
 rocky_validation = (root / "tests/rocky/validate.sh").read_text(encoding="utf-8")
 for marker in (
-    "previous client must be the genuine Ver21 R1 RPM",
-    "previous controller must be the genuine Ver21 R1 RPM",
+    "previous client must be the genuine Ver21 R2 RPM",
+    "previous controller must be the genuine Ver21 R2 RPM",
 ):
     if marker not in rocky_validation:
         fail(f"Rocky lifecycle validation is missing previous-release gate {marker!r}")
-if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-1' }}" not in workflow:
-    fail("Ver21 lifecycle validation does not use the published Ver21 R1 baseline")
+if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-2' }}" not in workflow:
+    fail("Ver21 lifecycle validation does not use the published Ver21 R2 baseline")
+if "name: nli-v21-r3-unsigned-release" not in workflow or "--notes-file docs/V21_R3_RELEASE_NOTES.md" not in workflow:
+    fail("Ver21 lifecycle workflow does not publish R3 artifacts and release notes")
 if "PREVIOUS_RELEASE_REPO: ${{ github.repository }}" not in workflow:
     fail("Ver21 lifecycle validation does not use the current published repository")
 

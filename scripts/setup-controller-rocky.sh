@@ -984,7 +984,7 @@ if [[ $mode == 4 ]]; then
   rm -f "$token_tmp"
   cat >/etc/systemd/system/nli-cloudflared.service <<EOF
 [Unit]
-Description=NLI v20 Cloudflare Tunnel connector
+Description=NLI Ver21 Cloudflare Tunnel connector
 After=network-online.target
 Wants=network-online.target
 
@@ -1154,7 +1154,7 @@ rm -f "$env_tmp"
 # without exposing credentials in terminal output or process arguments.
 credential_tmp=$(mktemp "${CREDENTIAL_FILE}.XXXXXX")
 cat >"$credential_tmp" <<EOF
-# NLI V20 controller credentials. Root only. Do not copy to clients.
+# NLI Ver21 controller credentials. Root only. Do not copy to clients.
 NLI_ENROLLMENT_TOKEN=$enrollment_token
 NLI_AUDIT_HMAC_KEY=$audit_key
 NLI_CSRF_HMAC_KEY=$csrf_key

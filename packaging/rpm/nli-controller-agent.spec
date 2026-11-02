@@ -44,7 +44,7 @@ cp -a web/. %{buildroot}%{_datadir}/nli/webview_ver21/
 find %{buildroot}%{_datadir}/nli/webview_ver21 -type d -exec chmod 0755 {} +
 find %{buildroot}%{_datadir}/nli/webview_ver21 -type f -exec chmod 0644 {} +
 install -m 0644 README.md %{buildroot}%{_docdir}/%{name}/README.md
-install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
+install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
 install -m 0644 metrics/README.md metrics/metric-catalog.json metrics/prometheus-scrape.yml metrics/grafana-dashboard.json %{buildroot}%{_datadir}/nli/metrics/
 
 %pre
@@ -105,11 +105,13 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %doc %{_docdir}/%{name}/V21_R1_TEST_RESULTS.md
 %doc %{_docdir}/%{name}/V21_R2_RELEASE_NOTES.md
 %doc %{_docdir}/%{name}/V21_R2_TEST_RESULTS.md
+%doc %{_docdir}/%{name}/V21_R3_RELEASE_NOTES.md
+%doc %{_docdir}/%{name}/V21_R3_TEST_RESULTS.md
 %doc %{_docdir}/%{name}/VER21_IMPLEMENTATION_PLAN.md
 
 %changelog
-* Mon Nov 02 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-2
-- Publish Ver21 Release 2 artifacts and migrate compatible legacy WebView roots to webview_ver21.
+* Tue Nov 03 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-3
+- Publish Ver21 Release 3 artifacts and migrate compatible legacy WebView roots to webview_ver21.
 
 * Mon Nov 02 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-1
 - Promote the governed parser runtime to Ver21 while preserving RPM identity and in-place upgrade paths.

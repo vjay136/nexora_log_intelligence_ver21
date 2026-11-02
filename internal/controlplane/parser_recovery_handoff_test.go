@@ -140,3 +140,49 @@ func TestPublishedAssurancePackIsOnlyRuntimeBundleHandoff(t *testing.T) {
 		t.Fatalf("replay should open only after matching applied acknowledgement, got %d: %s", response.StatusCode, body)
 	}
 }
+
+func TestLateParserRolloutAcknowledgementCannotRewindReplayGate(t *testing.T) {
+	f := newAPIFixture(t)
+	f.server.fleet.Register(&fleet.Node{ID: "late-ack-node", Hostname: "late-ack-node"})
+	oldBundle, err := f.server.buildActiveParserBundle(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRollout, err := f.server.startParserBundleRollout(context.Background(), "operator", "Old parser bundle", oldBundle, []string{"late-ack-node"})
+	if err != nil || oldRollout == nil {
+		t.Fatalf("start old parser rollout: rollout=%+v err=%v", oldRollout, err)
+	}
+	if _, err := f.server.metadata.Put(context.Background(), metastore.Document{
+		Collection: "regex-patterns", ID: "new-late-ack-rule", State: "active",
+		Payload: json.RawMessage(`{"name":"New late acknowledgement rule"}`), CreatedBy: "operator",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newBundle, err := f.server.buildActiveParserBundle(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newBundle.BundleHash == oldBundle.BundleHash {
+		t.Fatal("fixture did not change the published parser bundle")
+	}
+	newRollout, err := f.server.startParserBundleRollout(context.Background(), "operator", "New parser bundle", newBundle, []string{"late-ack-node"})
+	if err != nil || newRollout == nil {
+		t.Fatalf("start new parser rollout: rollout=%+v err=%v", newRollout, err)
+	}
+
+	f.server.recordParserSyncRolloutResult(context.Background(), oldRollout.ID, protocol.CommandResult{
+		NodeID: "late-ack-node", CommandID: oldRollout.ID, Status: rolloutmodel.StatusCompleted,
+		ActiveAssetBundleHash: oldBundle.BundleHash, ActiveAssetRevisions: bundleRevisionMap(oldBundle),
+	})
+	doc, err := f.server.metadata.Get(context.Background(), "fleet-sync", "late-ack-node", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if json.Unmarshal(doc.Payload, &state) != nil {
+		t.Fatalf("decode fleet sync state: %s", doc.Payload)
+	}
+	if state["desired_asset_bundle_hash"] != newBundle.BundleHash || state["active_asset_bundle_hash"] != oldBundle.BundleHash || state["asset_sync_status"] != "drifted" {
+		t.Fatalf("late acknowledgement rewound desired state or opened replay gate: %#v", state)
+	}
+}

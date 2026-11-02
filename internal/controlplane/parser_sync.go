@@ -24,6 +24,11 @@ import (
 
 var parserAssetCollections = []string{"kv-config", "static-patterns", "projections", "templates", "regex-patterns", "known-keys", "semantic-extraction", "parser-packs"}
 
+const (
+	parserSyncPageSize    = 1000
+	parserSyncTargetLimit = 10000
+)
+
 type parserBundleAsset struct {
 	AssetClass string          `json:"asset_class"`
 	AssetID    string          `json:"asset_id"`
@@ -217,11 +222,44 @@ func setCanonicalProposalBundleHash(proposal map[string]any, hash string) {
 	}
 }
 
+// listParserSyncDocuments reads bounded metadata in stable pages. Parser sync
+// used to stop after the first 1,000 rows, which made acknowledgements and
+// proposals beyond that point invisible in large fleets. The 10,000 row guard
+// is an explicit operational bound rather than a silent truncation.
+func (s *Server) listParserSyncDocuments(ctx context.Context, collection, state string, maximum int) ([]metastore.Document, error) {
+	if maximum <= 0 || maximum > parserSyncTargetLimit {
+		maximum = parserSyncTargetLimit
+	}
+	documents := make([]metastore.Document, 0, min(parserSyncPageSize, maximum))
+	for offset := 0; offset < maximum; offset += parserSyncPageSize {
+		limit := parserSyncPageSize
+		if remaining := maximum - offset; remaining < limit {
+			limit = remaining
+		}
+		page, err := s.metadata.List(ctx, collection, metastore.Query{State: state, Limit: limit, Offset: offset})
+		if err != nil {
+			return nil, err
+		}
+		documents = append(documents, page...)
+		if len(page) < limit {
+			return documents, nil
+		}
+	}
+	extra, err := s.metadata.List(ctx, collection, metastore.Query{State: state, Limit: 1, Offset: maximum})
+	if err != nil {
+		return nil, err
+	}
+	if len(extra) > 0 {
+		return nil, fmt.Errorf("%s metadata exceeds the %d-row parser sync safety limit", collection, maximum)
+	}
+	return documents, nil
+}
+
 func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle, error) {
 	bundle := parserAssetBundle{SchemaVersion: 1, Assets: []parserBundleAsset{}}
 	seenRuntimeParserID := map[string]string{}
 	for _, collection := range parserAssetCollections {
-		page, err := s.metadata.List(ctx, collection, metastore.Query{Limit: 1000})
+		page, err := s.listParserSyncDocuments(ctx, collection, "", parserSyncTargetLimit)
 		if err != nil {
 			return bundle, err
 		}
@@ -409,8 +447,8 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 			targetIDs = append(targetIDs, id)
 		}
 	}
-	if len(targetIDs) > 1000 || (len(targetIDs) == 0 && targetMode != "all_eligible") {
-		return metastore.Document{}, errors.New("parser sync rollout requires 1..1000 eligible target clients")
+	if len(targetIDs) > parserSyncTargetLimit || (len(targetIDs) == 0 && targetMode != "all_eligible") {
+		return metastore.Document{}, fmt.Errorf("parser sync rollout requires 1..%d eligible target clients", parserSyncTargetLimit)
 	}
 	seen := map[string]bool{}
 	for _, id := range targetIDs {
@@ -427,7 +465,7 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 	// approval can only fail the exact-hash gate and was the source of the R6
 	// "bundle hash is invalid/stale" loop. Preserve it as audit history while
 	// removing it from the approval queue.
-	pending, listErr := s.metadata.List(ctx, "rollout-proposals", metastore.Query{Limit: 1000})
+	pending, listErr := s.listParserSyncDocuments(ctx, "rollout-proposals", "", parserSyncTargetLimit)
 	if listErr != nil {
 		return metastore.Document{}, fmt.Errorf("list parser rollout proposals: %w", listErr)
 	}
@@ -557,22 +595,45 @@ func (s *Server) recordParserSyncRolloutResult(ctx context.Context, rolloutID st
 	doc, _ := s.metadata.Get(ctx, "fleet-sync", id, 0)
 	state := map[string]any{"node_id": result.NodeID}
 	_ = json.Unmarshal(doc.Payload, &state)
+	desiredHash := strings.TrimSpace(fmt.Sprint(state["desired_asset_bundle_hash"]))
+	if desiredHash == "<nil>" {
+		desiredHash = ""
+	}
+	// A leased command can finish after a newer parser publication has already
+	// changed the desired bundle. Prefer the freshly rebuilt published hash, but
+	// do not discard a valid client acknowledgement merely because the catalog
+	// store is briefly unavailable while the command result is being recorded.
+	if current, currentErr := s.buildActiveParserBundle(ctx); currentErr == nil && current.BundleHash != "" {
+		desiredHash = current.BundleHash
+	}
+	if desiredHash == "" {
+		desiredHash = expected
+	}
 	creator := doc.CreatedBy
 	if creator == "" {
 		creator = "node:" + result.NodeID
 	}
-	state["desired_asset_bundle_hash"] = expected
 	state["asset_result_at"] = time.Now().UTC()
 	state["asset_result_rollout_id"] = rolloutID
-	if result.Status != rollout.StatusCompleted {
+	if desiredHash == "" || expected != desiredHash {
+		state["desired_asset_bundle_hash"] = desiredHash
+		state["active_asset_bundle_hash"] = result.ActiveAssetBundleHash
+		state["active_asset_revisions"] = result.ActiveAssetRevisions
+		state["asset_sync_status"] = "drifted"
+		state["asset_drifted"] = true
+		state["asset_sync_error"] = fmt.Sprintf("late parser rollout acknowledgement for bundle %q; current published bundle is %q", expected, desiredHash)
+	} else if result.Status != rollout.StatusCompleted {
+		state["desired_asset_bundle_hash"] = desiredHash
 		state["asset_sync_status"] = "failed"
 		state["asset_drifted"] = true
 		state["asset_sync_error"] = strings.TrimSpace(result.Message)
 	} else if expected == "" || result.ActiveAssetBundleHash != expected {
+		state["desired_asset_bundle_hash"] = desiredHash
 		state["asset_sync_status"] = "drifted"
 		state["asset_drifted"] = true
 		state["asset_sync_error"] = fmt.Sprintf("client command completed but reported bundle %q; expected %q", result.ActiveAssetBundleHash, expected)
 	} else {
+		state["desired_asset_bundle_hash"] = desiredHash
 		state["active_asset_bundle_hash"] = result.ActiveAssetBundleHash
 		state["active_asset_revisions"] = result.ActiveAssetRevisions
 		state["asset_sync_status"] = "applied"
@@ -667,8 +728,8 @@ func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "requested parser bundle is no longer the current published bundle", http.StatusConflict)
 			return
 		}
-		if len(request.NodeIDs) > 1000 {
-			jsonError(w, "verification exceeds the 1000-client target limit", http.StatusBadRequest)
+		if len(request.NodeIDs) > parserSyncTargetLimit {
+			jsonError(w, fmt.Sprintf("verification exceeds the %d-client target limit", parserSyncTargetLimit), http.StatusBadRequest)
 			return
 		}
 		selected := map[string]bool{}
@@ -683,7 +744,7 @@ func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		states, stateErr := s.metadata.List(r.Context(), "fleet-sync", metastore.Query{Limit: 1000})
+		states, stateErr := s.listParserSyncDocuments(r.Context(), "fleet-sync", "", parserSyncTargetLimit)
 		if stateErr != nil {
 			jsonError(w, "client parser acknowledgements are unavailable", http.StatusServiceUnavailable)
 			return
@@ -877,7 +938,11 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	page, _ := s.metadata.List(r.Context(), "fleet-sync", metastore.Query{Limit: 1000})
+	page, pageErr := s.listParserSyncDocuments(r.Context(), "fleet-sync", "", parserSyncTargetLimit)
+	if pageErr != nil {
+		jsonError(w, "client parser acknowledgement telemetry unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	byNode := map[string]map[string]any{}
 	for _, doc := range page {
 		var state map[string]any
@@ -886,6 +951,8 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	clients := []map[string]any{}
+	totalClients, onlineClients, exactClients := 0, 0, 0
+	pendingClients, driftedClients, failedClients, offlineClients := 0, 0, 0, 0
 	for _, node := range s.fleet.All() {
 		state := byNode[safeID(node.ID)]
 		if state == nil {
@@ -895,8 +962,28 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 		desired := bundle.BundleHash
 		drift := applied != desired
 		acknowledged := !drift && fmt.Sprint(state["desired_asset_bundle_hash"]) == desired && fmt.Sprint(state["asset_sync_status"]) == "applied"
-		clients = append(clients, map[string]any{"node_id": node.ID, "hostname": node.Hostname, "desired_revision": bundleRevisionMap(bundle), "desired_hash": desired, "applied_revision": state["active_asset_revisions"], "applied_hash": applied, "acknowledged_bundle_hash": applied, "exact_acknowledgement": acknowledged, "last_seen": state["last_seen"], "status": state["asset_sync_status"], "drifted": drift, "error": state["asset_sync_error"]})
+		status := strings.TrimSpace(fmt.Sprint(state["asset_sync_status"]))
+		if status == "" || status == "<nil>" {
+			status = "pending"
+		}
+		totalClients++
+		if node.Status == fleet.StatusOffline {
+			offlineClients++
+		} else {
+			onlineClients++
+		}
+		if acknowledged {
+			exactClients++
+		} else if status == "failed" {
+			failedClients++
+		} else if drift {
+			driftedClients++
+		} else {
+			pendingClients++
+		}
+		clients = append(clients, map[string]any{"node_id": node.ID, "hostname": node.Hostname, "desired_revision": bundleRevisionMap(bundle), "desired_hash": desired, "applied_revision": state["active_asset_revisions"], "applied_hash": applied, "acknowledged_bundle_hash": applied, "exact_acknowledgement": acknowledged, "last_seen": state["last_seen"], "status": status, "drifted": drift, "error": state["asset_sync_error"]})
 	}
+	sort.Slice(clients, func(i, j int) bool { return fmt.Sprint(clients[i]["node_id"]) < fmt.Sprint(clients[j]["node_id"]) })
 	var latest *rolloutRecord
 	for _, item := range s.rollouts.List() {
 		if item.Type != rolloutTypeParserSync {
@@ -909,7 +996,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var pendingProposal *metastore.Document
-	if proposals, err := s.metadata.List(r.Context(), "rollout-proposals", metastore.Query{State: "pending_approval", Limit: 1000}); err == nil {
+	if proposals, err := s.listParserSyncDocuments(r.Context(), "rollout-proposals", "pending_approval", parserSyncTargetLimit); err == nil {
 		for i := range proposals {
 			var proposal map[string]any
 			if json.Unmarshal(proposals[i].Payload, &proposal) == nil && fmt.Sprint(proposal["type"]) == rolloutTypeParserSync && fmt.Sprint(proposal["bundle_hash"]) == bundle.BundleHash {
@@ -934,9 +1021,20 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 		}
 		desired := map[string]any{"revision": asset.Revision, "sha256": asset.SHA256, "state": "published"}
 		controller := map[string]any{"revision": controllerRevision, "sha256": controllerHash, "status": controllerStatus}
-		assetViews = append(assetViews, map[string]any{"asset_class": asset.AssetClass, "asset_id": asset.AssetID, "name": asset.Name, "desired": desired, "controller": controller, "desired_revision": asset.Revision, "desired_hash": asset.SHA256, "state": "published", "controller_applied_revision": controllerRevision, "controller_applied_hash": controllerHash, "controller_status": controllerStatus, "auto_rollout": map[string]any{"enabled": false, "status": rolloutState}, "rollout": rolloutSummary(latest), "rollout_proposal": proposalView, "clients": clients})
+		assetViews = append(assetViews, map[string]any{"asset_class": asset.AssetClass, "asset_id": asset.AssetID, "name": asset.Name, "desired": desired, "controller": controller, "desired_revision": asset.Revision, "desired_hash": asset.SHA256, "state": "published", "controller_applied_revision": controllerRevision, "controller_applied_hash": controllerHash, "controller_status": controllerStatus, "auto_rollout": map[string]any{"enabled": false, "status": rolloutState}, "rollout": rolloutSummary(latest), "rollout_proposal": proposalView})
 	}
-	jsonOK(w, map[string]any{"assets": assetViews, "count": len(assetViews), "bundle": map[string]any{"revision": bundleRevisionMap(bundle), "desired_hash": bundle.BundleHash, "controller_applied_hash": controllerHash, "controller_status": controllerStatus}, "clients": clients, "rollout": rolloutSummary(latest), "rollout_proposal": proposalView, "automatic_rollout_policy": "approval_gated_parser_bundle_sync"})
+	acknowledgementPct := 0.0
+	if totalClients > 0 {
+		acknowledgementPct = float64(exactClients) * 100 / float64(totalClients)
+	}
+	telemetry := map[string]any{
+		"total_clients": totalClients, "online_clients": onlineClients, "offline_clients": offlineClients,
+		"exact_acknowledged_clients": exactClients, "pending_clients": pendingClients,
+		"drifted_clients": driftedClients, "failed_clients": failedClients,
+		"acknowledgement_pct": acknowledgementPct, "desired_bundle_hash": bundle.BundleHash,
+		"controller_status": controllerStatus, "target_limit": parserSyncTargetLimit, "generated_at": time.Now().UTC(),
+	}
+	jsonOK(w, map[string]any{"assets": assetViews, "count": len(assetViews), "bundle": map[string]any{"revision": bundleRevisionMap(bundle), "desired_hash": bundle.BundleHash, "controller_applied_hash": controllerHash, "controller_status": controllerStatus}, "clients": clients, "telemetry": telemetry, "rollout": rolloutSummary(latest), "rollout_proposal": proposalView, "automatic_rollout_policy": "approval_gated_parser_bundle_sync"})
 }
 
 func bundleRevisionMap(bundle parserAssetBundle) map[string]int {

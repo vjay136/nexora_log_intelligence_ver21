@@ -44,7 +44,7 @@ if [[ -n $BOOTSTRAP_FILE ]]; then
     fail "bootstrap file not found: $BOOTSTRAP_FILE (pass a file path or enter a controller URL)"
   fi
 else
-  printf '\nNLI v20 managed-client setup\n'
+  printf '\nNLI Ver21 managed-client setup\n'
   read -r -p 'Controller URL (production requires HTTPS): ' controller_url
   read -r -s -p 'Controller enrollment token: ' enrollment_token
   printf '\n'

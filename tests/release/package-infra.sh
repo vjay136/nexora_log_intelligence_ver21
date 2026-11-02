@@ -116,7 +116,7 @@ build_rpm_fixture "$work/pass2" "$work/pass2-work" "$NLI_VERSION" "$NLI_RELEASE"
 for name in nli_client_ver21.rpm nli_controller_agent_ver21.rpm webview_ver21.zip webapp_ver21.zip install-controller-ver21.sh install-client-ver21.sh install-controller-aws-ver21.sh install-client-aws-ver21.sh install-controller-aws-cloudflare-ver21.sh aws-rhel-preflight-ver21.sh aws-security-group-plan-ver21.sh setup-cloudflare-tunnel-v21.sh verify-cloudflare-tunnel-v21.sh uninstall-cloudflare-tunnel-v21.sh cloudflare-quick-diagnosis-v21.sh vercel-preflight.mjs uninstall-controller-ver21.sh uninstall-client-ver21.sh INSTALLATION_AND_CONFIGURATION.md VERCEL_DEPLOYMENT.md CLOUDFLARE_PAGES_DEPLOYMENT.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS RELEASE_ID; do
   cmp -s "$work/pass1/$name" "$work/pass2/$name" || { echo "fixture output is non-deterministic: $name" >&2; exit 1; }
 done
-for name in All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md; do
+for name in All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md; do
   cmp -s "$work/pass1/$name" "$work/pass2/$name" || { echo "fixture output is non-deterministic: $name" >&2; exit 1; }
 done
 cp -a "$work/pass1/." "$work/final/"
