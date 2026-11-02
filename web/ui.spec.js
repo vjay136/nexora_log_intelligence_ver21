@@ -335,7 +335,7 @@ test('empty telemetry uses reported state and never renders NaN', async ({ page 
   await mockController(page);
   await page.route(`${origin}/api/v1/sync/snapshot`, route => route.fulfill({
     status:200,
-    headers:{'content-type':'application/json','x-nli-controller':'v20','x-nli-upstream':'controller'},
+    headers:{'content-type':'application/json','x-nli-controller':'v21','x-nli-upstream':'controller'},
     body:JSON.stringify({schema_version:'nli.sync.v1',revision:0,generated_at:new Date().toISOString(),target_interval_ms:1000,aggregate:{},sources:[],diagnostics:{issues:[]},subsystems:{}}),
   }));
   await login(page);

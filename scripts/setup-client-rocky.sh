@@ -161,12 +161,12 @@ if ! health_json=$(curl "${curl_args[@]}" --verbose --dump-header "$health_heade
   fail 'controller health check failed; correct the specific DNS, route, firewall, certificate trust, or hostname issue above and rerun setup'
 fi
 rm -f "$curl_diagnostics"
-tr -d '\r' <"$health_headers" | grep -Eiq '^X-NLI-Controller:[[:space:]]*v20$' || {
+tr -d '\r' <"$health_headers" | grep -Eiq '^X-NLI-Controller:[[:space:]]*v21$' || {
   rm -f "$health_headers"
-  fail 'target did not identify itself as an NLI v20 controller'
+  fail 'target did not identify itself as an NLI v21 controller'
 }
 rm -f "$health_headers"
-printf '%s' "$health_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("service")=="nli-controller-agent" and d.get("api_version")=="v1"' || fail 'target is not an NLI v20 controller'
+printf '%s' "$health_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("service")=="nli-controller-agent" and d.get("api_version")=="v1"' || fail 'target is not an NLI v21 controller'
 
 if [[ $ca_commit_required == true ]]; then
   verified_ca=$(mktemp "${CA_FILE}.verified.XXXXXX")

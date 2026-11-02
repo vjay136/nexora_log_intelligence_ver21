@@ -97,7 +97,7 @@ for secret_spec in "audit HMAC:$audit_key" "CSRF HMAC:$csrf_key" "Assurance encr
   valid_env_secret "$secret_value" || fail "$secret_label key is not safe for a systemd EnvironmentFile"
 done
 
-printf '\nNLI v20 controller first-run setup\n'
+printf '\nNLI v21 controller first-run setup\n'
 printf '  1) Local administration through SSH tunnel (secure default)\n'
 printf '  2) Private-network TLS for separate controller/client nodes\n\n'
 printf '  3) Public DNS + Nginx + ACME certificate (automated)\n'
@@ -1240,7 +1240,7 @@ wait_for_controller() {
     openssl x509 -in "$tls_cert" -noout -subject -ext subjectAltName 2>/dev/null >&2 || true
     fail 'controller health endpoint failed'
   }
-  printf '%s' "$health_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("service")=="nli-controller-agent" and d.get("api_version")=="v1"' || fail 'health endpoint is not an NLI v20 controller'
+  printf '%s' "$health_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("service")=="nli-controller-agent" and d.get("api_version")=="v1"' || fail 'health endpoint is not an NLI v21 controller'
 }
 
 verify_supabase() {

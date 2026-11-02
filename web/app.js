@@ -548,13 +548,13 @@
     const contentType = healthResponse.headers.get('content-type') || '';
     const health = contentType.includes('application/json') ? await healthResponse.json().catch(() => null) : null;
     const identity = healthResponse.headers.get('x-nli-controller');
-    if (!healthResponse.ok || identity !== 'v20' || health?.service !== 'nli-controller-agent' || health?.api_version !== 'v1') {
+    if (!healthResponse.ok || identity !== 'v21' || health?.service !== 'nli-controller-agent' || health?.api_version !== 'v1') {
       throw new Error(health?.error || 'This address is not a Nexora Log Intelligence Ver20 controller. Open the Ver20 WebView or configure the controller connection.');
     }
     state.proxy = healthResponse.headers.get('x-nli-upstream') === 'controller';
     const loginResponse = await fetchWithTimeout('/api/v1/auth/login', { method: 'OPTIONS', credentials: 'same-origin', headers: { Accept: 'application/json' }, cache: 'no-store' });
     const allow = loginResponse.headers.get('allow') || '';
-    if (!loginResponse.ok || loginResponse.headers.get('x-nli-controller') !== 'v20' || !allow.split(',').map(value => value.trim().toUpperCase()).includes('POST')) {
+    if (!loginResponse.ok || loginResponse.headers.get('x-nli-controller') !== 'v21' || !allow.split(',').map(value => value.trim().toUpperCase()).includes('POST')) {
       throw new Error('The NLI controller does not advertise a compatible login API. Upgrade the controller RPM.');
     }
     return health;
