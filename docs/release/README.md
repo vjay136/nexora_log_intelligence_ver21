@@ -1,12 +1,12 @@
 # NLI Ver21 release infrastructure
 
-## Release 21.0.0-3
+## Release 21.0.0-4
 
-Release 3 publishes Ver21-only artifact and helper filenames: `nli_client_ver21.rpm`, `nli_controller_agent_ver21.rpm`, `nli-v21.0.0-3-x86_64.tar.gz`, `webview_ver21.zip`, `webapp_ver21.zip`, and the Ver21 installer/uninstaller helpers. The obsolete misspelling `nli_clinet_*` is not generated. Stable RPM package names, services, configuration, and state paths remain unchanged for safe upgrades; compatibility is not represented by legacy release filenames.
+Release 4 publishes Ver21-only artifact and helper filenames: `nli_client_ver21.rpm`, `nli_controller_agent_ver21.rpm`, `nli-v21.0.0-4-x86_64.tar.gz`, `webview_ver21.zip`, `webapp_ver21.zip`, and the Ver21 installer/uninstaller helpers. The obsolete misspelling `nli_clinet_*` is not generated. Stable RPM package names, services, configuration, and state paths remain unchanged for safe upgrades; compatibility is not represented by legacy release filenames.
 
-R3 documents the authenticated `nli.sync.v1` schema and bounded canonical telemetry behavior. Existing automated coverage includes 1,000 nodes and 32 subscribers; this is a correctness check and not a production capacity claim. See the release notes for schema fields, coalescing/resync behavior, and the qualification boundary.
+R3 remains historical evidence for the authenticated `nli.sync.v1` schema and bounded canonical telemetry behavior. Its 1,000-node and 32-subscriber automated coverage is a correctness check, not a production capacity claim. R4 adds release lifecycle plumbing and the surgical diagnostics runbook; see the R4 release notes and test results for the current release scope and verification status.
 
-See `../V21_R3_RELEASE_NOTES.md` and `../V21_R3_TEST_RESULTS.md` for the current release contract. The Ver20 sections below are retained as historical release evidence only and are not copied as current R3 deliverables.
+See `../V21_R4_RELEASE_NOTES.md`, `../V21_R4_TEST_RESULTS.md`, and `../V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md` for the current release contract. The Ver20 sections below are retained as historical release evidence only.
 
 ## Release 20.0.0-6
 
@@ -198,14 +198,14 @@ Operational additions include queued SMTP and PagerDuty notifications, persisten
 
 Use `V20_PRODUCTION_ACCEPTANCE_TESTS.md` for the exact 49-record acceptance test and `V20_OPERATOR_DEMO_GUIDE.md` for the complete tab-by-tab demonstration. `V20_SUBSYSTEM_ORCHESTRATION.md` explains which subsystems run on ordinary traffic and which run only during evidence-gated recovery.
 
-This directory documents the supported Ver21 Release 3 path. It builds source-derived static Linux binaries in a digest-pinned Go image, creates genuine RPMs with `rpmbuild` in a digest-pinned Rocky image, performs a two-pass byte-for-byte reproducibility check, and emits checksums, SPDX SBOM, release manifest, binary provenance, and an in-toto/SLSA provenance statement.
+This directory documents the supported Ver21 Release 4 path. It builds source-derived static Linux binaries in a digest-pinned Go image, creates genuine RPMs with `rpmbuild` in a digest-pinned Rocky image, performs a two-pass byte-for-byte reproducibility check, and emits checksums, SPDX SBOM, release manifest, binary provenance, and an in-toto/SLSA provenance statement.
 
 ## Safety and prerequisites
 
 - Release input must be one clean, committed, frozen Git revision. Dirty or untracked source is refused.
 - Outputs go to `NLI_BUILD_SCRATCH` or an explicit output directory; the repository `dist` directory is never used.
-- Public R3 RPM aliases are `nli_client_ver21.rpm` and `nli_controller_agent_ver21.rpm`; no misspelled `nli_clinet_*` artifact is generated.
-- Release 3 preserves the stable `nli-client` and `nli-controller-agent` package identities while Rocky lifecycle checks remain separate deployment-environment qualification gates.
+- Public Ver21 RPM aliases are `nli_client_ver21.rpm` and `nli_controller_agent_ver21.rpm`; no misspelled `nli_clinet_*` artifact is generated.
+- Release 4 preserves the stable `nli-client` and `nli-controller-agent` package identities while Rocky lifecycle checks remain separate deployment-environment qualification gates.
 - The release remains unsigned unless an explicit signing key is supplied. Unsigned output must never be described as signed.
 - Operators receive one `nli-v<version>-<release>-x86_64.tar.gz` archive plus its external `.sha256`. The archive contains `RELEASE_ID`, all RPM/web/operator artifacts, and the complete internal checksum manifest. It must be extracted into a fresh versioned directory.
 
@@ -217,9 +217,9 @@ make release-static
 make release-package-test
 make release-lifecycle-test
 make release-preflight
-make release-build OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r3-release"
+make release-build OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r4-release"
 make release-rocky \
-  OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r3-release" \
+  OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r4-release" \
   PREVIOUS_DIR=/absolute/path/to/genuine/previous-rpms
 ```
 
@@ -227,7 +227,7 @@ Windows PowerShell uses the same pinned two-pass build:
 
 ```powershell
 $env:NLI_BUILD_SCRATCH = 'C:\absolute\session-owned\scratch'
-.\packaging\build-release.ps1 -OutputDirectory "$env:NLI_BUILD_SCRATCH\nli-v21-r3-release"
+.\packaging\build-release.ps1 -OutputDirectory "$env:NLI_BUILD_SCRATCH\nli-v21-r4-release"
 ```
 
 ## Signing hooks
@@ -236,10 +236,10 @@ Unsigned reproducibility is checked before signing because signatures intentiona
 
 ```bash
 REQUIRE_SIGNATURES=1 RPM_GPG_NAME='NLI Release' \
-  make release-sign-rpm OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r3-release"
-make release-evidence OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r3-release"
+  make release-sign-rpm OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r4-release"
+make release-evidence OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r4-release"
 REQUIRE_SIGNATURES=1 COSIGN_KEY=... \
-  make release-sign OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r3-release"
+  make release-sign OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r4-release"
 ```
 
 To use GPG detached signatures instead, set `GPG_KEY_ID`. Private keys are never read from the repository and are not mounted by the default build.
@@ -248,7 +248,7 @@ Verify promotion signatures with an explicit trust root:
 
 ```bash
 COSIGN_PUBLIC_KEY=/absolute/path/to/cosign.pub \
-  make release-sign-verify OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r3-release"
+  make release-sign-verify OUTPUT_DIR="$NLI_BUILD_SCRATCH/nli-v21-r4-release"
 ```
 
 ## Rocky acceptance

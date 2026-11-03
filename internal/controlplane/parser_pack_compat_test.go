@@ -84,6 +84,65 @@ func TestLegacyParserPublicationCreatesApprovalGatedFleetBundle(t *testing.T) {
 	}
 }
 
+func TestAssuranceAndCatalogExposeSamePublishedParserProjection(t *testing.T) {
+	fixture := newAPIFixture(t)
+	putApprovedLegacyParser(t, fixture, "shared-parser")
+
+	response, body := fixture.request(http.MethodPost, "/api/v1/parser-packs/shared-parser/activate", map[string]any{})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("publish parser: %d %s", response.StatusCode, body)
+	}
+
+	response, body = fixture.request(http.MethodGet, "/api/v1/parser-packs", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("read parser catalog: %d %s", response.StatusCode, body)
+	}
+	catalog := decodeMap(t, body)
+
+	response, body = fixture.request(http.MethodGet, "/api/v1/assurance/parsers", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("read Assurance parser inventory: %d %s", response.StatusCode, body)
+	}
+	assurance := decodeMap(t, body)
+
+	findParser := func(raw any, id string) map[string]any {
+		t.Helper()
+		items, ok := raw.([]any)
+		if !ok {
+			t.Fatalf("parser inventory has unexpected shape: %#v", raw)
+		}
+		for _, item := range items {
+			view, ok := item.(map[string]any)
+			if ok && view["id"] == id {
+				return view
+			}
+		}
+		t.Fatalf("parser %q missing from inventory: %#v", id, raw)
+		return nil
+	}
+
+	catalogView := findParser(catalog["parser_packs"], "shared-parser")
+	assuranceView := findParser(assurance["parsers"], "shared-parser")
+	for _, field := range []string{"state", "status"} {
+		if catalogView[field] != "published" || assuranceView[field] != catalogView[field] {
+			t.Fatalf("parser %s diverged across catalog and Assurance: catalog=%#v assurance=%#v", field, catalogView, assuranceView)
+		}
+	}
+	catalogRuntime, ok := catalogView["runtime_sync"].(map[string]any)
+	if !ok {
+		t.Fatalf("catalog runtime projection missing: %#v", catalogView)
+	}
+	assuranceRuntime, ok := assuranceView["runtime_sync"].(map[string]any)
+	if !ok {
+		t.Fatalf("Assurance runtime projection missing: %#v", assuranceView)
+	}
+	for _, field := range []string{"status", "catalog_id", "parser_id", "parser_version"} {
+		if assuranceRuntime[field] != catalogRuntime[field] {
+			t.Fatalf("runtime projection field %s diverged: catalog=%#v assurance=%#v", field, catalogRuntime, assuranceRuntime)
+		}
+	}
+}
+
 func TestLegacyRuntimeAndCatalogIDsReconcileOnlyWhenExplicit(t *testing.T) {
 	fixture := newAPIFixture(t)
 	pack, err := assuranceRuntimePack("runtime-mail", "1.0.0", "legacy-author", map[string]any{

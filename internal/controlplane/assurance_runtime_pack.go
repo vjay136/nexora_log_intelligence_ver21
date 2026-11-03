@@ -102,19 +102,12 @@ func assuranceRuntimePack(id, version, author string, definition map[string]any,
 		}
 		schema[name] = definition
 	}
-	service := ""
-	if len(cases) != 0 {
-		service = strings.TrimSpace(cases[0].Service)
-	}
-	if service == "" || service == "auto" {
-		service = "*"
-	}
 	pack := &parserpolicy.ParserPack{
 		ID: id, Version: version, Revision: 1, SourceType: "manual", Author: author,
 		ReviewState: parserpolicy.ReviewStateApproved, CreatedAt: time.Now().UTC(),
 		ResourceLimits: parserpolicy.DefaultResourceLimits(),
 		Rules: []parserpolicy.ParserRule{{
-			ID: id + "-rule", Name: id, Priority: 1, ServiceSelectors: []string{service},
+			ID: id + "-rule", Name: id, Priority: 1, ServiceSelectors: []string{"*"},
 			Stages:        []parserpolicy.Stage{{ID: id + "-regex", Name: "Assurance regex", Type: parserpolicy.StageTypeRegex, Config: map[string]any{"pattern": pattern, "groups": groups}, FailurePolicy: parserpolicy.FailurePolicyRejectRule}},
 			FailurePolicy: parserpolicy.FailurePolicyQuarantine, FieldSchema: schema,
 			ProjectionMode: parserpolicy.ProjectionModeAllowlist, AllowedFields: sortedKeys(schema), CountPolicy: parserpolicy.CountPolicyExactSource,

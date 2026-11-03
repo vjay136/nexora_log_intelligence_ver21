@@ -4,7 +4,7 @@ Nexora Log Intelligence Ver21 is a deterministic, review-gated log parsing and f
 
 > Install from the single versioned release archive in a fresh directory. Verify its external `.sha256` file and the complete internal `SHA256SUMS`; never mix loose files from different releases.
 
-Release `21.0.0-3` is the current Ver21 release. Public RPM aliases, archives, installers, uninstallers, AWS helpers, and Cloudflare helpers use Ver21-only filenames. The Go module path (`nexora.local/nli-v20`), RPM package names (`nli-client` and `nli-controller-agent`), systemd services, and state/configuration paths intentionally remain stable for in-place compatibility; the WebView payload is installed under `/usr/share/nli/webview_ver21`. See [All NLI features](All_NLI_features.md), [Ver21 Release 3 notes](docs/V21_R3_RELEASE_NOTES.md), and [Ver21 Release 3 test results](docs/V21_R3_TEST_RESULTS.md).
+Release `21.0.0-4` is the current Ver21 release. Public RPM aliases, archives, installers, uninstallers, AWS helpers, and Cloudflare helpers use Ver21-only filenames. The Go module path (`nexora.local/nli-v20`), RPM package names (`nli-client` and `nli-controller-agent`), systemd services, and state/configuration paths intentionally remain stable for in-place compatibility; the WebView payload is installed under `/usr/share/nli/webview_ver21`. See [All NLI features](All_NLI_features.md), [Ver21 Release 4 notes](docs/V21_R4_RELEASE_NOTES.md), [Ver21 Release 4 test results](docs/V21_R4_TEST_RESULTS.md), and the [R4 surgical diagnostics and verification runbook](docs/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md).
 
 ## V18 upgrade baseline architecture
 

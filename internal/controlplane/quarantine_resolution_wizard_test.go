@@ -144,11 +144,14 @@ func TestQuarantineResolutionWizardFixtureCompilesToExistingRuntime(t *testing.T
 	if err != nil {
 		t.Fatalf("compile wizard candidate through existing runtime: %v", err)
 	}
+	if selectors := pack.Rules[0].ServiceSelectors; len(selectors) != 1 || selectors[0] != "*" {
+		t.Fatalf("quarantine parser was pinned to its evidence source instead of recognizing the format globally: %v", selectors)
+	}
 	executor, err := parserpolicy.NewParserPackExecutor(pack)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := executor.Execute(&parserpolicy.ExecutionRequest{Input: raw, Service: "mail", NodeID: "node-1", Context: context.Background()})
+	result, err := executor.Execute(&parserpolicy.ExecutionRequest{Input: raw, Service: "previously-unseen-source", NodeID: "node-1", Context: context.Background()})
 	if err != nil {
 		t.Fatal(err)
 	}

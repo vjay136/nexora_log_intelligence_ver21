@@ -339,8 +339,60 @@ func TestCanonicalSyncSnapshotCarriesHeartbeatUPESMetrics(t *testing.T) {
 	if upes["status"] != "partial" || upes["clients_reporting"] != float64(1) || upes["unique_failure_signatures"] != float64(3) || upes["observed_failures"] != float64(9) || upes["discovery_queued"] != float64(4) || upes["discovery_dropped"] != float64(1) || upes["discovery_pending"] != float64(2) {
 		t.Fatalf("canonical UPES telemetry missing or fabricated: %+v", upes)
 	}
+	if upes["runtime_metrics_status"] != "partial" || upes["controller_records_status"] != "ready" || upes["waiting"] != float64(0) || upes["actionable_failures"] != float64(0) {
+		t.Fatalf("canonical UPES queue and runtime provenance diverged: %+v", upes)
+	}
 	clients, ok := upes["clients"].([]any)
 	if !ok || len(clients) != 2 || clients[0].(map[string]any)["status"] == clients[1].(map[string]any)["status"] {
 		t.Fatalf("reporting and unsupported clients were not distinguished: %+v", upes["clients"])
+	}
+}
+
+func TestReconcileUPESSnapshotUsesControllerQueueWithoutFabricatingRuntimeMetrics(t *testing.T) {
+	now := time.Date(2026, 11, 3, 9, 30, 0, 0, time.UTC)
+	runtimeState := map[string]any{
+		"status":            telemetry.FreshnessUnavailable,
+		"updated_at":        nil,
+		"clients_total":     2,
+		"clients_reporting": 0,
+	}
+	replayState := map[string]any{
+		"status":                    "ready",
+		"state":                     "queued",
+		"updated_at":                now,
+		"queued":                    2,
+		"reprocessing":              1,
+		"resolved":                  3,
+		"oldest_queued_age_seconds": float64(45),
+		"attempts_total":            7,
+	}
+
+	got := reconcileUPESSnapshot(runtimeState, replayState)
+	if got["status"] != "partial" || got["runtime_metrics_status"] != telemetry.FreshnessUnavailable || got["controller_records_status"] != "ready" {
+		t.Fatalf("UPES provenance/status mismatch: %+v", got)
+	}
+	if got["waiting"] != 2 || got["actionable_failures"] != 2 || got["reprocessing"] != 1 || got["resolved"] != 3 || got["attempts_total"] != 7 {
+		t.Fatalf("controller-owned queue counts were not projected consistently: %+v", got)
+	}
+	if got["updated_at"] != now || got["controller_records_updated_at"] != now {
+		t.Fatalf("controller queue freshness was not carried into UPES: %+v", got)
+	}
+	for _, key := range []string{"observed_failures", "unique_failure_signatures", "discovery_queued", "discovery_pending"} {
+		if _, exists := got[key]; exists {
+			t.Fatalf("optional client runtime counter %q was fabricated: %+v", key, got)
+		}
+	}
+}
+
+func TestReconcileUPESSnapshotKeepsControllerCollectionFailureExplicit(t *testing.T) {
+	runtimeState := map[string]any{"status": telemetry.FreshnessUnavailable, "clients_total": 0, "clients_reporting": 0}
+	replayState := map[string]any{"status": telemetry.FreshnessCollectionFailed, "reason": "quarantine queue collection failed"}
+
+	got := reconcileUPESSnapshot(runtimeState, replayState)
+	if got["status"] != telemetry.FreshnessUnavailable || got["controller_records_status"] != telemetry.FreshnessCollectionFailed || got["controller_records_reason"] != "quarantine queue collection failed" {
+		t.Fatalf("controller queue failure was obscured: %+v", got)
+	}
+	if _, exists := got["waiting"]; exists {
+		t.Fatalf("queue count was fabricated after collection failure: %+v", got)
 	}
 }

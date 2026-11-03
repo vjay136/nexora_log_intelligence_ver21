@@ -33,6 +33,7 @@ import (
 	"nexora.local/nli-v20/internal/agent"
 	"nexora.local/nli-v20/internal/canonicaljson"
 	"nexora.local/nli-v20/internal/engine"
+	"nexora.local/nli-v20/internal/familyprofile"
 	"nexora.local/nli-v20/internal/protocol"
 	"nexora.local/nli-v20/internal/registry"
 	"nexora.local/nli-v20/internal/rollout"
@@ -197,10 +198,50 @@ type Executor interface {
 	UpgradePackage(context.Context, string) error
 }
 
+// RuntimeReadinessVerifier is optional so test and embedded executors retain
+// their small contract. Production uses it to avoid acknowledging a parser
+// generation until the restarted agent can actually serve that generation.
+type RuntimeReadinessVerifier interface {
+	VerifyAgentRuntime(context.Context, string) error
+}
+
 type SystemExecutor struct{}
 
 func (SystemExecutor) RestartAgent(ctx context.Context) error {
 	return exec.CommandContext(ctx, "/usr/bin/systemctl", "restart", "nli-agent.service").Run()
+}
+
+func (SystemExecutor) VerifyAgentRuntime(ctx context.Context, metricsURL string) error {
+	verifyCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	client := &http.Client{Timeout: 2 * time.Second}
+	var lastErr error
+	for {
+		if err := exec.CommandContext(verifyCtx, "/usr/bin/systemctl", "is-active", "--quiet", "nli-agent.service").Run(); err != nil {
+			lastErr = fmt.Errorf("nli-agent is not active: %w", err)
+		} else {
+			req, err := http.NewRequestWithContext(verifyCtx, http.MethodGet, metricsURL, nil)
+			if err != nil {
+				return err
+			}
+			response, err := client.Do(req)
+			if err == nil {
+				_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+				_ = response.Body.Close()
+				if response.StatusCode >= 200 && response.StatusCode < 300 {
+					return nil
+				}
+				lastErr = fmt.Errorf("agent metrics readiness returned HTTP %d", response.StatusCode)
+			} else {
+				lastErr = fmt.Errorf("agent metrics readiness: %w", err)
+			}
+		}
+		select {
+		case <-verifyCtx.Done():
+			return fmt.Errorf("agent runtime did not become ready: %w", lastErr)
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 func (SystemExecutor) Replay(ctx context.Context, path string, recordIDs []string) (string, error) {
 	args := []string{"replay", "--config", "/etc/nli/nli.json", "--quarantine", path}
@@ -656,6 +697,18 @@ func mergeTopLevelConfig(current, patch json.RawMessage) ([]byte, error) {
 	return append(merged, '\n'), nil
 }
 
+func (c *Client) restartAndVerifyAgent(ctx context.Context) error {
+	if err := c.executor.RestartAgent(ctx); err != nil {
+		return err
+	}
+	if verifier, ok := c.executor.(RuntimeReadinessVerifier); ok {
+		if err := verifier.VerifyAgentRuntime(ctx, c.cfg.MetricsURL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *Client) applyParsers(ctx context.Context, payload json.RawMessage) (string, error) {
 	var wrapper struct {
 		Parsers     []*registry.ParserDef `json:"parsers"`
@@ -711,11 +764,15 @@ func (c *Client) applyParsers(ctx context.Context, payload json.RawMessage) (str
 		_ = os.Rename(backup, c.cfg.ParserDir)
 		return "", err
 	}
-	if err := c.executor.RestartAgent(ctx); err != nil {
+	if err := c.restartAndVerifyAgent(ctx); err != nil {
 		_ = os.RemoveAll(c.cfg.ParserDir)
 		_ = os.Rename(backup, c.cfg.ParserDir)
-		return "", fmt.Errorf("restart failed; parser set restored: %w", err)
+		if rollbackErr := c.restartAndVerifyAgent(ctx); rollbackErr != nil {
+			return "", fmt.Errorf("new parser generation failed readiness (%v); prior parser generation restored but failed readiness: %w", err, rollbackErr)
+		}
+		return "", fmt.Errorf("new parser generation failed readiness; prior parser generation restored and verified: %w", err)
 	}
+	_ = os.RemoveAll(backup)
 	return fmt.Sprintf("%d parsers validated and synchronized", len(wrapper.Parsers)), nil
 }
 
@@ -863,10 +920,20 @@ func (c *Client) applyAssetBundle(ctx context.Context, data []byte) (string, err
 	// share one runtime directory. Track only the controller-managed IDs so an
 	// offboard/rollback can remove a retired custom parser without deleting any
 	// built-in parser. The whole change remains inside the existing atomic swap.
-	if err := reconcileManagedParserFiles(c.cfg.ParserDir, parserStaging, managedParserIDs); err != nil {
+	if err := reconcileManagedParserFiles(c.cfg.ParserDir, parserStaging, c.cfg.AssetDir, managedParserIDs); err != nil {
 		_ = os.RemoveAll(staging)
 		_ = os.RemoveAll(parserStaging)
 		return "", err
+	}
+	// Do not acknowledge a bundle merely because every parser pack is valid JSON.
+	// Resolve the complete staged generation exactly as the agent will load it:
+	// compile every managed rule and execute its reviewed regression evidence.
+	// This preserves the current live generation when one new parser is unusable
+	// and prevents the controller from reporting a false Published/Active state.
+	if _, err := familyprofile.Resolve(parserStaging); err != nil {
+		_ = os.RemoveAll(staging)
+		_ = os.RemoveAll(parserStaging)
+		return "", fmt.Errorf("published parser generation failed strict runtime preflight: %w", err)
 	}
 	if err := writeSynchronizedAsset(filepath.Join(staging, "bundle.json"), data); err != nil {
 		_ = os.RemoveAll(staging)
@@ -901,12 +968,15 @@ func (c *Client) applyAssetBundle(ctx context.Context, data []byte) (string, err
 		_ = os.Rename(backup, c.cfg.AssetDir)
 		return "", err
 	}
-	if err := c.executor.RestartAgent(ctx); err != nil {
+	if err := c.restartAndVerifyAgent(ctx); err != nil {
 		_ = os.RemoveAll(c.cfg.AssetDir)
 		_ = os.RemoveAll(c.cfg.ParserDir)
 		_ = os.Rename(parserBackup, c.cfg.ParserDir)
 		_ = os.Rename(backup, c.cfg.AssetDir)
-		return "", fmt.Errorf("restart failed; parser assets and runtime packs restored: %w", err)
+		if rollbackErr := c.restartAndVerifyAgent(ctx); rollbackErr != nil {
+			return "", fmt.Errorf("new parser asset generation failed readiness (%v); prior parser assets and runtime packs restored but failed readiness: %w", err, rollbackErr)
+		}
+		return "", fmt.Errorf("new parser asset generation failed readiness; prior parser assets and runtime packs restored and verified: %w", err)
 	}
 	_ = os.RemoveAll(backup)
 	_ = os.RemoveAll(parserBackup)
@@ -915,11 +985,22 @@ func (c *Client) applyAssetBundle(ctx context.Context, data []byte) (string, err
 
 const managedParserManifest = ".nli-managed-parsers.json"
 
-func reconcileManagedParserFiles(currentDir, stagingDir string, desired map[string]bool) error {
+func reconcileManagedParserFiles(currentDir, stagingDir, priorAssetDir string, desired map[string]bool) error {
 	previous := []string{}
 	if data, err := os.ReadFile(filepath.Join(currentDir, managedParserManifest)); err == nil {
 		if err := json.Unmarshal(data, &previous); err != nil {
 			return fmt.Errorf("decode managed parser manifest: %w", err)
+		}
+	} else if os.IsNotExist(err) {
+		// Releases before the managed-parser manifest still persisted the exact
+		// controller-owned parser pack inventory in the canonical asset bundle.
+		// Infer ownership only from that verified source so a first R4 apply can
+		// retire stale controller packs without deleting RPM or operator-owned
+		// loose parser files.
+		var inferErr error
+		previous, inferErr = managedParserIDsFromPreviousBundle(priorAssetDir)
+		if inferErr != nil {
+			return inferErr
 		}
 	} else if !os.IsNotExist(err) {
 		return err
@@ -944,6 +1025,45 @@ func reconcileManagedParserFiles(currentDir, stagingDir string, desired map[stri
 		return err
 	}
 	return writeSynchronizedAsset(filepath.Join(stagingDir, managedParserManifest), manifest)
+}
+
+func managedParserIDsFromPreviousBundle(assetDir string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(assetDir, "bundle.json"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 || len(data) > 16<<20 {
+		return nil, errors.New("previous parser asset bundle exceeds 16 MiB bound")
+	}
+	var bundle synchronizedAssetBundle
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		return nil, fmt.Errorf("decode previous parser asset bundle: %w", err)
+	}
+	if bundle.SchemaVersion != 1 || len(bundle.Assets) > 10000 {
+		return nil, errors.New("previous parser asset bundle has unsupported schema or size")
+	}
+	computed, err := synchronizedBundleHash(bundle)
+	if err != nil {
+		return nil, fmt.Errorf("verify previous parser asset bundle: %w", err)
+	}
+	if computed != bundle.BundleHash {
+		return nil, errors.New("previous parser asset bundle hash verification failed")
+	}
+	ids := make([]string, 0)
+	for _, asset := range bundle.Assets {
+		if asset.AssetClass != "parser-packs" {
+			continue
+		}
+		if !safeSynchronizedAssetID(asset.AssetID) {
+			return nil, fmt.Errorf("previous parser asset bundle contains unsafe parser ID %q", asset.AssetID)
+		}
+		ids = append(ids, asset.AssetID)
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 func copyParserDirectory(source, destination string) error {
@@ -1372,8 +1492,25 @@ func readHostMetrics() (hostMetrics, bool) {
 }
 
 func parserInventory(dir string) []protocol.ParserInventory {
+	byID := map[string]protocol.ParserInventory{}
+	profiles, _, _ := familyprofile.ResolveResilient(dir)
+	for _, profile := range profiles {
+		if !profile.Managed || profile.Pack == nil {
+			continue
+		}
+		byID[profile.Pack.ID] = protocol.ParserInventory{
+			ID:          profile.Pack.ID,
+			Version:     profile.Pack.Revision,
+			Description: profile.Name,
+			Source:      "controller-managed",
+			TestStatus:  "passed",
+		}
+	}
+
+	// Preserve inventory compatibility for the legacy ParserDef format. Managed
+	// ParserPacks above take precedence because they are the executable runtime
+	// generation distributed by Fleet Sync.
 	entries, _ := os.ReadDir(dir)
-	out := make([]protocol.ParserInventory, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -1384,10 +1521,21 @@ func parserInventory(dir string) []protocol.ParserInventory {
 		}
 		var parser registry.ParserDef
 		if json.Unmarshal(data, &parser) == nil && registry.Validate(&parser) == nil {
-			out = append(out, protocol.ParserInventory{ID: parser.ID, Version: parser.Version, Description: parser.Description, Source: "managed", TestStatus: "passed"})
+			if _, exists := byID[parser.ID]; !exists {
+				byID[parser.ID] = protocol.ParserInventory{ID: parser.ID, Version: parser.Version, Description: parser.Description, Source: "managed", TestStatus: "passed"}
+			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	out := make([]protocol.ParserInventory, 0, len(byID))
+	for _, parser := range byID {
+		out = append(out, parser)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ID == out[j].ID {
+			return out[i].Version < out[j].Version
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out
 }
 

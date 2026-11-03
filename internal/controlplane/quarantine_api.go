@@ -64,6 +64,18 @@ type quarantineRecord struct {
 	ExcludeReason  string    `json:"exclude_reason,omitempty"`
 }
 
+// A quarantine row is actionable in the repair workflow only while it is in
+// an active state and the exact retained evidence is available. Metadata-only
+// rows remain visible, but cannot be inspected or used to build a parser.
+func isActionableQuarantineRecord(record quarantineRecord) bool {
+	switch record.Status {
+	case "waiting", "replay_failed":
+		return record.RawAvailable
+	default:
+		return false
+	}
+}
+
 type sealedQuarantineRaw struct {
 	Nonce      string    `json:"nonce"`
 	Ciphertext string    `json:"ciphertext"`
@@ -411,11 +423,16 @@ func (s *Server) handleQuarantineSummary(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "quarantine summary unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	counts := map[string]int{"waiting": 0, "actionable": 0, "reprocessing": 0, "resolved": 0, "raw_available": 0, "total": len(records)}
+	counts := map[string]int{"waiting": 0, "actionable": 0, "awaiting_evidence": 0, "reprocessing": 0, "resolved": 0, "raw_available": 0, "total": len(records)}
 	for _, item := range records {
 		switch item.Status {
 		case "waiting", "replay_failed":
 			counts["waiting"]++
+			if isActionableQuarantineRecord(item) {
+				counts["actionable"]++
+			} else {
+				counts["awaiting_evidence"]++
+			}
 		case "reprocessing":
 			counts["reprocessing"]++
 		case "resolved":
@@ -425,7 +442,6 @@ func (s *Server) handleQuarantineSummary(w http.ResponseWriter, r *http.Request)
 			counts["raw_available"]++
 		}
 	}
-	counts["actionable"] = counts["waiting"]
 	counts["raw_retention_enabled"] = 0
 	if s.quarantine.enabled {
 		counts["raw_retention_enabled"] = 1

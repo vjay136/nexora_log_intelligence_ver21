@@ -33,6 +33,17 @@ func putNavigationCountDocument(t *testing.T, store metastore.Store, collection,
 	}
 }
 
+func putNavigationQuarantineRecord(t *testing.T, store metastore.Store, id, state string, rawAvailable bool) {
+	t.Helper()
+	payload, err := json.Marshal(quarantineRecord{ID: id, Status: state, RawAvailable: rawAvailable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Put(context.Background(), metastore.Document{Collection: quarantineRecordsCollection, ID: id, State: state, Payload: payload, CreatedBy: "test"}); err != nil {
+		t.Fatalf("put quarantine record %s: %v", id, err)
+	}
+}
+
 func navigationPageCount(t *testing.T, body []byte, page string) float64 {
 	t.Helper()
 	root := decodeMap(t, body)
@@ -56,12 +67,13 @@ func TestNavigationCountsContainOnlyCurrentOperatorActions(t *testing.T) {
 	putNavigationCountDocument(t, f.server.metadata, "rollout-proposals", "rollout-complete", "approved")
 	putNavigationCountDocument(t, f.server.metadata, "assurance-runs", "run-action", "queued")
 	putNavigationCountDocument(t, f.server.metadata, "assurance-runs", "run-complete", "passed")
-	putNavigationCountDocument(t, f.server.quarantine.store, quarantineRecordsCollection, "quarantine-action", "waiting")
-	putNavigationCountDocument(t, f.server.quarantine.store, quarantineRecordsCollection, "quarantine-complete", "resolved")
-	putNavigationCountDocument(t, f.server.quarantine.store, quarantineRecordsCollection, "quarantine-replay-failed", "replay_failed")
-	putNavigationCountDocument(t, f.server.quarantine.store, quarantineRecordsCollection, "quarantine-excluded", "excluded")
-	putNavigationCountDocument(t, f.server.quarantine.store, quarantineRecordsCollection, "quarantine-dead-letter", "dead_letter")
-	putNavigationCountDocument(t, f.server.quarantine.store, quarantineRecordsCollection, "quarantine-manual", "manual_attention")
+	putNavigationQuarantineRecord(t, f.server.quarantine.store, "quarantine-action", "waiting", true)
+	putNavigationQuarantineRecord(t, f.server.quarantine.store, "quarantine-awaiting-evidence", "waiting", false)
+	putNavigationQuarantineRecord(t, f.server.quarantine.store, "quarantine-complete", "resolved", false)
+	putNavigationQuarantineRecord(t, f.server.quarantine.store, "quarantine-replay-failed", "replay_failed", true)
+	putNavigationQuarantineRecord(t, f.server.quarantine.store, "quarantine-excluded", "excluded", false)
+	putNavigationQuarantineRecord(t, f.server.quarantine.store, "quarantine-dead-letter", "dead_letter", false)
+	putNavigationQuarantineRecord(t, f.server.quarantine.store, "quarantine-manual", "manual_attention", false)
 	if _, err := f.server.quarantine.store.Put(context.Background(), metastore.Document{Collection: quarantineRecordsCollection, ID: "quarantine-stale-state", State: "waiting", Payload: []byte(`{"status":"excluded"}`), CreatedBy: "test"}); err != nil {
 		t.Fatal(err)
 	}
@@ -83,8 +95,8 @@ func TestNavigationCountsContainOnlyCurrentOperatorActions(t *testing.T) {
 	putNavigationCountDocument(t, f.server.metadata, "input-paths", "input-action", "active")
 	putNavigationCountDocument(t, f.server.metadata, "rollout-proposals", "rollout-action", "approved")
 	putNavigationCountDocument(t, f.server.metadata, "assurance-runs", "run-action", "passed")
-	putNavigationCountDocument(t, f.server.quarantine.store, quarantineRecordsCollection, "quarantine-action", "resolved")
-	putNavigationCountDocument(t, f.server.quarantine.store, quarantineRecordsCollection, "quarantine-replay-failed", "excluded")
+	putNavigationQuarantineRecord(t, f.server.quarantine.store, "quarantine-action", "resolved", true)
+	putNavigationQuarantineRecord(t, f.server.quarantine.store, "quarantine-replay-failed", "excluded", true)
 
 	response, body = f.request(http.MethodGet, "/api/v1/navigation/counts", nil)
 	if response.StatusCode != http.StatusOK {

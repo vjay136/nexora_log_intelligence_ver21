@@ -7,7 +7,6 @@ import (
 	"log"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"nexora.local/nli-v20/internal/engine"
@@ -16,7 +15,14 @@ import (
 	"nexora.local/nli-v20/telemetry"
 )
 
-const maxProfileExecutions = 8
+const (
+	// ResolveResilient already caps the controller-managed generation at
+	// MaxManagedPacks. Keep enough additional capacity for the reviewed embedded
+	// families and the SMTP compatibility profile so a valid managed parser is
+	// never discarded merely because more than eight parser packs are active.
+	maxProfileExecutions       = familyprofile.MaxManagedPacks + 16
+	unclassifiedRuntimeService = "__unclassified__"
+)
 
 var (
 	nativeFamilyHeader = regexp.MustCompile(`^\s*\d{8}\s+\d{9}[+-]\d{4}\s+(\S+)\s+(\S+)\s+`)
@@ -95,7 +101,7 @@ func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engi
 	}
 	candidates := adapter.candidates(service)
 	if service == "smtp" || service == "smtp-in" || service == "smtp-out" {
-		candidates = append([]profileCandidate{{profile: adapter.smtpCompatibility, specificity: 1}}, candidates...)
+		candidates = append([]profileCandidate{{profile: adapter.smtpCompatibility, specificity: 0}}, candidates...)
 	}
 	if len(candidates) == 0 {
 		return &V5ParseResult{Success: false}
@@ -108,11 +114,14 @@ func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engi
 		candidates = candidates[:maxProfileExecutions]
 	}
 
-	// Candidate packs are immutable after activation. Execute the small, bounded
-	// candidate set concurrently, but store results by original index so the
-	// telemetry attempt order and tie-breaking remain identical to serial runs.
-	executions := make([]profileExecution, len(candidates))
-	execute := func(index int, candidate profileCandidate) {
+	// Execute candidates in selector tiers: exact, compatible family, then
+	// wildcard recovery. Parser executors are intentionally evaluated in stable
+	// order because some reviewed parsing stages reuse mutable scratch objects;
+	// concurrent evaluation made a selected parser's field types nondeterministic.
+	// Once a more-specific tier succeeds, less-specific tiers are never evaluated,
+	// preserving both the fast path and exact-parser authority.
+	executions := make([]profileExecution, 0, len(candidates))
+	execute := func(candidate profileCandidate) profileExecution {
 		executionService := service
 		if candidate.profile.Pack.ID == adapter.smtpCompatibility.Pack.ID {
 			executionService = "smtp"
@@ -125,20 +134,23 @@ func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engi
 				"file":     source.File,
 			},
 		})
-		executions[index] = profileExecution{candidate: candidate, result: result, err: err}
+		return profileExecution{candidate: candidate, result: result, err: err}
 	}
-	if len(candidates) == 1 {
-		execute(0, candidates[0])
-	} else {
-		var group sync.WaitGroup
-		for index, candidate := range candidates {
-			group.Add(1)
-			go func(index int, candidate profileCandidate) {
-				defer group.Done()
-				execute(index, candidate)
-			}(index, candidate)
+	currentSpecificity := candidates[0].specificity
+	tierSucceeded := false
+	for _, candidate := range candidates {
+		if candidate.specificity != currentSpecificity {
+			if tierSucceeded {
+				break
+			}
+			currentSpecificity = candidate.specificity
+			tierSucceeded = false
 		}
-		group.Wait()
+		execution := execute(candidate)
+		executions = append(executions, execution)
+		if successfulExecution(execution.result, execution.err) {
+			tierSucceeded = true
+		}
 	}
 	selectedIndex := -1
 	for index := range executions {
@@ -147,9 +159,6 @@ func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engi
 		}
 	}
 
-	if limitExceeded {
-		selectedIndex = -1
-	}
 	metadata := adapter.aggregateTelemetry(trimmed, source.Hostname, executions, selectedIndex, started)
 	if limitExceeded {
 		metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "pack_attempt_limit")
@@ -174,20 +183,17 @@ func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engi
 }
 
 func (adapter *ParserPackAdapter) candidates(service string) []profileCandidate {
-	candidates := make([]profileCandidate, 0, len(adapter.profiles))
-	bestSpecificity := 3
+	tiers := [3][]profileCandidate{}
 	for _, profile := range adapter.profiles {
 		specificity, eligible := profileSpecificity(profile.Pack, service)
 		if !eligible {
 			continue
 		}
-		if specificity < bestSpecificity {
-			bestSpecificity = specificity
-			candidates = candidates[:0]
-		}
-		if specificity == bestSpecificity {
-			candidates = append(candidates, profileCandidate{profile: profile, specificity: specificity})
-		}
+		tiers[specificity] = append(tiers[specificity], profileCandidate{profile: profile, specificity: specificity})
+	}
+	candidates := make([]profileCandidate, 0, len(adapter.profiles))
+	for specificity := range tiers {
+		candidates = append(candidates, tiers[specificity]...)
 	}
 	return candidates
 }
@@ -217,14 +223,17 @@ func successfulExecution(result *parserpolicy.ExecutionResult, err error) bool {
 func betterExecution(candidate, current profileExecution) bool {
 	candidateTelemetry := candidate.result.ParseTelemetry
 	currentTelemetry := current.result.ParseTelemetry
+	// A successful exact or family parser must remain authoritative over a
+	// successful wildcard recovery parser. Field count only breaks ties inside
+	// the same selector tier.
+	if candidate.candidate.specificity != current.candidate.specificity {
+		return candidate.candidate.specificity < current.candidate.specificity
+	}
 	if candidateTelemetry.SourceFieldCount != currentTelemetry.SourceFieldCount {
 		return candidateTelemetry.SourceFieldCount > currentTelemetry.SourceFieldCount
 	}
 	if candidateTelemetry.OutputFieldCount != currentTelemetry.OutputFieldCount {
 		return candidateTelemetry.OutputFieldCount > currentTelemetry.OutputFieldCount
-	}
-	if candidate.candidate.specificity != current.candidate.specificity {
-		return candidate.candidate.specificity < current.candidate.specificity
 	}
 	if candidate.candidate.profile.Order != current.candidate.profile.Order {
 		return candidate.candidate.profile.Order < current.candidate.profile.Order
@@ -302,6 +311,11 @@ func runtimeService(configured, input string) string {
 	inferred := inferService(input)
 	switch configured {
 	case "", "auto", "generic", "nli":
+		if inferred == "" {
+			// Preserve a concrete routing key so globally approved wildcard packs
+			// can evaluate unstructured inputs that have no built-in family header.
+			return unclassifiedRuntimeService
+		}
 		return inferred
 	case "smtp":
 		if inferred == "smtp-in" || inferred == "smtp-out" {

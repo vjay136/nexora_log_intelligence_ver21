@@ -47,6 +47,13 @@ func TestCanonicalReplayAndReleaseReadinessUsePersistedEvidence(t *testing.T) {
 	if replay["queued"] != 1 || replay["attempts_total"] != 2 || replay["state"] != "queued" || replay["oldest_queued_age_seconds"].(float64) < 70 {
 		t.Fatalf("replay metrics not derived from queue record: %#v", replay)
 	}
+	upes := subsystems["upes"].(map[string]any)
+	if upes["waiting"] != 1 || upes["actionable_failures"] != 1 || upes["controller_records_status"] != "ready" || upes["runtime_metrics_status"] != telemetry.FreshnessUnavailable {
+		t.Fatalf("UPES queue projection not derived from the same record set: %#v", upes)
+	}
+	if _, fabricated := upes["observed_failures"]; fabricated {
+		t.Fatalf("UPES projection fabricated an unreported client runtime counter: %#v", upes)
+	}
 	release := subsystems["release_readiness"].(map[string]any)
 	if release["managed_nodes"] != 1 || release["release_drifted_nodes"] != 1 || release["state"] != "drifted" || release["status"] != "degraded" {
 		t.Fatalf("release drift evidence not reflected: %#v", release)

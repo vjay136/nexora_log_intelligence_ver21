@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"nexora.local/nli-v20/internal/engine"
 	"nexora.local/nli-v20/internal/familyprofile"
@@ -333,7 +334,7 @@ func TestMultipleApprovedPackSelectionAndTelemetryAreDeterministic(t *testing.T)
 	}
 }
 
-func TestGlobalPackAttemptLimitFailsClosed(t *testing.T) {
+func TestManagedPackCapacityPreservesSuccessfulResult(t *testing.T) {
 	profiles, err := familyprofile.Builtins()
 	if err != nil {
 		t.Fatal(err)
@@ -384,12 +385,74 @@ func TestGlobalPackAttemptLimitFailsClosed(t *testing.T) {
 	}
 	input := "20250812 130034198+0100 mail001 smtp 3609 0 140290550523648 Note;SmtpServerConnect(2001/3) id=6864BD5E047384B0:host=11.22.33.44:connection_count=1:local_port=2525"
 	result := adapter.TryParseV5Production(input, engine.Source{Service: "smtp", Hostname: "runtime-node"})
-	if result.Success || !result.Quarantined || result.EventPayload != nil || result.ParseTelemetry == nil {
-		t.Fatalf("attempt limit did not fail closed: %#v", result)
+	if !result.Success || result.Quarantined || result.EventPayload == nil || result.ParseTelemetry == nil {
+		t.Fatalf("managed capacity discarded a valid parser result: %#v", result)
 	}
-	if result.ParseTelemetry.AttemptCount > maxProfileExecutions*familyprofile.MaxAttemptsPerPack ||
-		!containsString(result.ParseTelemetry.ErrorCodes, "pack_attempt_limit") {
+	if result.ParseTelemetry.AttemptCount <= 8 ||
+		result.ParseTelemetry.AttemptCount > maxProfileExecutions*familyprofile.MaxAttemptsPerPack ||
+		containsString(result.ParseTelemetry.ErrorCodes, "pack_attempt_limit") {
 		t.Fatalf("attempt bound telemetry is incomplete: %+v", result.ParseTelemetry)
+	}
+}
+
+func TestWildcardManagedParserRunsForEveryEligibleRuntimeSource(t *testing.T) {
+	directory := t.TempDir()
+	writeWildcardRuntimePack(t, directory, "custom-global")
+	adapter, err := NewParserPackAdapterFromDirectory(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sourceService := range []string{"imap", "auto"} {
+		t.Run(sourceService, func(t *testing.T) {
+			result := adapter.TryParseV5Production("status=ok", engine.Source{
+				Service: sourceService, Hostname: "runtime-node", File: "/var/log/new-format.log",
+			})
+			if !result.Success || result.Quarantined || result.EventPayload == nil || result.ParseTelemetry == nil {
+				t.Fatalf("wildcard managed parser did not run for %q: %#v", sourceService, result)
+			}
+			if result.ParseTelemetry.ParserID != "custom-global/custom-global-rule" {
+				t.Fatalf("selected parser = %q, want custom-global runtime parser", result.ParseTelemetry.ParserID)
+			}
+			if value, ok := result.EventPayload.Get("status"); !ok || value != "ok" {
+				t.Fatalf("normalized status=%#v present=%t", value, ok)
+			}
+		})
+	}
+}
+
+func writeWildcardRuntimePack(t *testing.T, directory, id string) {
+	t.Helper()
+	pack := &parserpolicy.ParserPack{
+		ID: id, Version: "1.0.0", Revision: 1, SourceType: "manual", Author: "operator",
+		ReviewState: parserpolicy.ReviewStateApproved, CreatedAt: time.Now().UTC(),
+		ResourceLimits: parserpolicy.DefaultResourceLimits(),
+		Rules: []parserpolicy.ParserRule{{
+			ID: id + "-rule", Name: "Wildcard runtime", Priority: 1, ServiceSelectors: []string{"*"},
+			Stages: []parserpolicy.Stage{{
+				ID: "regex", Name: "Regex", Type: parserpolicy.StageTypeRegex,
+				Config:        map[string]any{"pattern": `status=(?P<status>\w+)`, "groups": map[string]string{"status": "status"}},
+				FailurePolicy: parserpolicy.FailurePolicyRejectRule,
+			}},
+			FailurePolicy:  parserpolicy.FailurePolicyQuarantine,
+			FieldSchema:    map[string]parserpolicy.FieldDef{"status": {Type: parserpolicy.FieldTypeString}},
+			ProjectionMode: parserpolicy.ProjectionModeAllowlist, AllowedFields: []string{"status"},
+			CountPolicy: parserpolicy.CountPolicyExactSource,
+		}},
+		RegressionCases: []parserpolicy.RegressionCase{{
+			Name: "wildcard-runtime-regression", Input: "status=ok", Service: "mail", SourceType: "file",
+			ExpectedPayload: map[string]any{"status": "ok"}, ExpectedParser: id + "/" + id + "-rule", ExpectedRoute: "normal",
+		}},
+	}
+	pack.ResourceLimits.MaxAttempts = 1
+	if err := parserpolicy.SealParserPack(pack); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, id+".parserpack.json"), encoded, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -180,7 +180,8 @@ func (s *Server) subsystemSyncSnapshot(ctx context.Context, snapshot telemetry.S
 	delivery := map[string]any{"status": "ready", "updated_at": snapshot.GeneratedAt, "acknowledgements_by_destination": storeStats["delivery_acks"], "retry_count": nil, "backlog": nil, "latency_ms": nil, "retry_backlog_latency_status": telemetry.FreshnessNotInstrumented}
 	replay := s.replayQueueSnapshot(ctx, snapshot.GeneratedAt)
 	release := s.releaseReadinessSnapshot(ctx, snapshot.GeneratedAt)
-	return map[string]any{"nhle": nhle, "napi": napi, "nal": nal, "nursf": nursf, "delivery": delivery, "replay": replay, "release_readiness": release, "upes": upesSyncSnapshot(s.fleet.All(), snapshot.GeneratedAt)}
+	upes := reconcileUPESSnapshot(upesSyncSnapshot(s.fleet.All(), snapshot.GeneratedAt), replay)
+	return map[string]any{"nhle": nhle, "napi": napi, "nal": nal, "nursf": nursf, "delivery": delivery, "replay": replay, "release_readiness": release, "upes": upes}
 }
 
 func upesSyncSnapshot(nodes []*fleet.Node, now time.Time) map[string]any {
@@ -245,6 +246,49 @@ func upesSyncSnapshot(nodes []*fleet.Node, now time.Time) map[string]any {
 		default:
 			result["status"] = telemetry.FreshnessLive
 		}
+	}
+	return result
+}
+
+// reconcileUPESSnapshot joins the client-reported UPES runtime counters with
+// the controller-owned quarantine queue in the same canonical snapshot
+// revision. Runtime counters remain absent when clients do not publish them;
+// actionable queue counts are never inferred from those optional counters.
+func reconcileUPESSnapshot(runtimeState, replayState map[string]any) map[string]any {
+	result := make(map[string]any, len(runtimeState)+9)
+	for key, value := range runtimeState {
+		result[key] = value
+	}
+
+	runtimeStatus, _ := runtimeState["status"].(string)
+	replayStatus, _ := replayState["status"].(string)
+	result["runtime_metrics_status"] = runtimeStatus
+	result["controller_records_status"] = replayStatus
+	if updatedAt, ok := replayState["updated_at"]; ok {
+		result["controller_records_updated_at"] = updatedAt
+	}
+
+	if replayStatus != "ready" {
+		if runtimeStatus != telemetry.FreshnessUnavailable && runtimeStatus != telemetry.FreshnessCollectionFailed {
+			result["status"] = "partial"
+		}
+		if reason, ok := replayState["reason"]; ok {
+			result["controller_records_reason"] = reason
+		}
+		return result
+	}
+
+	for _, key := range []string{"queued", "reprocessing", "resolved", "oldest_queued_age_seconds", "attempts_total", "latest_attempt_at", "state"} {
+		if value, ok := replayState[key]; ok {
+			result[key] = value
+		}
+	}
+	result["waiting"] = replayState["queued"]
+	result["actionable_failures"] = replayState["queued"]
+	if runtimeStatus == telemetry.FreshnessUnavailable || runtimeStatus == telemetry.FreshnessCollectionFailed || runtimeStatus == "" {
+		result["status"] = "partial"
+		result["updated_at"] = replayState["updated_at"]
+		result["reason"] = "controller failure queue is measured; client UPES runtime counters are not reported"
 	}
 	return result
 }

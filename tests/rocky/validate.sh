@@ -27,8 +27,8 @@ if [[ -n $previous_client && -n $previous_controller ]]; then
   previous_controller_version=$(rpm -qp --qf '%{VERSION}' "$previous_controller")
   current_client_version=$(rpm -qp --qf '%{VERSION}' "$client")
   current_controller_version=$(rpm -qp --qf '%{VERSION}' "$controller")
-  [[ $previous_client_version == 21.0.0 ]] || fail "previous client must be the genuine Ver21 R2 RPM"
-  [[ $previous_controller_version == 21.0.0 ]] || fail "previous controller must be the genuine Ver21 R2 RPM"
+  [[ $previous_client_version == 21.0.0 ]] || fail "previous client must be the genuine Ver21 R3 RPM"
+  [[ $previous_controller_version == 21.0.0 ]] || fail "previous controller must be the genuine Ver21 R3 RPM"
   [[ $current_client_version == 21.0.0 ]] || fail "release client must be Ver21"
   [[ $current_controller_version == 21.0.0 ]] || fail "release controller must be Ver21"
   previous_client_nevra=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$previous_client")
@@ -41,8 +41,8 @@ if [[ -n $previous_client && -n $previous_controller ]]; then
   previous_controller_release=$(rpm -qp --qf '%{RELEASE}' "$previous_controller")
   current_client_release=$(rpm -qp --qf '%{RELEASE}' "$client")
   current_controller_release=$(rpm -qp --qf '%{RELEASE}' "$controller")
-  [[ ${previous_client_release%%.*} == 2 && ${current_client_release%%.*} == 3 ]] || fail "client lifecycle baseline is not Ver21 R2 to Ver21 R3"
-  [[ ${previous_controller_release%%.*} == 2 && ${current_controller_release%%.*} == 3 ]] || fail "controller lifecycle baseline is not Ver21 R2 to Ver21 R3"
+  [[ ${previous_client_release%%.*} == 3 && ${current_client_release%%.*} == 4 ]] || fail "client lifecycle baseline is not Ver21 R3 to Ver21 R4"
+  [[ ${previous_controller_release%%.*} == 3 && ${current_controller_release%%.*} == 4 ]] || fail "controller lifecycle baseline is not Ver21 R3 to Ver21 R4"
   dnf -y install "$previous_client" "$previous_controller"
   install -d -o nli -g nli -m 0750 /var/lib/nli /var/lib/nli-controller
   echo pre-upgrade-client >/var/lib/nli/release-test.marker

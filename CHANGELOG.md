@@ -1,5 +1,10 @@
 # Changelog
 
+## [21.0.0-4] - 2026-11-03
+- Advance the Ver21 release lifecycle to R4 and use the published R3 packages as the upgrade and rollback baseline.
+- Package the R4 release notes, pending test-results template, and surgical diagnostics runbook in both RPMs and release artifacts.
+- Retain the Go module path, RPM package names, systemd units, configuration paths, and durable state paths for in-place compatibility.
+
 ## [21.0.0-3] - 2026-11-03
 - Publish Ver21 Release 3 notes and test commands with the package and release evidence.
 - Document the `nli.sync.v1` schema, bounded latest-state behavior, and existing 1,000-node correctness test without presenting it as production capacity qualification.

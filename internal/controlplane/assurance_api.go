@@ -814,7 +814,11 @@ func (s *Server) handleAssuranceParsers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if r.Method == http.MethodGet {
-		items, err := listDocuments(r, s.metadata, "parser-packs")
+		// Parser state is projected from the same validated runtime contract used
+		// by the catalog and fleet bundle. Reading raw storage documents here can
+		// otherwise leave Assurance showing a draft/active record while Parser
+		// Management correctly reports the same parser as published or blocked.
+		items, err := listParserDocuments(r, s.metadata)
 		if err != nil {
 			jsonError(w, "parser catalog unavailable", 503)
 			return

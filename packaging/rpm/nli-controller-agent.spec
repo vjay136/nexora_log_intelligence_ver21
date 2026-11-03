@@ -1,5 +1,5 @@
 %{!?nli_version:%global nli_version 21.0.0}
-%{!?nli_release:%global nli_release 2}
+%{!?nli_release:%global nli_release 4}
 Name:           nli-controller-agent
 Version:        %{nli_version}
 Release:        %{nli_release}%{?dist}
@@ -44,7 +44,7 @@ cp -a web/. %{buildroot}%{_datadir}/nli/webview_ver21/
 find %{buildroot}%{_datadir}/nli/webview_ver21 -type d -exec chmod 0755 {} +
 find %{buildroot}%{_datadir}/nli/webview_ver21 -type f -exec chmod 0644 {} +
 install -m 0644 README.md %{buildroot}%{_docdir}/%{name}/README.md
-install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
+install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
 install -m 0644 metrics/README.md metrics/metric-catalog.json metrics/prometheus-scrape.yml metrics/grafana-dashboard.json %{buildroot}%{_datadir}/nli/metrics/
 
 %pre
@@ -107,9 +107,15 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %doc %{_docdir}/%{name}/V21_R2_TEST_RESULTS.md
 %doc %{_docdir}/%{name}/V21_R3_RELEASE_NOTES.md
 %doc %{_docdir}/%{name}/V21_R3_TEST_RESULTS.md
+%doc %{_docdir}/%{name}/V21_R4_RELEASE_NOTES.md
+%doc %{_docdir}/%{name}/V21_R4_TEST_RESULTS.md
+%doc %{_docdir}/%{name}/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md
 %doc %{_docdir}/%{name}/VER21_IMPLEMENTATION_PLAN.md
 
 %changelog
+* Tue Nov 03 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-4
+- Publish Ver21 Release 4 lifecycle plumbing, evidence, and surgical diagnostics documentation.
+
 * Tue Nov 03 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-3
 - Publish Ver21 Release 3 artifacts and migrate compatible legacy WebView roots to webview_ver21.
 

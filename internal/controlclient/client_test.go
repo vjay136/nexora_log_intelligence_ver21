@@ -19,7 +19,10 @@ import (
 	"testing"
 	"time"
 
+	runtimeadapter "nexora.local/nli-v20/internal/adapter"
 	"nexora.local/nli-v20/internal/canonicaljson"
+	"nexora.local/nli-v20/internal/engine"
+	"nexora.local/nli-v20/internal/familyprofile"
 	"nexora.local/nli-v20/internal/protocol"
 	"nexora.local/nli-v20/internal/rollout"
 	"nexora.local/nli-v20/parser-policy"
@@ -111,6 +114,23 @@ func (executor *fakeExecutor) Replay(_ context.Context, path string, ids []strin
 	return `{"resolved_ids":["q-123"],"waiting_ids":[]}`, nil
 }
 func (*fakeExecutor) UpgradePackage(context.Context, string) error { return nil }
+
+type readinessExecutor struct {
+	*fakeExecutor
+	verifyErrors  []error
+	verifications int
+}
+
+func (executor *readinessExecutor) VerifyAgentRuntime(_ context.Context, _ string) error {
+	executor.mu.Lock()
+	defer executor.mu.Unlock()
+	index := executor.verifications
+	executor.verifications++
+	if index < len(executor.verifyErrors) {
+		return executor.verifyErrors[index]
+	}
+	return nil
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -402,7 +422,8 @@ func TestParserAssetBundleSynchronizesEveryRuntimeAssetClass(t *testing.T) {
 			Revision: 1, SHA256: fmt.Sprintf("%x", digest[:]), Payload: payload,
 		})
 	}
-	pack := &parserpolicy.ParserPack{ID: "assurance-runtime", Version: "1.0.0", Revision: 1, SourceType: "manual", Author: "operator", ReviewState: parserpolicy.ReviewStateApproved, CreatedAt: time.Now().UTC(), ResourceLimits: parserpolicy.DefaultResourceLimits(), Rules: []parserpolicy.ParserRule{{ID: "assurance-runtime-rule", Name: "Assurance runtime", Priority: 1, ServiceSelectors: []string{"mail"}, Stages: []parserpolicy.Stage{{ID: "regex", Name: "Regex", Type: parserpolicy.StageTypeRegex, Config: map[string]any{"pattern": `status=(?P<status>\w+)`, "groups": map[string]string{"status": "status"}}, FailurePolicy: parserpolicy.FailurePolicyRejectRule}}, FailurePolicy: parserpolicy.FailurePolicyQuarantine, FieldSchema: map[string]parserpolicy.FieldDef{"status": {Type: parserpolicy.FieldTypeString}}, ProjectionMode: parserpolicy.ProjectionModeAllowlist, AllowedFields: []string{"status"}, CountPolicy: parserpolicy.CountPolicyExactSource}}}
+	pack := &parserpolicy.ParserPack{ID: "assurance-runtime", Version: "1.0.0", Revision: 1, SourceType: "manual", Author: "operator", ReviewState: parserpolicy.ReviewStateApproved, CreatedAt: time.Now().UTC(), ResourceLimits: parserpolicy.DefaultResourceLimits(), Rules: []parserpolicy.ParserRule{{ID: "assurance-runtime-rule", Name: "Assurance runtime", Priority: 1, ServiceSelectors: []string{"*"}, Stages: []parserpolicy.Stage{{ID: "regex", Name: "Regex", Type: parserpolicy.StageTypeRegex, Config: map[string]any{"pattern": `status=(?P<status>\w+)`, "groups": map[string]string{"status": "status"}}, FailurePolicy: parserpolicy.FailurePolicyRejectRule}}, FailurePolicy: parserpolicy.FailurePolicyQuarantine, FieldSchema: map[string]parserpolicy.FieldDef{"status": {Type: parserpolicy.FieldTypeString}}, ProjectionMode: parserpolicy.ProjectionModeAllowlist, AllowedFields: []string{"status"}, CountPolicy: parserpolicy.CountPolicyExactSource}}, RegressionCases: []parserpolicy.RegressionCase{{Name: "assurance-runtime-regression", Input: "status=ok", Service: "mail", SourceType: "file", ExpectedPayload: map[string]any{"status": "ok"}, ExpectedParser: "assurance-runtime/assurance-runtime-rule", ExpectedRoute: "normal"}}}
+	pack.ResourceLimits.MaxAttempts = 1
 	if err := parserpolicy.SealParserPack(pack); err != nil {
 		t.Fatal(err)
 	}
@@ -451,12 +472,93 @@ func TestParserAssetBundleSynchronizesEveryRuntimeAssetClass(t *testing.T) {
 	if _, err := parserpolicy.LoadParserPackBytes(installed); err != nil {
 		t.Fatalf("installed parser pack is not runtime-compatible: %v", err)
 	}
+	profiles, err := familyprofile.Resolve(client.cfg.ParserDir)
+	if err != nil {
+		t.Fatalf("installed generation did not pass the agent's strict loader: %v", err)
+	}
+	var installedProfile *familyprofile.Profile
+	for index := range profiles {
+		if profiles[index].Managed && profiles[index].Pack != nil && profiles[index].Pack.ID == pack.ID {
+			installedProfile = &profiles[index]
+			break
+		}
+	}
+	if installedProfile == nil || installedProfile.Executor == nil {
+		t.Fatalf("installed parser %q was not present in the executable generation", pack.ID)
+	}
+	result, err := installedProfile.Executor.Execute(&parserpolicy.ExecutionRequest{Input: "status=ok", Service: "previously-unseen-source", SourceType: "file", NodeID: "test-node", Context: context.Background()})
+	if err != nil || result.Quarantined {
+		t.Fatalf("installed parser could not normalize its reviewed sample: result=%+v err=%v", result, err)
+	}
+	if got, ok := result.EventPayload.Get("status"); !ok || got != "ok" {
+		t.Fatalf("installed parser output status=%#v present=%t", got, ok)
+	}
+	runtimeParser, err := runtimeadapter.NewParserPackAdapterFromDirectory(client.cfg.ParserDir)
+	if err != nil {
+		t.Fatalf("production adapter could not load the applied generation: %v", err)
+	}
+	runtimeResult := runtimeParser.TryParseV5Production("status=ok", engine.Source{
+		Hostname: "test-node", Service: "auto", File: "/var/log/new-format.log",
+	})
+	if !runtimeResult.Success || runtimeResult.Quarantined || runtimeResult.ParseTelemetry == nil || runtimeResult.ParseTelemetry.ParserID != "assurance-runtime/assurance-runtime-rule" {
+		t.Fatalf("applied parser was not globally executable through the production adapter: %+v", runtimeResult)
+	}
+	inventory := parserInventory(client.cfg.ParserDir)
+	foundInventory := false
+	for _, item := range inventory {
+		if item.ID == pack.ID && item.Version == pack.Revision && item.Source == "controller-managed" && item.TestStatus == "passed" {
+			foundInventory = true
+		}
+	}
+	if !foundInventory {
+		t.Fatalf("heartbeat inventory omitted executable managed parser: %+v", inventory)
+	}
 	quarantineInfo, err := os.Stat(filepath.Join(client.cfg.ParserDir, "quarantine"))
 	if err != nil || !quarantineInfo.IsDir() {
 		t.Fatalf("atomic parser swap omitted the agent runtime quarantine directory: %v", err)
 	}
 	if runtime.GOOS != "windows" && quarantineInfo.Mode().Perm() != 0o750 {
 		t.Fatalf("runtime quarantine mode = %o, want 0750 for the nli-owned agent runtime directory", quarantineInfo.Mode().Perm())
+	}
+}
+
+func TestParserAssetBundleRejectsGenerationThatCannotLoadBeforeRestart(t *testing.T) {
+	root := t.TempDir()
+	executor := &fakeExecutor{}
+	client, err := New(Config{
+		ControllerURL: "http://127.0.0.1:12345", AllowInsecureHTTP: true,
+		NodeTokenFile: filepath.Join(root, "node.token"), InstallIDFile: filepath.Join(root, "install.id"),
+		JournalFile: filepath.Join(root, "journal.json"), AgentConfigPath: filepath.Join(root, "nli.json"),
+		ParserDir: filepath.Join(root, "parsers"), AssetDir: filepath.Join(root, "parser-assets"),
+		PackageSpoolDir: filepath.Join(root, "packages"), PollSeconds: 5,
+	}, executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack := &parserpolicy.ParserPack{ID: "unreviewed-runtime", Version: "1.0.0", Revision: 1, SourceType: "manual", Author: "operator", ReviewState: parserpolicy.ReviewStateApproved, CreatedAt: time.Now().UTC(), ResourceLimits: parserpolicy.DefaultResourceLimits(), Rules: []parserpolicy.ParserRule{{ID: "unreviewed-rule", Name: "Unreviewed", Priority: 1, ServiceSelectors: []string{"*"}, Stages: []parserpolicy.Stage{{ID: "regex", Name: "Regex", Type: parserpolicy.StageTypeRegex, Config: map[string]any{"pattern": `status=(?P<status>\w+)`, "groups": map[string]string{"status": "status"}}, FailurePolicy: parserpolicy.FailurePolicyRejectRule}}, FailurePolicy: parserpolicy.FailurePolicyQuarantine, FieldSchema: map[string]parserpolicy.FieldDef{"status": {Type: parserpolicy.FieldTypeString}}, ProjectionMode: parserpolicy.ProjectionModeAllowlist, AllowedFields: []string{"status"}, CountPolicy: parserpolicy.CountPolicyExactSource}}}
+	if err := parserpolicy.SealParserPack(pack); err != nil {
+		t.Fatal(err)
+	}
+	packPayload, _ := json.Marshal(pack)
+	packPayload, err = canonicaljson.Normalize(packPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(packPayload)
+	bundle := synchronizedAssetBundle{SchemaVersion: 1, Assets: []synchronizedAsset{{AssetClass: "parser-packs", AssetID: pack.ID, Name: pack.ID, Revision: 1, SHA256: fmt.Sprintf("%x", digest[:]), Payload: packPayload}}}
+	bundle.BundleHash, err = synchronizedBundleHash(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(bundle)
+	if _, err := client.applyAssetBundle(context.Background(), data); err == nil || !strings.Contains(err.Error(), "strict runtime preflight") || !strings.Contains(err.Error(), "no reviewed regression") {
+		t.Fatalf("unreviewed runtime generation was not rejected clearly: %v", err)
+	}
+	if executor.restarts != 0 {
+		t.Fatalf("agent restarted before strict runtime generation passed: %d", executor.restarts)
+	}
+	if _, err := os.Stat(filepath.Join(client.cfg.ParserDir, pack.ID+".json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected runtime parser was installed: %v", err)
 	}
 }
 
@@ -517,6 +619,144 @@ func TestParserAssetBundleOffboardsManagedParserAndPreservesBuiltIns(t *testing.
 	}
 	if executor.restarts != 1 {
 		t.Fatalf("agent restarted %d times, want 1", executor.restarts)
+	}
+}
+
+func TestParserAssetBundleManifestAbsentUpgradeRemovesPriorManagedPackOnly(t *testing.T) {
+	root := t.TempDir()
+	currentDir := filepath.Join(root, "current")
+	stagingDir := filepath.Join(root, "staging")
+	assetDir := filepath.Join(root, "assets")
+	for _, directory := range []string{currentDir, assetDir} {
+		if err := os.MkdirAll(directory, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, contents := range map[string]string{
+		"retired-custom.json": `{"source":"controller"}`,
+		"rpm-built-in.json":   `{"source":"rpm"}`,
+		"operator-owned.json": `{"source":"operator"}`,
+	} {
+		if err := os.WriteFile(filepath.Join(currentDir, name), []byte(contents), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := copyParserDirectory(currentDir, stagingDir); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := canonicaljson.Normalize([]byte(`{"id":"retired-custom"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	previous := synchronizedAssetBundle{SchemaVersion: 1, Assets: []synchronizedAsset{{
+		AssetClass: "parser-packs", AssetID: "retired-custom", Name: "Retired custom",
+		Revision: 1, SHA256: fmt.Sprintf("%x", digest[:]), Payload: payload,
+	}}}
+	previous.BundleHash, err = synchronizedBundleHash(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousJSON, err := json.Marshal(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetDir, "bundle.json"), previousJSON, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reconcileManagedParserFiles(currentDir, stagingDir, assetDir, map[string]bool{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(stagingDir, "retired-custom.json")); !os.IsNotExist(err) {
+		t.Fatalf("prior controller-managed parser survived manifest-less migration: %v", err)
+	}
+	for _, name := range []string{"rpm-built-in.json", "operator-owned.json"} {
+		if _, err := os.Stat(filepath.Join(stagingDir, name)); err != nil {
+			t.Fatalf("unowned parser %q was removed: %v", name, err)
+		}
+	}
+	manifest, err := os.ReadFile(filepath.Join(stagingDir, managedParserManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(manifest) != "[]" {
+		t.Fatalf("managed parser manifest = %s, want []", manifest)
+	}
+}
+
+func TestParserAssetBundleReadinessFailureRestoresPriorGeneration(t *testing.T) {
+	root := t.TempDir()
+	parserDir := filepath.Join(root, "parsers")
+	assetDir := filepath.Join(root, "parser-assets")
+	for _, directory := range []string{parserDir, assetDir} {
+		if err := os.MkdirAll(directory, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	builtInPath := filepath.Join(parserDir, "rpm-built-in.json")
+	if err := os.WriteFile(builtInPath, []byte(`{"source":"rpm"}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	previous := synchronizedAssetBundle{SchemaVersion: 1, Assets: []synchronizedAsset{}}
+	var err error
+	previous.BundleHash, err = synchronizedBundleHash(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousJSON, err := json.Marshal(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetDir, "bundle.json"), previousJSON, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	executor := &readinessExecutor{
+		fakeExecutor: &fakeExecutor{},
+		verifyErrors: []error{errors.New("new runtime unhealthy"), nil},
+	}
+	client, err := New(Config{
+		ControllerURL: "http://127.0.0.1:12345", AllowInsecureHTTP: true,
+		NodeTokenFile: filepath.Join(root, "node.token"), InstallIDFile: filepath.Join(root, "install.id"),
+		JournalFile: filepath.Join(root, "journal.json"), AgentConfigPath: filepath.Join(root, "nli.json"),
+		ParserDir: parserDir, AssetDir: assetDir,
+		PackageSpoolDir: filepath.Join(root, "packages"), PollSeconds: 5,
+	}, executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := canonicaljson.Normalize([]byte(`{"name":"new runtime rule","pattern":"status=(?P<status>\\w+)"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	next := synchronizedAssetBundle{SchemaVersion: 1, Assets: []synchronizedAsset{{
+		AssetClass: "regex-patterns", AssetID: "new-runtime-rule", Name: "New runtime rule",
+		Revision: 2, SHA256: fmt.Sprintf("%x", digest[:]), Payload: payload,
+	}}}
+	next.BundleHash, err = synchronizedBundleHash(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextJSON, err := json.Marshal(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.applyAssetBundle(context.Background(), nextJSON); err == nil || !strings.Contains(err.Error(), "new runtime unhealthy") || !strings.Contains(err.Error(), "restored and verified") {
+		t.Fatalf("readiness failure did not restore and verify prior generation: %v", err)
+	}
+	if executor.restarts != 2 || executor.verifications != 2 {
+		t.Fatalf("restart/readiness counts = %d/%d, want 2/2", executor.restarts, executor.verifications)
+	}
+	activeHash, revisions := activeAssetBundleStatus(filepath.Join(assetDir, "bundle.json"))
+	if activeHash != previous.BundleHash || len(revisions) != 0 {
+		t.Fatalf("readiness rollback changed canonical live bundle: hash=%q revisions=%v", activeHash, revisions)
+	}
+	if data, err := os.ReadFile(builtInPath); err != nil || string(data) != `{"source":"rpm"}` {
+		t.Fatalf("readiness rollback changed runtime parser state: data=%q err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(assetDir, "regex", "new-runtime-rule.json")); !os.IsNotExist(err) {
+		t.Fatalf("failed asset remained live after readiness rollback: %v", err)
 	}
 }
 

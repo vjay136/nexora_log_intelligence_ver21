@@ -40,18 +40,19 @@ func countActionableQuarantineRecords(ctx context.Context, store metastore.Store
 	if err != nil {
 		return result, err
 	}
-	actionable := map[string]struct{}{"waiting": {}, "replay_failed": {}}
 	for _, document := range documents {
-		state := document.State
 		var record quarantineRecord
-		if json.Unmarshal(document.Payload, &record) == nil && record.Status != "" {
-			state = record.Status
+		if json.Unmarshal(document.Payload, &record) != nil {
+			continue
 		}
-		if _, ok := actionable[state]; !ok {
+		if record.Status == "" {
+			record.Status = document.State
+		}
+		if !isActionableQuarantineRecord(record) {
 			continue
 		}
 		result.Total++
-		result.States[state]++
+		result.States[record.Status]++
 	}
 	return result, nil
 }

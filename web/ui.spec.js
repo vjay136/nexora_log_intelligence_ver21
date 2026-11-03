@@ -59,7 +59,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
     if (path === '/api/v1/health') return fulfill({ status: 'ok', service: 'nli-controller-agent', api_version: 'v1' });
     if (path === '/api/v1/navigation/counts') {
       const lifecycle = items => items.filter(item => ['draft','rejected','in_review','approved'].includes(item.state)).length;
-      const waiting = (currentQRWRecords || [{ status: 'waiting' }]).filter(item => ['waiting','replay_failed'].includes(item.status)).length;
+      const waiting = (currentQRWRecords || [{ status: 'waiting', raw_available: true }]).filter(item => ['waiting','replay_failed'].includes(item.status) && item.raw_available === true).length;
       const parserActions = lifecycle(currentQRWParsers);
       const counts = {
         assurance: { total: assuranceRuns.filter(item => ['queued','running'].includes(item.state || item.payload?.state)).length },
@@ -516,6 +516,28 @@ test('QRW accepts operator field names in Inspect and updates live completion st
   await expect(page.locator('[data-wizard-step="4"] .qrw-step-state')).toHaveText('Complete');
   const desired=JSON.parse(await page.locator('#gprs-preview-form [name=gprs_desired]').inputValue());
   expect(desired).toEqual({event_date:'2026-10-30',host:'mail01',severity:'ERROR',message:'delivery_failed'});
+});
+
+test('metadata-only quarantine records expose evidence recovery without actionable badges', async ({ page }) => {
+  await mockController(page, { qrwRecords: [{
+    id: 'q-meta',
+    node_id: 'node-meta',
+    service: 'custom',
+    first_seen: '2026-11-03T00:00:00Z',
+    attempt_count: 1,
+    status: 'waiting',
+    error_codes: ['no_match'],
+    raw_available: false,
+  }] });
+  await login(page);
+
+  await expect(page.locator('[data-nav-count="quarantine-wizard"]')).toBeHidden();
+  await expect(page.locator('[data-nav-count="unknowns"]')).toBeHidden();
+  await page.getByTestId('nav-quarantine-wizard').click();
+  await expect(page.getByRole('button', { name: 'Acquire evidence' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Inspect', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Acquire evidence' }).click();
+  await expect(page.locator('.toast').last()).toContainText('Enable bounded quarantine evidence retention');
 });
 
 test('terminal quarantine actions clear actionable navigation badges while retaining records', async ({ page }) => {

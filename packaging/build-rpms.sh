@@ -48,6 +48,9 @@ install -m 0644 "$ROOT/docs/V21_R2_RELEASE_NOTES.md" "$OUTPUT_DIR/V21_R2_RELEASE
 install -m 0644 "$ROOT/docs/V21_R2_TEST_RESULTS.md" "$OUTPUT_DIR/V21_R2_TEST_RESULTS.md"
 install -m 0644 "$ROOT/docs/V21_R3_RELEASE_NOTES.md" "$OUTPUT_DIR/V21_R3_RELEASE_NOTES.md"
 install -m 0644 "$ROOT/docs/V21_R3_TEST_RESULTS.md" "$OUTPUT_DIR/V21_R3_TEST_RESULTS.md"
+install -m 0644 "$ROOT/docs/V21_R4_RELEASE_NOTES.md" "$OUTPUT_DIR/V21_R4_RELEASE_NOTES.md"
+install -m 0644 "$ROOT/docs/V21_R4_TEST_RESULTS.md" "$OUTPUT_DIR/V21_R4_TEST_RESULTS.md"
+install -m 0644 "$ROOT/docs/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md" "$OUTPUT_DIR/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md"
 install -m 0644 "$ROOT/docs/VER21_IMPLEMENTATION_PLAN.md" "$OUTPUT_DIR/VER21_IMPLEMENTATION_PLAN.md"
 cat >"$OUTPUT_DIR/RELEASE_ID" <<EOF
 NLI_VERSION=$NLI_VERSION
@@ -67,7 +70,8 @@ normalize_lf "$OUTPUT_DIR/install-controller-ver21.sh" "$OUTPUT_DIR/install-clie
   "$OUTPUT_DIR/VERCEL_DEPLOYMENT.md" "$OUTPUT_DIR/CLOUDFLARE_PAGES_DEPLOYMENT.md" "$OUTPUT_DIR/PARSER_CATALOG.md" \
   "$OUTPUT_DIR/All_NLI_features.md" "$OUTPUT_DIR/V21_R1_RELEASE_NOTES.md" "$OUTPUT_DIR/V21_R1_TEST_RESULTS.md" \
   "$OUTPUT_DIR/V21_R2_RELEASE_NOTES.md" "$OUTPUT_DIR/V21_R2_TEST_RESULTS.md" \
-  "$OUTPUT_DIR/V21_R3_RELEASE_NOTES.md" "$OUTPUT_DIR/V21_R3_TEST_RESULTS.md" "$OUTPUT_DIR/VER21_IMPLEMENTATION_PLAN.md" \
+  "$OUTPUT_DIR/V21_R3_RELEASE_NOTES.md" "$OUTPUT_DIR/V21_R3_TEST_RESULTS.md" \
+  "$OUTPUT_DIR/V21_R4_RELEASE_NOTES.md" "$OUTPUT_DIR/V21_R4_TEST_RESULTS.md" "$OUTPUT_DIR/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md" "$OUTPUT_DIR/VER21_IMPLEMENTATION_PLAN.md" \
   "$OUTPUT_DIR/RELEASE_ID"
 
 for binary in nli nli-agent nli-client-control nli-bench nli-controller-agent; do
@@ -89,7 +93,7 @@ find "$ROOT/configs/parsers" -maxdepth 1 -type f -name '*.json' -print0 | LC_ALL
 install -m 0644 "$ROOT/packaging/systemd/nli-agent.service" "$ROOT/packaging/systemd/nli-client-control.service" "$ROOT/packaging/systemd/nli-client-bootstrap.service" "$CLIENT/systemd/"
 install -m 0644 "$ROOT/README.md" "$CLIENT/README.md"
 install -m 0644 "$ROOT/docs/PARSER_CATALOG.md" "$CLIENT/PARSER_CATALOG.md"
-install -m 0644 "$ROOT/All_NLI_features.md" "$ROOT/docs/V21_R1_RELEASE_NOTES.md" "$ROOT/docs/V21_R1_TEST_RESULTS.md" "$ROOT/docs/V21_R2_RELEASE_NOTES.md" "$ROOT/docs/V21_R2_TEST_RESULTS.md" "$ROOT/docs/V21_R3_RELEASE_NOTES.md" "$ROOT/docs/V21_R3_TEST_RESULTS.md" "$ROOT/docs/VER21_IMPLEMENTATION_PLAN.md" "$CLIENT/"
+install -m 0644 "$ROOT/All_NLI_features.md" "$ROOT/docs/V21_R1_RELEASE_NOTES.md" "$ROOT/docs/V21_R1_TEST_RESULTS.md" "$ROOT/docs/V21_R2_RELEASE_NOTES.md" "$ROOT/docs/V21_R2_TEST_RESULTS.md" "$ROOT/docs/V21_R3_RELEASE_NOTES.md" "$ROOT/docs/V21_R3_TEST_RESULTS.md" "$ROOT/docs/V21_R4_RELEASE_NOTES.md" "$ROOT/docs/V21_R4_TEST_RESULTS.md" "$ROOT/docs/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md" "$ROOT/docs/VER21_IMPLEMENTATION_PLAN.md" "$CLIENT/"
 mkdir -p "$CLIENT/metrics"
 install -m 0644 "$ROOT"/metrics/* "$CLIENT/metrics/"
 while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
@@ -97,7 +101,7 @@ while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
 )
 normalize_lf "$CLIENT/README.md"
 normalize_lf "$CLIENT/PARSER_CATALOG.md"
-normalize_lf "$CLIENT/All_NLI_features.md" "$CLIENT/V21_R1_RELEASE_NOTES.md" "$CLIENT/V21_R1_TEST_RESULTS.md" "$CLIENT/V21_R2_RELEASE_NOTES.md" "$CLIENT/V21_R2_TEST_RESULTS.md" "$CLIENT/V21_R3_RELEASE_NOTES.md" "$CLIENT/V21_R3_TEST_RESULTS.md" "$CLIENT/VER21_IMPLEMENTATION_PLAN.md"
+normalize_lf "$CLIENT/All_NLI_features.md" "$CLIENT/V21_R1_RELEASE_NOTES.md" "$CLIENT/V21_R1_TEST_RESULTS.md" "$CLIENT/V21_R2_RELEASE_NOTES.md" "$CLIENT/V21_R2_TEST_RESULTS.md" "$CLIENT/V21_R3_RELEASE_NOTES.md" "$CLIENT/V21_R3_TEST_RESULTS.md" "$CLIENT/V21_R4_RELEASE_NOTES.md" "$CLIENT/V21_R4_TEST_RESULTS.md" "$CLIENT/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md" "$CLIENT/VER21_IMPLEMENTATION_PLAN.md"
 while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
   find "$CLIENT/metrics" -type f \( -name '*.md' -o -name '*.yml' -o -name '*.yaml' \) -print0
 )
@@ -142,14 +146,14 @@ install -m 0644 "$ROOT/configs/geoip.env" "$CONTROLLER/configs/geoip.env"
 install -m 0644 "$ROOT/packaging/systemd/nli-controller-agent.service" "$ROOT/packaging/systemd/nli-controller-bootstrap.service" "$ROOT/packaging/systemd/nli-geoip-update.service" "$ROOT/packaging/systemd/nli-geoip-update.timer" "$CONTROLLER/systemd/"
 cp -a "$WEB_ROOT/." "$CONTROLLER/web/"
 install -m 0644 "$ROOT/README.md" "$CONTROLLER/README.md"
-install -m 0644 "$ROOT/All_NLI_features.md" "$ROOT/docs/V21_R1_RELEASE_NOTES.md" "$ROOT/docs/V21_R1_TEST_RESULTS.md" "$ROOT/docs/V21_R2_RELEASE_NOTES.md" "$ROOT/docs/V21_R2_TEST_RESULTS.md" "$ROOT/docs/V21_R3_RELEASE_NOTES.md" "$ROOT/docs/V21_R3_TEST_RESULTS.md" "$ROOT/docs/VER21_IMPLEMENTATION_PLAN.md" "$CONTROLLER/"
+install -m 0644 "$ROOT/All_NLI_features.md" "$ROOT/docs/V21_R1_RELEASE_NOTES.md" "$ROOT/docs/V21_R1_TEST_RESULTS.md" "$ROOT/docs/V21_R2_RELEASE_NOTES.md" "$ROOT/docs/V21_R2_TEST_RESULTS.md" "$ROOT/docs/V21_R3_RELEASE_NOTES.md" "$ROOT/docs/V21_R3_TEST_RESULTS.md" "$ROOT/docs/V21_R4_RELEASE_NOTES.md" "$ROOT/docs/V21_R4_TEST_RESULTS.md" "$ROOT/docs/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md" "$ROOT/docs/VER21_IMPLEMENTATION_PLAN.md" "$CONTROLLER/"
 mkdir -p "$CONTROLLER/metrics"
 install -m 0644 "$ROOT"/metrics/* "$CONTROLLER/metrics/"
 while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
   find "$CONTROLLER/sbin" "$CONTROLLER/configs" "$CONTROLLER/systemd" "$CONTROLLER/supabase" -type f -print0
 )
 normalize_lf "$CONTROLLER/README.md"
-normalize_lf "$CONTROLLER/All_NLI_features.md" "$CONTROLLER/V21_R1_RELEASE_NOTES.md" "$CONTROLLER/V21_R1_TEST_RESULTS.md" "$CONTROLLER/V21_R2_RELEASE_NOTES.md" "$CONTROLLER/V21_R2_TEST_RESULTS.md" "$CONTROLLER/V21_R3_RELEASE_NOTES.md" "$CONTROLLER/V21_R3_TEST_RESULTS.md" "$CONTROLLER/VER21_IMPLEMENTATION_PLAN.md"
+normalize_lf "$CONTROLLER/All_NLI_features.md" "$CONTROLLER/V21_R1_RELEASE_NOTES.md" "$CONTROLLER/V21_R1_TEST_RESULTS.md" "$CONTROLLER/V21_R2_RELEASE_NOTES.md" "$CONTROLLER/V21_R2_TEST_RESULTS.md" "$CONTROLLER/V21_R3_RELEASE_NOTES.md" "$CONTROLLER/V21_R3_TEST_RESULTS.md" "$CONTROLLER/V21_R4_RELEASE_NOTES.md" "$CONTROLLER/V21_R4_TEST_RESULTS.md" "$CONTROLLER/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md" "$CONTROLLER/VER21_IMPLEMENTATION_PLAN.md"
 while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
   find "$CONTROLLER/metrics" -type f \( -name '*.md' -o -name '*.yml' -o -name '*.yaml' \) -print0
 )
@@ -200,6 +204,9 @@ rpm -qp --qf '[%{FILENAMES} %{FILEMODES:perms} %{FILEUSERNAME} %{FILEGROUPNAME}\
 for required in /usr/bin/nli /usr/bin/nli-agent /usr/bin/nli-client-control /usr/bin/nli-bench /usr/sbin/nli-client-setup /etc/nli/nli.json /etc/nli/parsers /usr/share/doc/nli-client/PARSER_CATALOG.md /usr/share/doc/nli-client/V21_R1_RELEASE_NOTES.md /usr/share/doc/nli-client/V21_R1_TEST_RESULTS.md /usr/share/doc/nli-client/V21_R2_RELEASE_NOTES.md /usr/share/doc/nli-client/V21_R2_TEST_RESULTS.md /usr/share/doc/nli-client/V21_R3_RELEASE_NOTES.md /usr/share/doc/nli-client/V21_R3_TEST_RESULTS.md /usr/share/nli/metrics/README.md /usr/share/nli/metrics/metric-catalog.json /usr/share/nli/metrics/prometheus-scrape.yml /usr/share/nli/metrics/grafana-dashboard.json /usr/lib/systemd/system/nli-agent.service /usr/lib/systemd/system/nli-client-control.service /usr/lib/systemd/system/nli-client-bootstrap.service /var/lib/nli /var/lib/nli-control-client /var/log/nli/input /var/log/nli/output; do
   grep -Fxq "$required" "$OUTPUT_DIR/nli_client_ver21.files.txt" || fail "client payload missing $required"
 done
+for document in V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md; do
+  grep -Fxq "/usr/share/doc/nli-client/$document" "$OUTPUT_DIR/nli_client_ver21.files.txt" || fail "client payload missing $document"
+done
 mapfile -t profile_assets < <(find "$ROOT/configs/parsers" -maxdepth 1 -type f -name '*.parserpack.json' -printf '%f\n' | LC_ALL=C sort)
 [[ ${#profile_assets[@]} -ge 8 ]] || fail "expected at least the eight reviewed baseline parser profiles"
 for asset in "${profile_assets[@]}"; do
@@ -213,6 +220,9 @@ done
 [[ $(grep -Ec '^/etc/nli/parsers/[^/]+\.parserpack\.json$' "$OUTPUT_DIR/nli_client_ver21.files.txt") -eq ${#profile_assets[@]} ]] || fail "unexpected reviewed profile count in client RPM"
 for required in /usr/bin/nli-controller-agent /usr/bin/nli /usr/sbin/nli-controller-setup /usr/sbin/nli-supabase-setup /usr/sbin/nli-admin-reset /usr/share/doc/nli-controller-agent/V21_R1_RELEASE_NOTES.md /usr/share/doc/nli-controller-agent/V21_R1_TEST_RESULTS.md /usr/share/doc/nli-controller-agent/V21_R2_RELEASE_NOTES.md /usr/share/doc/nli-controller-agent/V21_R2_TEST_RESULTS.md /usr/share/doc/nli-controller-agent/V21_R3_RELEASE_NOTES.md /usr/share/doc/nli-controller-agent/V21_R3_TEST_RESULTS.md /usr/share/nli/supabase/nli_schema.sql /usr/share/nli/metrics/README.md /usr/share/nli/metrics/metric-catalog.json /usr/share/nli/metrics/prometheus-scrape.yml /usr/share/nli/metrics/grafana-dashboard.json /etc/nli/controller.json /etc/nli/geoip.env /usr/lib/systemd/system/nli-controller-agent.service /usr/lib/systemd/system/nli-controller-bootstrap.service /usr/lib/systemd/system/nli-geoip-update.service /usr/lib/systemd/system/nli-geoip-update.timer /usr/share/nli/webview_ver21/index.html /usr/share/nli/webview_ver21/styles.css /usr/share/nli/webview_ver21/app.js /usr/share/nli/webview_ver21/nli-mark.svg /usr/share/nli/webview_ver21/nexora-logo-v21.png /usr/share/nli/webview_ver21/login-banner-v21.png /usr/share/nli/webview_ver21/nexora-poster-v21.png /usr/share/nli/webview_ver21/README.txt /usr/share/nli/webview_ver21/Open-NLI-WebView.ps1 /var/lib/nli-controller; do
   grep -Fxq "$required" "$OUTPUT_DIR/nli_controller_agent_ver21.files.txt" || fail "controller payload missing $required"
+done
+for document in V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md; do
+  grep -Fxq "/usr/share/doc/nli-controller-agent/$document" "$OUTPUT_DIR/nli_controller_agent_ver21.files.txt" || fail "controller payload missing $document"
 done
 ! grep -Eq 'webview_ver(1|5|6|7)(/|$)' "$OUTPUT_DIR/nli_controller_agent_ver21.files.txt" || fail "stale pre-V20 WebView payload"
 expected_assets=$(wc -l <"$OUTPUT_DIR/WEBVIEW_SHA256SUMS")

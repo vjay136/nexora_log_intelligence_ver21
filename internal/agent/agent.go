@@ -641,8 +641,8 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 	if err := os.MkdirAll(c.StateDir, 0700); err != nil {
 		return err
 	}
-	legacyParserDir := filepath.Join(c.StateDir, "parsers")
-	for _, dir := range []string{legacyParserDir, filepath.Join(legacyParserDir, "quarantine")} {
+	runtimeParserDir := parserPackDirectory(c)
+	for _, dir := range []string{runtimeParserDir, filepath.Join(runtimeParserDir, "quarantine")} {
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return err
 		}
@@ -664,7 +664,7 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 
 	// Load legacy ParserDefs while leaving ParserPack documents for the strict
 	// production loader below. Both formats may share the controller generation.
-	if err := loadLegacyParsers(deps.Registry, legacyParserDir); err != nil {
+	if err := loadLegacyParsers(deps.Registry, runtimeParserDir); err != nil {
 		fmt.Fprintf(os.Stderr, "nli: parser registry load: %v\n", err)
 	}
 
