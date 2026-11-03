@@ -225,13 +225,15 @@ For a bundle incident, record these as one evidence set: proposal ID, parser rev
 
 | Layer | Required evidence | R4 result |
 |---|---|---|
-| Static/web contract | all 44 routes, loaders, actionable badge pages, inner-tab inventories, API wiring | PENDING FINAL GATE |
-| UI behavior | exhaustive page/sub-tab navigation, stable refresh, QRW recovery, actions, empty/error states | PENDING FINAL GATE |
-| Go unit/integration | all packages plus focused parser, sync, quarantine, rollout, late-ACK tests | PENDING FINAL GATE |
-| Runtime parser proof | delivered pack loads and matches a representative previously unsupported record | PENDING FINAL GATE |
-| Client/controller lifecycle | clean install, upgrade, restart, rollback, uninstall checks on supported Rocky versions | PENDING FINAL GATE |
-| Release reproducibility | RPM/archive checksums and release evidence verification | PENDING FINAL GATE |
+| Static/web contract | all 44 routes, loaders, actionable badge pages, inner-tab inventories, API wiring | SOURCE GATES PASS — revision `be028bb`; `npm run web:check` passed `28/28`; full release infrastructure static gate passed |
+| UI behavior | exhaustive page/sub-tab navigation, stable refresh, QRW recovery, actions, empty/error states | PASS — `73/73` Playwright tests passed, including QRW metadata-only evidence recovery, stages 6–9, replay gating, parser Published / Active state, notification-count clearing, SSE reconnect/fallback, and every visible inner tab |
+| Go unit/integration | all packages plus focused parser, sync, quarantine, rollout, late-ACK tests | PASS — pinned Go `1.24.9`; test, vet, and race gates passed across 63 packages |
+| Runtime parser proof | delivered pack loads and matches a representative previously unsupported record | PASS — the packaged Rocky artifact matrix verified exact parser accounting without duplicate normalized records, and the isolated controller/client scenario verified enrolled live parser/control services |
+| Client/controller lifecycle | clean install, upgrade, restart, rollback, uninstall checks on supported Rocky versions | PASS — Rocky Linux 9.6 and 10.2 passed clean install, R3→R4 upgrade, rollback/re-upgrade, service handling, TLS identity, enrollment, and health checks; the final Rocky 10.2 two-node WebView scenario passed `6/6` browser workflows plus trusted-certificate discovery and offline-TLS fallback |
+| Release reproducibility | RPM/archive checksums and release evidence verification | PASS — both RPMs, the versioned archive, `SHA256SUMS`, installer exact-source checks, packaged-document byte identity, and reproducibility verification passed from revision `be028bb` |
 | GitHub/Vercel | clean source, tag/release, green source and deployment workflows | PENDING FINAL GATE |
+
+The local artifact gate verified both RPMs, the versioned archive, `SHA256SUMS`, installer exact-source checks, packaged-document byte identity, and reproducibility from revision `be028bb`. The exhaustive UI gate passed `73/73`; Rocky 9.6/10.2 lifecycle and the isolated two-node acceptance also passed. These results do not substitute for external publication or production capacity qualification.
 
 The release gate includes, at minimum:
 

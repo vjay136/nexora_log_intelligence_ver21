@@ -42,7 +42,10 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
             "nli-v21.0.0-4-x86_64.tar.gz", "nexora.local/nli-v20", "capacity",
         ),
         "V21_R4_TEST_RESULTS.md": (
-            "21.0.0-4", "v21.0.0-3", "PENDING FINAL GATE", "No production capacity",
+            "21.0.0-4", "v21.0.0-3", "be028bb", "28/28", "73/73", "Go `1.24.9`",
+            "nli_client_ver21.rpm", "nli_controller_agent_ver21.rpm",
+            "nli-v21.0.0-4-x86_64.tar.gz", "SHA256SUMS", "exact-source",
+            "reproducibility", "PENDING FINAL GATE", "No production capacity",
         ),
         "VER21_IMPLEMENTATION_PLAN.md": (
             "Ver21 implementation plan", "21.0.0-4", "Verification and release gates",
