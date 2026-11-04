@@ -1,4 +1,4 @@
-name: NLI V21 R4 release
+name: NLI V21 R5 release
 
 on:
   push:
@@ -17,6 +17,8 @@ on:
       - 'docs/V21_R4_RELEASE_NOTES.md'
       - 'docs/V21_R4_TEST_RESULTS.md'
       - 'docs/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md'
+      - 'docs/V21_R5_RELEASE_NOTES.md'
+      - 'docs/V21_R5_TEST_RESULTS.md'
       - 'docs/VER21_IMPLEMENTATION_PLAN.md'
       - 'README.md'
       - 'CHANGELOG.md'
@@ -25,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       previous_release_tag:
-        description: 'Previous production tag used for upgrade/rollback qualification; defaults to Ver21 R3'
+        description: 'Previous production tag used for upgrade/rollback qualification; defaults to Ver21 R4'
         required: false
         type: string
 
@@ -80,7 +82,7 @@ jobs:
       - name: Download genuine previous release RPMs
         env:
           GH_TOKEN: ${{ github.token }}
-          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-3' }}
+          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-4' }}
           PREVIOUS_RELEASE_REPO: ${{ github.repository }}
         run: |
           mkdir -p '${{ runner.temp }}/previous'
@@ -111,7 +113,7 @@ jobs:
         run: make release-rocky OUTPUT_DIR='${{ runner.temp }}/nli-release' PREVIOUS_DIR='${{ runner.temp }}/previous'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2; Node.js 24
         with:
-          name: nli-v21-r4-unsigned-release
+          name: nli-v21-r5-unsigned-release
           path: ${{ runner.temp }}/nli-release/
           if-no-files-found: error
           retention-days: 14
@@ -123,5 +125,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" '${{ runner.temp }}/nli-release/'* \
             --repo "$GITHUB_REPOSITORY" \
             --title "Nexora Log Intelligence Ver21 — $GITHUB_REF_NAME" \
-            --notes-file docs/V21_R4_RELEASE_NOTES.md \
+            --notes-file docs/V21_R5_RELEASE_NOTES.md \
             --latest

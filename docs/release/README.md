@@ -1,12 +1,18 @@
 # NLI Ver21 release infrastructure
 
+## Release 21.0.0-5
+
+Release 5 advances the Ver21 package identity to `21.0.0-5` and uses the published R4 tag (`v21.0.0-4`) as its upgrade and rollback baseline. It refines QRW Steps 3–4 for operator-defined JSON names and labels, bounded deterministic extraction, inclusive ranges, multiword key-value values, up to 128 automatic field suggestions with overlap validation, and shared parser lifecycle visibility. R4 ingestion, SSE/live sync, approval, hashing, rollout, and replay contracts remain unchanged.
+
+See [R5 release notes](../V21_R5_RELEASE_NOTES.md) and [R5 test results](../V21_R5_TEST_RESULTS.md) for scope and verification evidence. The R4 release documentation below is retained as historical context and remains the previous production baseline.
+
 ## Release 21.0.0-4
 
 Release 4 publishes Ver21-only artifact and helper filenames: `nli_client_ver21.rpm`, `nli_controller_agent_ver21.rpm`, `nli-v21.0.0-4-x86_64.tar.gz`, `webview_ver21.zip`, `webapp_ver21.zip`, and the Ver21 installer/uninstaller helpers. The obsolete misspelling `nli_clinet_*` is not generated. Stable RPM package names, services, configuration, and state paths remain unchanged for safe upgrades; compatibility is not represented by legacy release filenames.
 
-R3 remains historical evidence for the authenticated `nli.sync.v1` schema and bounded canonical telemetry behavior. Its 1,000-node and 32-subscriber automated coverage is a correctness check, not a production capacity claim. R4 adds release lifecycle plumbing and the surgical diagnostics runbook; see the R4 release notes and test results for the current release scope and verification status.
+R3 remains historical evidence for the authenticated `nli.sync.v1` schema and bounded canonical telemetry behavior. Its 1,000-node and 32-subscriber automated coverage is a correctness check, not a production capacity claim. R4 added release lifecycle plumbing and the surgical diagnostics runbook; see the R4 release notes and test results for that release's scope and verification status.
 
-See `../V21_R4_RELEASE_NOTES.md`, `../V21_R4_TEST_RESULTS.md`, and `../V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md` for the current release contract. The Ver20 sections below are retained as historical release evidence only.
+See `../V21_R4_RELEASE_NOTES.md`, `../V21_R4_TEST_RESULTS.md`, and `../V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md` for R4 release details and diagnostics. The Ver20 sections below are retained as historical release evidence only.
 
 ## Release 20.0.0-6
 

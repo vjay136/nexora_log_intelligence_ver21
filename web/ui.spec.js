@@ -500,8 +500,50 @@ test('Quarantine Resolution Wizard maps the required unstructured fixture withou
   await expect.poll(()=>mock.observed.includes('POST /api/v1/assurance/parsers')).toBe(true);
 });
 
+test('QRW preserves the supplied SMTP sample structure, multiword key-value reason, and complete-parser handoff', async ({ page }) => {
+  const raw = '20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg status=failed;reason=not needed';
+  await mockController(page, { quarantineRaw: raw });
+  await login(page);
+  await page.getByTestId('nav-quarantine-wizard').click();
+  await page.getByRole('button', { name: 'Inspect', exact: true }).click();
+  await page.getByRole('button', { name: /Review desired schema/ }).click();
+  await page.getByRole('button', { name: 'Suggest from raw log' }).click();
+
+  const rows = page.locator('[data-qrw-row]');
+  await expect(rows).toHaveCount(11);
+  const statusRow = rows.nth(9);
+  const reasonRow = rows.nth(10);
+  await expect(statusRow.locator('[data-qrw-key=name]')).toHaveValue('status');
+  await expect(statusRow.locator('[data-qrw-key=method]')).toHaveValue('key_value');
+  await expect(statusRow.locator('[data-qrw-key=source]')).toHaveValue('status');
+  await expect(statusRow.locator('[data-qrw-preview]')).toContainText('failed');
+  await expect(reasonRow.locator('[data-qrw-key=name]')).toHaveValue('reason');
+  await expect(reasonRow.locator('[data-qrw-key=method]')).toHaveValue('key_value');
+  await expect(reasonRow.locator('[data-qrw-key=source]')).toHaveValue('reason');
+  await expect(reasonRow.locator('[data-qrw-preview]')).toContainText('not needed');
+
+  const confirmations = page.locator('[data-qrw-key=confirmed]');
+  await expect(confirmations).toHaveCount(2);
+  await confirmations.nth(0).check();
+  await confirmations.nth(1).check();
+  await page.getByRole('button', { name: 'Test all fields' }).click();
+  await expect(page.getByText('11 fields mapped from actual evidence. Review the generated JSON before testing.')).toBeVisible();
+
+  const desired = JSON.parse(await page.locator('#gprs-preview-form [name=gprs_desired]').inputValue());
+  expect(desired).toMatchObject({ status: 'failed', reason: 'not needed', event_type: 'SieveRuleMsg' });
+
+  const autoPopulate = page.getByRole('button', { name: /5 · Auto-populate complete parser/ });
+  await expect(autoPopulate).toBeVisible();
+  await expect(autoPopulate).toBeEnabled();
+  await autoPopulate.click();
+  await expect(page.locator('#gprs-parser-helper-form')).toBeVisible();
+  const parser = await page.locator('#gprs-parser-helper-form [name=parser]').inputValue();
+  expect(parser).toContain('"status"');
+  expect(parser).toContain('"reason"');
+});
+
 test('QRW accepts operator field names in Inspect and updates live completion state', async ({ page }) => {
-  await mockController(page,{quarantineRaw:'2026-10-30 mail01 ERROR delivery_failed'});
+  await mockController(page,{quarantineRaw:'2026-10-30 mail01 ERROR delivery failed'});
   await login(page);
   await page.getByTestId('nav-quarantine-wizard').click();
   await page.getByRole('button',{name:'Inspect',exact:true}).click();
@@ -510,12 +552,19 @@ test('QRW accepts operator field names in Inspect and updates live completion st
   await page.locator('[name=manual_field_names]').fill('event_date, host, severity, message');
   await page.getByRole('button',{name:/Create mappings from my field names/}).click();
   await expect(page.locator('[data-qrw-key=name]')).toHaveCount(4);
-  await expect(page.locator('[data-qrw-key=name]').nth(0)).toHaveValue('event_date');
-  await expect(page.locator('[data-qrw-key=name]').nth(3)).toHaveValue('message');
+  await expect.poll(async () => page.locator('[data-qrw-key=name]').evaluateAll((els) => els.map((el) => el.value))).toEqual(['event_date', 'host', 'severity', 'message']);
+  await expect.poll(async () => page.locator('[data-qrw-key=source]').evaluateAll((els) => els.map((el) => el.value))).toEqual(['1', '2', '3', '4']);
+  await expect(page.locator('[data-qrw-key=source_end]')).toHaveCount(4);
+  await expect(page.getByText('Positions are 1-based; end token is inclusive.').first()).toBeVisible();
+  const messageRow = page.locator('[data-qrw-row]').nth(3);
+  await messageRow.locator('[data-qrw-key=source_end]').fill('5');
+  await page.getByRole('button', { name: 'Test all fields' }).click();
+  await expect(messageRow.locator('[data-qrw-key=name]')).toHaveValue('message');
+  await expect(messageRow.locator('[data-qrw-key=source_end]')).toHaveValue('5');
   await expect(page.locator('[data-wizard-step="3"] .qrw-step-state')).toHaveText('Complete');
   await expect(page.locator('[data-wizard-step="4"] .qrw-step-state')).toHaveText('Complete');
   const desired=JSON.parse(await page.locator('#gprs-preview-form [name=gprs_desired]').inputValue());
-  expect(desired).toEqual({event_date:'2026-10-30',host:'mail01',severity:'ERROR',message:'delivery_failed'});
+  expect(desired).toEqual({event_date:'2026-10-30',host:'mail01',severity:'ERROR',message:'delivery failed'});
 });
 
 test('metadata-only quarantine records expose evidence recovery without actionable badges', async ({ page }) => {
@@ -1130,7 +1179,10 @@ test('Parser Creation Workspace builds a complete editable draft without publish
   await page.getByTestId('nav-parser-workspace').click();
   const form = page.locator('#parser-workspace-form');
   await form.locator('[name=samples]').fill('level=INFO user=alice   \r\nlevel=WARN user=bob\t  \r\n');
-  await page.getByRole('button', { name: 'Auto-populate complete parser' }).click();
+  const autoPopulate = page.getByRole('button', { name: 'Auto-populate complete parser' });
+  await expect(autoPopulate).toBeVisible();
+  await expect(autoPopulate).toBeEnabled();
+  await autoPopulate.click();
   await expect(form.locator('[name=samples]')).toHaveValue('level=INFO user=alice\nlevel=WARN user=bob');
   const parser = JSON.parse(await form.locator('[name=parser]').inputValue());
   expect(parser).toMatchObject({ pattern_type: 'regex', known_fields: ['level', 'user'], projection: ['level', 'user'] });

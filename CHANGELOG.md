@@ -1,5 +1,12 @@
 # Changelog
 
+## [21.0.0-5] - 2026-11-04
+- Improve Guided Parser Repair Wizard Steps 3–4 with operator-defined field names and labels, plus evidence-backed position, range, key-value, and delimiter extraction.
+- Bound delimiter and string inputs, support multiword key-value values, cap automatic mapping suggestions at 128 fields, and validate overlap before saving or generating a candidate.
+- Show parser publication and runtime activation together in the shared Parser Catalog when runtime synchronization is confirmed.
+- Preserve the R4 ingestion, SSE/live sync, approval, hashing, rollout, and replay contracts.
+- Publish R5 release notes and test evidence; use Ver21 R4 (`v21.0.0-4`) as the upgrade and rollback baseline.
+
 ## [21.0.0-4] - 2026-11-03
 - Advance the Ver21 release lifecycle to R4 and use the published R3 packages as the upgrade and rollback baseline.
 - Package the R4 release notes, pending test-results template, and surgical diagnostics runbook in both RPMs and release artifacts.
