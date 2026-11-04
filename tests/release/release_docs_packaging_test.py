@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that the current Ver21 R4 release documents ship everywhere."""
+"""Verify that the current Ver21 R5 release documents ship everywhere."""
 
 from __future__ import annotations
 
@@ -18,12 +18,14 @@ DOCUMENTS = {
     "V21_R4_RELEASE_NOTES.md": "docs/V21_R4_RELEASE_NOTES.md",
     "V21_R4_TEST_RESULTS.md": "docs/V21_R4_TEST_RESULTS.md",
     "V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md": "docs/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md",
+    "V21_R5_RELEASE_NOTES.md": "docs/V21_R5_RELEASE_NOTES.md",
+    "V21_R5_TEST_RESULTS.md": "docs/V21_R5_TEST_RESULTS.md",
     "VER21_IMPLEMENTATION_PLAN.md": "docs/VER21_IMPLEMENTATION_PLAN.md",
 }
 
 
 def fail(message: str) -> None:
-    raise SystemExit(f"Ver21 R4 release-doc packaging: FAIL: {message}")
+    raise SystemExit(f"Ver21 R5 release-doc packaging: FAIL: {message}")
 
 
 def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
@@ -37,6 +39,13 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
                 fail(f"{name} is missing or differs in {target_dir}")
 
     expected_claims = {
+        "V21_R5_RELEASE_NOTES.md": (
+            "21.0.0-5", "v21.0.0-4", "Steps 3–4", "128", "R4",
+        ),
+        "V21_R5_TEST_RESULTS.md": (
+            "21.0.0-5", "v21.0.0-4", "28 checks", "74 scenarios", "3 scenarios",
+            "Vite production build", "go test ./...", "PASS",
+        ),
         "V21_R4_RELEASE_NOTES.md": (
             "21.0.0-4", "v21.0.0-3", "nli_client_ver21.rpm", "nli_controller_agent_ver21.rpm",
             "nli-v21.0.0-4-x86_64.tar.gz", "nexora.local/nli-v20", "capacity",
@@ -74,23 +83,27 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
                 fail(f"{relative} does not reference packaged artifact {name}")
 
     workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    for claim in ("NLI V21 R4 release", "nli-v21-r4-unsigned-release", "docs/V21_R4_RELEASE_NOTES.md", "v21.0.0-3"):
+    for claim in ("NLI V21 R5 release", "nli-v21-r5-unsigned-release", "docs/V21_R5_RELEASE_NOTES.md", "v21.0.0-4"):
         if claim not in workflow:
-            fail(f"release workflow does not identify the R4 workflow/R3 baseline: {claim!r}")
+            fail(f"release workflow does not identify the R5 workflow/R4 baseline: {claim!r}")
 
     release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-    if "NLI_VERSION=21.0.0" not in release_env or "NLI_RELEASE=4" not in release_env:
-        fail("packaging release identity is not 21.0.0-4")
+    if "NLI_VERSION=21.0.0" not in release_env or "NLI_RELEASE=5" not in release_env:
+        fail("packaging release identity is not 21.0.0-5")
 
     for relative in (
-        "README.md", "CHANGELOG.md", "docs/V21_R4_RELEASE_NOTES.md",
+        "README.md", "CHANGELOG.md", "docs/V21_R5_RELEASE_NOTES.md",
         "packaging/rpm/nli-client.spec", "packaging/rpm/nli-controller-agent.spec",
     ):
-        if "21.0.0-4" not in (root / relative).read_text(encoding="utf-8"):
+        if "21.0.0-5" not in (root / relative).read_text(encoding="utf-8"):
             fail(f"{relative} does not identify the current release")
 
     # Historical source evidence remains available for compatibility and audit.
-    for relative in ("docs/V20_R4_TEST_RESULTS.md", "docs/V20_R6_TEST_RESULTS.md"):
+    for relative in (
+        "docs/V21_R4_RELEASE_NOTES.md", "docs/V21_R4_TEST_RESULTS.md",
+        "docs/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md",
+        "docs/V20_R4_TEST_RESULTS.md", "docs/V20_R6_TEST_RESULTS.md",
+    ):
         if not (root / relative).is_file():
             fail(f"historical release evidence is missing: {relative}")
 
@@ -103,7 +116,7 @@ def main() -> None:
     parser.add_argument("--controller", required=True, type=Path)
     args = parser.parse_args()
     validate(args.root.resolve(), args.output.resolve(), args.client.resolve(), args.controller.resolve())
-    print("Ver21 R4 release-doc packaging: PASS")
+    print("Ver21 R5 release-doc packaging: PASS")
 
 
 if __name__ == "__main__":

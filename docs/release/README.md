@@ -204,14 +204,14 @@ Operational additions include queued SMTP and PagerDuty notifications, persisten
 
 Use `V20_PRODUCTION_ACCEPTANCE_TESTS.md` for the exact 49-record acceptance test and `V20_OPERATOR_DEMO_GUIDE.md` for the complete tab-by-tab demonstration. `V20_SUBSYSTEM_ORCHESTRATION.md` explains which subsystems run on ordinary traffic and which run only during evidence-gated recovery.
 
-This directory documents the supported Ver21 Release 4 path. It builds source-derived static Linux binaries in a digest-pinned Go image, creates genuine RPMs with `rpmbuild` in a digest-pinned Rocky image, performs a two-pass byte-for-byte reproducibility check, and emits checksums, SPDX SBOM, release manifest, binary provenance, and an in-toto/SLSA provenance statement.
+This directory documents the supported Ver21 Release 5 path. It builds source-derived static Linux binaries in a digest-pinned Go image, creates genuine RPMs with `rpmbuild` in a digest-pinned Rocky image, performs a two-pass byte-for-byte reproducibility check, and emits checksums, SPDX SBOM, release manifest, binary provenance, and an in-toto/SLSA provenance statement.
 
 ## Safety and prerequisites
 
 - Release input must be one clean, committed, frozen Git revision. Dirty or untracked source is refused.
 - Outputs go to `NLI_BUILD_SCRATCH` or an explicit output directory; the repository `dist` directory is never used.
 - Public Ver21 RPM aliases are `nli_client_ver21.rpm` and `nli_controller_agent_ver21.rpm`; no misspelled `nli_clinet_*` artifact is generated.
-- Release 4 preserves the stable `nli-client` and `nli-controller-agent` package identities while Rocky lifecycle checks remain separate deployment-environment qualification gates.
+- Release 5 preserves the stable `nli-client` and `nli-controller-agent` package identities while Rocky lifecycle checks remain separate deployment-environment qualification gates.
 - The release remains unsigned unless an explicit signing key is supplied. Unsigned output must never be described as signed.
 - Operators receive one `nli-v<version>-<release>-x86_64.tar.gz` archive plus its external `.sha256`. The archive contains `RELEASE_ID`, all RPM/web/operator artifacts, and the complete internal checksum manifest. It must be extracted into a fresh versioned directory.
 
