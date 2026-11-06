@@ -130,7 +130,7 @@ expected_assets=$(wc -l <"$ARTIFACT_DIR/WEBVIEW_SHA256SUMS")
 web_entries=$(unzip -Z1 "$web")
 zip_assets=$(grep -vc '/$' <<<"$web_entries")
 rpm_assets=$(rpm -qp --dump "$controller" | awk '$1 ~ "^/usr/share/nli/webview_ver21/" && $5 ~ /^010/ {count++} END {print count+0}')
-[[ $expected_assets -eq 9 && $expected_assets -eq $zip_assets && $expected_assets -eq $rpm_assets ]] || fail "WebView asset counts differ or include unexpected files: manifest=$expected_assets zip=$zip_assets rpm=$rpm_assets"
+[[ $expected_assets -eq 11 && $expected_assets -eq $zip_assets && $expected_assets -eq $rpm_assets ]] || fail "WebView asset counts differ or include unexpected files: manifest=$expected_assets zip=$zip_assets rpm=$rpm_assets"
 for forbidden in e2e.spec.js package.json playwright.config.js; do
   ! grep -Fq "/$forbidden" <<<"$web_entries" || fail "WebView ZIP contains development-only asset $forbidden"
   ! grep -Fq "/usr/share/nli/webview_ver21/$forbidden" <<<"$controller_payload" || fail "controller RPM contains development-only asset $forbidden"
