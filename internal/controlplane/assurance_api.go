@@ -1080,7 +1080,7 @@ func (s *Server) handleAssuranceParser(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "parser is not awaiting review", 409)
 			return
 		}
-		if doc.CreatedBy == p.Username {
+		if !principalCanReviewChange(p, doc.CreatedBy) {
 			jsonError(w, "creator cannot reject their own parser", 409)
 			return
 		}

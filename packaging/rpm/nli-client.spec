@@ -52,7 +52,7 @@ install -m 0644 configs/outputs.example.json %{buildroot}%{_docdir}/%{name}/outp
 install -m 0644 systemd/nli-agent.service systemd/nli-client-control.service systemd/nli-client-bootstrap.service %{buildroot}/usr/lib/systemd/system/
 install -m 0644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 install -m 0644 PARSER_CATALOG.md %{buildroot}%{_docdir}/%{name}/PARSER_CATALOG.md
-install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
+install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
 install -m 0644 metrics/README.md metrics/metric-catalog.json metrics/prometheus-scrape.yml metrics/grafana-dashboard.json %{buildroot}%{_datadir}/nli/metrics/
 
 %pre
@@ -127,9 +127,14 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %doc %{_docdir}/%{name}/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md
 %doc %{_docdir}/%{name}/V21_R5_RELEASE_NOTES.md
 %doc %{_docdir}/%{name}/V21_R5_TEST_RESULTS.md
+%doc %{_docdir}/%{name}/V21_R6_RELEASE_NOTES.md
+%doc %{_docdir}/%{name}/V21_R6_TEST_RESULTS.md
 %doc %{_docdir}/%{name}/VER21_IMPLEMENTATION_PLAN.md
 
 %changelog
+* Fri Nov 06 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-6
+- Publish role-based administrator review and durable quarantine recovery fixes.
+
 * Wed Nov 04 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-5
 - Publish QRW Steps 3-4 mapping, extraction, and lifecycle visibility documentation.
 

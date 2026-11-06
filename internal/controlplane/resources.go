@@ -857,7 +857,7 @@ func (s *Server) handleAIProposal(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "AI proposal is not awaiting review", http.StatusConflict)
 		return
 	}
-	if doc.CreatedBy == principal.Username {
+	if !principalCanReviewChange(principal, doc.CreatedBy) {
 		jsonError(w, "proposal creator cannot approve their own proposal", http.StatusConflict)
 		return
 	}
@@ -1422,10 +1422,6 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 		if strings.HasPrefix(verified.ValidationMode, "legacy_") && strings.EqualFold(strings.TrimSpace(approval.ExpectedBundleHash), verified.StoredHash) {
 			approval.ExpectedBundleHash = verified.CanonicalHash
 		}
-	}
-	if doc.CreatedBy == principal.Username && proposalType != rolloutTypeParserSync {
-		jsonError(w, "creator cannot approve own rollout; emergency self-approval is limited to exact parser bundle proposals", http.StatusConflict)
-		return
 	}
 	approvalMode, approvalAudit, approvalErr := s.approvalMode(doc, principal, approval, proposalBundleHash, "bundle_hash")
 	if approvalErr != nil {

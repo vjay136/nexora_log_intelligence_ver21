@@ -26,11 +26,12 @@ import (
 )
 
 const (
-	quarantineRecordsCollection = "quarantine-records"
-	quarantineRawCollection     = "quarantine-raw"
-	quarantineHistoryCollection = "quarantine-history"
-	maxQuarantineRawBytes       = 1 << 20
-	maxQuarantineBatchRecords   = 1000
+	quarantineRecordsCollection      = "quarantine-records"
+	quarantineRawCollection          = "quarantine-raw"
+	quarantineHistoryCollection      = "quarantine-history"
+	quarantineDispositionsCollection = "quarantine-dispositions"
+	maxQuarantineRawBytes            = 1 << 20
+	maxQuarantineBatchRecords        = 1000
 )
 
 type quarantineVault struct {
@@ -44,24 +45,25 @@ type quarantineVault struct {
 }
 
 type quarantineRecord struct {
-	ID             string    `json:"id"`
-	NodeID         string    `json:"node_id"`
-	Service        string    `json:"service"`
-	Hash           string    `json:"hash"`
-	FirstSeen      time.Time `json:"first_seen"`
-	LastAttempt    time.Time `json:"last_attempt"`
-	RetryAfter     time.Time `json:"retry_after,omitempty"`
-	AttemptCount   int       `json:"attempt_count"`
-	Status         string    `json:"status"`
-	ErrorCodes     []string  `json:"error_codes,omitempty"`
-	ParserRevision string    `json:"parser_revision,omitempty"`
-	SourcePath     string    `json:"source_path,omitempty"`
-	SourceLine     uint64    `json:"source_line,omitempty"`
-	RawAvailable   bool      `json:"raw_available"`
-	RawExpiresAt   time.Time `json:"raw_expires_at,omitempty"`
-	ExcludedAt     time.Time `json:"excluded_at,omitempty"`
-	ExcludedBy     string    `json:"excluded_by,omitempty"`
-	ExcludeReason  string    `json:"exclude_reason,omitempty"`
+	ID              string    `json:"id"`
+	NodeID          string    `json:"node_id"`
+	Service         string    `json:"service"`
+	Hash            string    `json:"hash"`
+	FirstSeen       time.Time `json:"first_seen"`
+	LastAttempt     time.Time `json:"last_attempt"`
+	RetryAfter      time.Time `json:"retry_after,omitempty"`
+	AttemptCount    int       `json:"attempt_count"`
+	Status          string    `json:"status"`
+	ErrorCodes      []string  `json:"error_codes,omitempty"`
+	ParserRevision  string    `json:"parser_revision,omitempty"`
+	ReplayRolloutID string    `json:"replay_rollout_id,omitempty"`
+	SourcePath      string    `json:"source_path,omitempty"`
+	SourceLine      uint64    `json:"source_line,omitempty"`
+	RawAvailable    bool      `json:"raw_available"`
+	RawExpiresAt    time.Time `json:"raw_expires_at,omitempty"`
+	ExcludedAt      time.Time `json:"excluded_at,omitempty"`
+	ExcludedBy      string    `json:"excluded_by,omitempty"`
+	ExcludeReason   string    `json:"exclude_reason,omitempty"`
 }
 
 // A quarantine row is actionable in the repair workflow only while it is in
@@ -74,6 +76,10 @@ func isActionableQuarantineRecord(record quarantineRecord) bool {
 	default:
 		return false
 	}
+}
+
+func isQuarantineDisposition(status string) bool {
+	return status == "excluded" || status == "evidence_deleted"
 }
 
 type sealedQuarantineRaw struct {
@@ -194,10 +200,13 @@ func (s *Server) handleNodeQuarantineRecords(w http.ResponseWriter, r *http.Requ
 		}
 		accepted++
 		if s.quarantine.enabled && request.RawIncluded && record.Raw != "" {
-			rawStored++
+			stored, _, err := s.getQuarantineRecord(r.Context(), safeID(record.ID))
+			if err == nil && stored.RawAvailable && !isQuarantineDisposition(stored.Status) {
+				rawStored++
+			}
 		}
 	}
-	jsonCreated(w, map[string]any{"status": "accepted", "accepted": accepted, "raw_stored": rawStored, "raw_available": s.quarantine.enabled && request.RawIncluded})
+	jsonCreated(w, map[string]any{"status": "accepted", "accepted": accepted, "raw_stored": rawStored, "raw_available": rawStored > 0})
 }
 
 type quarantineRecordInput struct {
@@ -260,7 +269,21 @@ func (s *Server) storeQuarantineRecord(ctx context.Context, input quarantineReco
 	v := s.quarantine
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if err := s.expireQuarantineRaw(ctx, now); err != nil {
+	if err := s.expireQuarantineRawLocked(ctx, now); err != nil {
+		return err
+	}
+	// Dispositions outlive bounded queue pruning. A repeated client upload is
+	// not an operator request to include the record or retain deleted evidence.
+	if doc, err := v.store.Get(ctx, quarantineDispositionsCollection, id, 0); err == nil {
+		var disposition quarantineRecord
+		if err := json.Unmarshal(doc.Payload, &disposition); err != nil {
+			return err
+		}
+		if disposition.Hash != "" && hash != "" && disposition.Hash != hash {
+			return errors.New("record ID is already bound to a different hash")
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	existingDoc, getErr := v.store.Get(ctx, quarantineRecordsCollection, id, 0)
@@ -270,8 +293,14 @@ func (s *Server) storeQuarantineRecord(ctx context.Context, input quarantineReco
 		if existing.Hash != "" && hash != "" && existing.Hash != hash {
 			return errors.New("record ID is already bound to a different hash")
 		}
-		if existing.Status == "resolved" || existing.Status == "reprocessing" {
+		if isQuarantineDisposition(existing.Status) {
+			return s.putQuarantineDisposition(ctx, existing, existingDoc.CreatedBy)
+		}
+		if existing.Status == "resolved" || existing.Status == "reprocessing" || existing.Status == "replay_failed" || existing.Status == "dead_letter" || existing.Status == "manual_attention" {
 			status = existing.Status
+		}
+		if existing.ReplayRolloutID != "" && existing.ParserRevision != "" {
+			input.ParserRevision = existing.ParserRevision
 		}
 		if input.AttemptCount < existing.AttemptCount {
 			input.AttemptCount = existing.AttemptCount
@@ -285,7 +314,7 @@ func (s *Server) storeQuarantineRecord(ctx context.Context, input quarantineReco
 	} else if !errors.Is(getErr, os.ErrNotExist) {
 		return getErr
 	}
-	meta := quarantineRecord{ID: id, NodeID: input.NodeID, Service: input.Service, Hash: hash, FirstSeen: input.FirstSeen.UTC(), LastAttempt: input.LastAttempt.UTC(), AttemptCount: input.AttemptCount, Status: status, ErrorCodes: append([]string(nil), input.ErrorCodes...), ParserRevision: input.ParserRevision, SourcePath: input.SourcePath, SourceLine: input.SourceLine, RawAvailable: existing.RawAvailable, RawExpiresAt: existing.RawExpiresAt}
+	meta := quarantineRecord{ID: id, NodeID: input.NodeID, Service: input.Service, Hash: hash, FirstSeen: input.FirstSeen.UTC(), LastAttempt: input.LastAttempt.UTC(), RetryAfter: existing.RetryAfter, AttemptCount: input.AttemptCount, Status: status, ErrorCodes: append([]string(nil), input.ErrorCodes...), ParserRevision: input.ParserRevision, ReplayRolloutID: existing.ReplayRolloutID, SourcePath: input.SourcePath, SourceLine: input.SourceLine, RawAvailable: existing.RawAvailable, RawExpiresAt: existing.RawExpiresAt}
 	storeRaw := v.enabled && rawIncluded && input.Raw != "" && !meta.RawAvailable
 	if storeRaw {
 		if len(input.Raw) > maxQuarantineRawBytes {
@@ -331,6 +360,15 @@ func (s *Server) pruneQuarantine(ctx context.Context) error {
 	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.Before(docs[j].CreatedAt) })
 	remove := len(docs) - s.quarantine.max + 1
 	for _, doc := range docs[:remove] {
+		var record quarantineRecord
+		if err := json.Unmarshal(doc.Payload, &record); err != nil {
+			return err
+		}
+		if isQuarantineDisposition(record.Status) {
+			if err := s.putQuarantineDisposition(ctx, record, doc.CreatedBy); err != nil {
+				return err
+			}
+		}
 		_ = s.quarantine.store.Delete(ctx, quarantineRawCollection, doc.ID, true, "controller")
 		if err := s.quarantine.store.Delete(ctx, quarantineRecordsCollection, doc.ID, true, "controller"); err != nil {
 			return err
@@ -340,6 +378,12 @@ func (s *Server) pruneQuarantine(ctx context.Context) error {
 }
 
 func (s *Server) expireQuarantineRaw(ctx context.Context, now time.Time) error {
+	s.quarantine.mu.Lock()
+	defer s.quarantine.mu.Unlock()
+	return s.expireQuarantineRawLocked(ctx, now)
+}
+
+func (s *Server) expireQuarantineRawLocked(ctx context.Context, now time.Time) error {
 	docs, err := s.quarantine.store.List(ctx, quarantineRawCollection, metastore.Query{Limit: 1000})
 	if err != nil {
 		return err
@@ -373,11 +417,25 @@ func (s *Server) getQuarantineRecord(ctx context.Context, id string) (quarantine
 }
 
 func (s *Server) putQuarantineRecord(ctx context.Context, record quarantineRecord, createdBy string) error {
+	if isQuarantineDisposition(record.Status) {
+		if err := s.putQuarantineDisposition(ctx, record, createdBy); err != nil {
+			return err
+		}
+	}
 	payload, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}
 	_, err = s.quarantine.store.Put(ctx, metastore.Document{Collection: quarantineRecordsCollection, ID: record.ID, State: record.Status, Payload: payload, CreatedBy: createdBy})
+	return err
+}
+
+func (s *Server) putQuarantineDisposition(ctx context.Context, record quarantineRecord, createdBy string) error {
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	_, err = s.quarantine.store.Put(ctx, metastore.Document{Collection: quarantineDispositionsCollection, ID: record.ID, State: record.Status, Payload: payload, CreatedBy: createdBy})
 	return err
 }
 
@@ -568,11 +626,6 @@ func (s *Server) handleQuarantineDisposition(w http.ResponseWriter, r *http.Requ
 		jsonError(w, "invalid record ID", http.StatusBadRequest)
 		return
 	}
-	record, doc, err := s.getQuarantineRecord(r.Context(), id)
-	if err != nil {
-		jsonError(w, "quarantine record not found", http.StatusNotFound)
-		return
-	}
 	var reason string
 	if exclude {
 		var request struct {
@@ -587,8 +640,19 @@ func (s *Server) handleQuarantineDisposition(w http.ResponseWriter, r *http.Requ
 			jsonError(w, "exclusion reason must contain 1..256 characters", http.StatusBadRequest)
 			return
 		}
-		if record.Status == "resolved" || record.Status == "reprocessing" {
-			jsonError(w, "resolved or reprocessing records cannot be excluded", http.StatusConflict)
+	}
+	// Read request bodies before taking the queue lock so a slow caller cannot
+	// hold up uploads, retention polling, or unrelated operator dispositions.
+	s.quarantine.mu.Lock()
+	defer s.quarantine.mu.Unlock()
+	record, doc, err := s.getQuarantineRecord(r.Context(), id)
+	if err != nil {
+		jsonError(w, "quarantine record not found", http.StatusNotFound)
+		return
+	}
+	if exclude {
+		if record.Status == "resolved" || record.Status == "reprocessing" || record.Status == "evidence_deleted" {
+			jsonError(w, "resolved, reprocessing or evidence-deleted records cannot be excluded", http.StatusConflict)
 			return
 		}
 		if record.Status == "excluded" {
@@ -599,6 +663,10 @@ func (s *Server) handleQuarantineDisposition(w http.ResponseWriter, r *http.Requ
 	} else {
 		if record.Status != "excluded" {
 			jsonError(w, "only excluded records can be returned to the queue", http.StatusConflict)
+			return
+		}
+		if err := s.quarantine.store.Delete(r.Context(), quarantineDispositionsCollection, id, true, principal.Username); err != nil && !errors.Is(err, os.ErrNotExist) {
+			jsonError(w, "quarantine disposition could not be cleared", http.StatusServiceUnavailable)
 			return
 		}
 		record.Status, record.ExcludedAt, record.ExcludedBy, record.ExcludeReason = "waiting", time.Time{}, "", ""
@@ -631,6 +699,8 @@ func (s *Server) handleQuarantineRawDelete(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "invalid record ID", http.StatusBadRequest)
 		return
 	}
+	s.quarantine.mu.Lock()
+	defer s.quarantine.mu.Unlock()
 	record, doc, err := s.getQuarantineRecord(r.Context(), id)
 	if err != nil {
 		jsonError(w, "quarantine record not found", http.StatusNotFound)
@@ -642,12 +712,13 @@ func (s *Server) handleQuarantineRawDelete(w http.ResponseWriter, r *http.Reques
 	}
 	now := time.Now().UTC()
 	record.RawAvailable, record.RawExpiresAt = false, time.Time{}
-	if record.Status == "waiting" || record.Status == "replay_failed" {
+	if record.Status != "evidence_deleted" {
 		record.Status = "evidence_deleted"
 		record.ExcludedAt = now
 		record.ExcludedBy = principal.Username
 		record.ExcludeReason = "retained raw evidence deleted; metadata retained for audit"
 	}
+	record.RetryAfter = time.Time{}
 	if err := s.putQuarantineRecord(r.Context(), record, doc.CreatedBy); err != nil {
 		jsonError(w, "evidence deleted but record metadata could not be updated", http.StatusServiceUnavailable)
 		return
@@ -685,6 +756,10 @@ func (s *Server) handleQuarantineAnalyze(w http.ResponseWriter, r *http.Request,
 	record, _, err := s.getQuarantineRecord(r.Context(), id)
 	if err != nil {
 		jsonError(w, "quarantine record not found", http.StatusNotFound)
+		return
+	}
+	if isQuarantineDisposition(record.Status) {
+		jsonError(w, "record is no longer actionable; explicitly include an excluded record before analysis", http.StatusConflict)
 		return
 	}
 	rawDoc, err := s.quarantine.store.Get(r.Context(), quarantineRawCollection, id, 0)
@@ -873,6 +948,8 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "target node is not enrolled", http.StatusNotFound)
 		return
 	}
+	s.quarantine.mu.Lock()
+	defer s.quarantine.mu.Unlock()
 	unique := map[string]bool{}
 	for _, id := range request.RecordIDs {
 		id = safeID(id)
@@ -967,6 +1044,7 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 		record.Status = "reprocessing"
+		record.ReplayRolloutID = rollout.ID
 		record.AttemptCount++
 		record.LastAttempt = now
 		if err := s.putQuarantineRecord(r.Context(), record, doc.CreatedBy); err != nil {
@@ -994,6 +1072,8 @@ func (s *Server) recordQuarantineReplayResult(ctx context.Context, rolloutID, no
 	if json.Unmarshal(rollout.Payload, &payload) != nil || payload.NodeID != nodeID {
 		return
 	}
+	s.quarantine.mu.Lock()
+	defer s.quarantine.mu.Unlock()
 	// The agent reports per-record outcomes as a compact JSON object in the
 	// command result message. Bound and validate it because this field crosses
 	// the authenticated node boundary and is persisted in operator history.
@@ -1048,6 +1128,12 @@ func (s *Server) recordQuarantineReplayResult(ctx context.Context, rolloutID, no
 	for _, id := range payload.RecordIDs {
 		record, doc, err := s.getQuarantineRecord(ctx, id)
 		if err != nil {
+			continue
+		}
+		// Acknowledgements may be retried or arrive after a later replay. Only
+		// the in-flight command may complete this record; an old result must
+		// never reopen a resolved row or overwrite the current replay.
+		if record.Status != "reprocessing" || (record.ReplayRolloutID != "" && record.ReplayRolloutID != rolloutID) {
 			continue
 		}
 		status, detail := "waiting", "Replay completed without a valid per-record outcome; record remains queued for review."

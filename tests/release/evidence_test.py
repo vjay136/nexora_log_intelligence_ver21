@@ -51,6 +51,8 @@ class EvidenceGeneratorTest(unittest.TestCase):
                 "V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md",
                 "V21_R5_RELEASE_NOTES.md",
                 "V21_R5_TEST_RESULTS.md",
+                "V21_R6_RELEASE_NOTES.md",
+                "V21_R6_TEST_RESULTS.md",
                 "VER21_IMPLEMENTATION_PLAN.md",
                 "BENCHMARKS.txt",
                 "SAMPLE_FIELD_ACCOUNTING.json",

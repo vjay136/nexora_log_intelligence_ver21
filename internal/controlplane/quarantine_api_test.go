@@ -232,6 +232,110 @@ func TestQuarantineRetentionDisabledKeepsMetadataButNeverRaw(t *testing.T) {
 	}
 }
 
+func TestQuarantineTerminalDispositionsSurviveUploadsReplayAndPruning(t *testing.T) {
+	f := newAPIFixture(t)
+	enableTestQuarantineRetention(t, f)
+	ctx := context.Background()
+	for _, action := range []string{"exclude", "delete"} {
+		id := "q-terminal-" + action
+		input := quarantineRecordInput{ID: id, NodeID: "node-1", Service: "mail", Raw: "retained " + action, Status: "waiting", AttemptCount: 5}
+		if err := f.server.storeQuarantineRecord(ctx, input, true); err != nil {
+			t.Fatal(err)
+		}
+		method, path, body := http.MethodPost, "/api/v1/quarantine/records/"+id+"/exclude", map[string]any{"reason": "operator reviewed"}
+		if action == "delete" {
+			method, path, body = http.MethodDelete, "/api/v1/quarantine/records/"+id+"/raw", map[string]any{}
+		}
+		response, data := f.request(method, path, body)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s: %d %s", action, response.StatusCode, data)
+		}
+		before, _, err := f.server.getQuarantineRecord(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input.AttemptCount = 99
+		if err := f.server.storeQuarantineRecord(ctx, input, true); err != nil {
+			t.Fatal(err)
+		}
+		rollout, err := f.server.rollouts.Create(rolloutTypeReplay, "late replay", "admin", []string{"node-1"}, map[string]any{"node_id": "node-1", "record_ids": []string{id}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.server.recordQuarantineReplayResult(ctx, rollout.ID, "node-1", rolloutStatusFailed, "late command failure")
+		after, _, err := f.server.getQuarantineRecord(ctx, id)
+		if err != nil || after.Status != before.Status || after.ExcludedBy != before.ExcludedBy || after.ExcludeReason != before.ExcludeReason || !after.ExcludedAt.Equal(before.ExcludedAt) || after.AttemptCount != before.AttemptCount || after.RawAvailable != before.RawAvailable {
+			t.Fatalf("terminal disposition changed: before=%+v after=%+v err=%v", before, after, err)
+		}
+		if action == "delete" {
+			if _, err := f.server.quarantine.store.Get(ctx, quarantineRawCollection, id, 0); !os.IsNotExist(err) {
+				t.Fatalf("deleted raw was retained again: %v", err)
+			}
+		}
+	}
+	response, data := f.request(http.MethodGet, "/api/v1/navigation/counts", nil)
+	for _, page := range []string{"quarantine-wizard", "upes", "unknowns"} {
+		if response.StatusCode != http.StatusOK || navigationPageCount(t, data, page) != 0 {
+			t.Fatalf("terminal record counted in %s: %d %s", page, response.StatusCode, data)
+		}
+	}
+	response, data = f.request(http.MethodGet, "/api/v1/quarantine/summary", nil)
+	var summary map[string]int
+	if err := json.Unmarshal(data, &summary); err != nil || summary["waiting"] != 0 || summary["actionable"] != 0 || summary["total"] != 2 {
+		t.Fatalf("terminal summary: %d %s err=%v", response.StatusCode, data, err)
+	}
+	replay := f.server.replayQueueSnapshot(ctx, time.Now().UTC())
+	if replay["queued"] != 0 || replay["state"] != "idle" {
+		t.Fatalf("terminal records entered replay/UPES queue: %#v", replay)
+	}
+	// Force bounded queue pruning, then reopen the durable local store. Neither
+	// deleting old queue rows nor restarting may erase the operator disposition.
+	f.server.quarantine.max = 1
+	if err := f.server.storeQuarantineRecord(ctx, quarantineRecordInput{ID: "q-new", NodeID: "node-1", Status: "waiting"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.quarantine.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := newQuarantineVault(f.server.cfg, f.server.metadata, f.server.quarantine.audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.server.quarantine = reopened
+	for _, action := range []string{"exclude", "delete"} {
+		id := "q-terminal-" + action
+		if err := f.server.storeQuarantineRecord(ctx, quarantineRecordInput{ID: id, NodeID: "node-1", Raw: "retained " + action, Status: "waiting"}, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := f.server.getQuarantineRecord(ctx, id); !os.IsNotExist(err) {
+			t.Fatalf("pruned terminal record %s reappeared after restart: %v", id, err)
+		}
+	}
+}
+
+func TestQuarantineRawDeleteRetiresManualAttentionAndInFlightRecords(t *testing.T) {
+	f := newAPIFixture(t)
+	enableTestQuarantineRetention(t, f)
+	for _, status := range []string{"dead_letter", "manual_attention", "reprocessing", "excluded", "resolved"} {
+		id := "q-delete-" + status
+		if err := f.server.storeQuarantineRecord(context.Background(), quarantineRecordInput{ID: id, NodeID: "node-1", Raw: status, Status: status, AttemptCount: 5}, true); err != nil {
+			t.Fatal(err)
+		}
+		response, data := f.request(http.MethodDelete, "/api/v1/quarantine/records/"+id+"/raw", map[string]any{})
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("delete %s: %d %s", status, response.StatusCode, data)
+		}
+		record, _, err := f.server.getQuarantineRecord(context.Background(), id)
+		if err != nil || record.Status != "evidence_deleted" || record.RawAvailable || !record.RetryAfter.IsZero() {
+			t.Fatalf("deleted %s remains active: %+v err=%v", status, record, err)
+		}
+		response, data = f.request(http.MethodPost, "/api/v1/quarantine/records/"+id+"/exclude", map[string]any{"reason": "cannot undo deletion"})
+		if response.StatusCode != http.StatusConflict {
+			t.Fatalf("deleted evidence can be included through exclude: %d %s", response.StatusCode, data)
+		}
+	}
+}
+
 func TestQuarantineReplayResultUpdatesRecordsPerAgentConfirmation(t *testing.T) {
 	f := newAPIFixture(t)
 	for _, item := range []struct{ id, revision string }{{"q-resolved", "old-1"}, {"q-still-waiting", "old-2"}, {"q-omitted", "old-3"}, {"q-telemetry", "old-4"}, {"q-missing", "old-5"}} {
@@ -257,6 +361,45 @@ func TestQuarantineReplayResultUpdatesRecordsPerAgentConfirmation(t *testing.T) 
 		if got.ParserRevision != revisions[id] {
 			t.Errorf("record %s parser revision=%q, want %q", id, got.ParserRevision, revisions[id])
 		}
+	}
+}
+
+func TestQuarantineReplayIgnoresStaleAndDuplicateAcknowledgements(t *testing.T) {
+	f := newAPIFixture(t)
+	ctx := context.Background()
+	rollouts := make([]*rolloutRecord, 0, 2)
+	for i := 0; i < 2; i++ {
+		rollout, err := f.server.rollouts.Create(rolloutTypeReplay, "test replay", "admin", []string{"node-1"}, map[string]any{"node_id": "node-1", "record_ids": []string{"q-current-replay"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rollouts = append(rollouts, rollout)
+	}
+	if err := f.server.storeQuarantineRecord(ctx, quarantineRecordInput{ID: "q-current-replay", NodeID: "node-1", Status: "reprocessing"}, false); err != nil {
+		t.Fatal(err)
+	}
+	record, doc, err := f.server.getQuarantineRecord(ctx, "q-current-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.ReplayRolloutID = rollouts[1].ID
+	if err := f.server.putQuarantineRecord(ctx, record, doc.CreatedBy); err != nil {
+		t.Fatal(err)
+	}
+	// An ordinary client upload must preserve the controller command binding.
+	if err := f.server.storeQuarantineRecord(ctx, quarantineRecordInput{ID: record.ID, NodeID: "node-1", Status: "waiting"}, false); err != nil {
+		t.Fatal(err)
+	}
+	f.server.recordQuarantineReplayResult(ctx, rollouts[0].ID, "node-1", rolloutStatusFailed, "late failure")
+	record, _, err = f.server.getQuarantineRecord(ctx, record.ID)
+	if err != nil || record.Status != "reprocessing" || record.ReplayRolloutID != rollouts[1].ID {
+		t.Fatalf("stale acknowledgement changed the current replay: %+v err=%v", record, err)
+	}
+	f.server.recordQuarantineReplayResult(ctx, rollouts[1].ID, "node-1", rolloutStatusCompleted, `{"resolved_ids":["q-current-replay"]}`)
+	f.server.recordQuarantineReplayResult(ctx, rollouts[1].ID, "node-1", rolloutStatusFailed, "duplicate conflicting result")
+	record, _, err = f.server.getQuarantineRecord(ctx, record.ID)
+	if err != nil || record.Status != "resolved" || !record.RetryAfter.IsZero() {
+		t.Fatalf("duplicate acknowledgement reopened the resolved record: %+v err=%v", record, err)
 	}
 }
 

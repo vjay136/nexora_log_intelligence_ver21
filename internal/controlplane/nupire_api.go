@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"nexora.local/nli-v20/internal/auth"
 	"nexora.local/nli-v20/internal/middleware"
 	"nexora.local/nli-v20/internal/nupire"
 )
@@ -20,7 +21,7 @@ type nupireController interface {
 	CreateDiscovery(string, nupire.Provenance, string) (map[string]any, error)
 	SubmitArtifact(string, json.RawMessage, string) (map[string]any, error)
 	Evaluate(string, string, nupire.Metrics, []string) (map[string]any, error)
-	Transition(context.Context, string, string, string) (map[string]any, error)
+	Transition(context.Context, string, string, string, bool) (map[string]any, error)
 }
 
 type persistentNUPIREController struct{ store *nupire.Store }
@@ -79,12 +80,18 @@ func (c persistentNUPIREController) Evaluate(id, actor string, metrics nupire.Me
 	}
 	return nupireRecordView(record), nil
 }
-func (c persistentNUPIREController) Transition(_ context.Context, id, action, actor string) (map[string]any, error) {
+func (c persistentNUPIREController) Transition(_ context.Context, id, action, actor string, adminApproval bool) (map[string]any, error) {
 	state, ok := map[string]nupire.State{"shadow": nupire.Shadow, "approve": nupire.Approval, "canary": nupire.Canary, "promote": nupire.Promoted, "drift": nupire.Drifted, "rollback": nupire.RolledBack}[action]
 	if !ok {
 		return nil, nupire.ErrTransition
 	}
-	record, err := c.store.Transition(id, state, actor, "controller API action: "+action)
+	var record nupire.Record
+	var err error
+	if state == nupire.Approval && adminApproval {
+		record, err = c.store.ApproveAsAdmin(id, actor, "controller API administrator approval")
+	} else {
+		record, err = c.store.Transition(id, state, actor, "controller API action: "+action)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +263,7 @@ func (s *Server) nupireCandidateMutation(w http.ResponseWriter, r *http.Request,
 		result, err = s.nupire.Evaluate(id, p.Username, input.Metrics, input.HeldOutIDs)
 	default:
 		if strings.HasPrefix(action, "action:") {
-			result, err = s.nupire.Transition(r.Context(), id, strings.TrimPrefix(action, "action:"), p.Username)
+			result, err = s.nupire.Transition(r.Context(), id, strings.TrimPrefix(action, "action:"), p.Username, p.Role == auth.RoleAdmin)
 		} else {
 			s.auditAction(p, "nupire.operation", "nupire-candidates/"+id, "failure", map[string]string{"reason": "unknown_operation"})
 			jsonError(w, "unknown NUPIRE candidate operation", http.StatusNotFound)

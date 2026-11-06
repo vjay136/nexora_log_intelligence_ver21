@@ -2,9 +2,9 @@
 
 ## Source and release boundary
 
-- Authoritative R5 source: the published Ver21 R4 tag `v21.0.0-4` at commit `7b2bcbb73fb26dbffe5cc382cbc0b5b5c473e15a`.
-- Ver20 R6 remains historical migration evidence only and is not the R5 implementation base.
-- Working release: Ver21 `21.0.0-5` in the dedicated Ver21 repository.
+- Authoritative R6 source baseline: verified Ver21 R5 (`v21.0.0-5`); R6 work starts at commit `64dbb2f1292efe3fea417f0adf97acffcd026730`.
+- Ver20 R6 remains historical migration evidence only and is not the R6 implementation base.
+- Working release: Ver21 `21.0.0-6` in the dedicated Ver21 repository.
 - Compatibility boundary: retain RPM package identities, systemd units, and state/configuration paths so an in-place upgrade does not fork production state. Published artifacts use Ver21-only filenames.
 - No feature is permitted to fabricate parser readiness, telemetry, client acknowledgements, or AI results.
 
@@ -55,4 +55,4 @@
 - Offboarded managed parsers disappear from the next applied client overlay.
 - Anonymous login probing creates no system-error notification.
 - AI credentials never appear in API responses, logs, notifications, or downloaded configuration.
-- All release workflows and published artifacts identify Ver21 `21.0.0-5` while retaining documented upgrade-compatible package/service names.
+- All release workflows and published artifacts identify Ver21 `21.0.0-6` while retaining documented upgrade-compatible package/service names.

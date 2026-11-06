@@ -223,7 +223,7 @@ func (s *Store) Evaluate(id, actor string, m Metrics, heldOutIDs []string) (Reco
 		return Record{}, err
 	}
 	if !s.eligible(m) {
-		return s.transitionLocked(id, Rejected, actor, "evidence did not meet promotion policy")
+		return s.transitionLocked(id, Rejected, actor, "evidence did not meet promotion policy", false)
 	}
 	return clone(r), nil
 }
@@ -235,10 +235,19 @@ func (s *Store) eligible(m Metrics) bool {
 func (s *Store) Transition(id string, to State, actor, reason string) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.transitionLocked(id, to, actor, reason)
+	return s.transitionLocked(id, to, actor, reason, false)
 }
 
-func (s *Store) transitionLocked(id string, to State, actor, reason string) (Record, error) {
+// ApproveAsAdmin is reserved for callers that have authenticated and authorized
+// the actor as an administrator. Other callers retain independent approval via
+// Transition. All evidence and lifecycle checks still apply.
+func (s *Store) ApproveAsAdmin(id, actor, reason string) (Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.transitionLocked(id, Approval, actor, reason, true)
+}
+
+func (s *Store) transitionLocked(id string, to State, actor, reason string, adminApproval bool) (Record, error) {
 	r, ok := s.records[id]
 	if !ok {
 		return Record{}, ErrNotFound
@@ -261,7 +270,7 @@ func (s *Store) transitionLocked(id string, to State, actor, reason string) (Rec
 		if strings.TrimSpace(actor) == "" {
 			return Record{}, errors.New("approval actor is required")
 		}
-		if actor == r.Provenance.CreatedBy {
+		if actor == r.Provenance.CreatedBy && !adminApproval {
 			return Record{}, errors.New("candidate creator cannot approve their own candidate")
 		}
 	}

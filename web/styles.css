@@ -256,4 +256,5 @@ body.stale #stream-state{color:var(--amber);background:rgba(248,193,92,.12)}
 
 /* R4 explicit emergency actions and next-step guidance. */
 .warning{border:1px solid rgba(248,193,92,.45);border-radius:10px;padding:9px 14px;background:rgba(248,193,92,.16);color:#ffe0a0;font-weight:750}.warning:hover:not(:disabled){border-color:rgba(248,193,92,.75);background:rgba(248,193,92,.24)}
+.quarantine-wizard.nine-step li.done button{border-bottom-color:var(--green)}.quarantine-wizard.nine-step li.active:not(.done) button{border-bottom-color:var(--cyan)}.quarantine-wizard.nine-step li.locked button{border-bottom-color:var(--quiet)}
 .quarantine-wizard.nine-step li.next-required{border-color:rgba(248,193,92,.82);box-shadow:0 0 0 2px rgba(248,193,92,.12),0 10px 26px rgba(248,193,92,.08)}.quarantine-wizard.nine-step li.next-required button{background:linear-gradient(145deg,rgba(248,193,92,.16),rgba(54,215,219,.08))}.quarantine-wizard.nine-step li.next-required .qrw-step-state{color:var(--amber)}.quarantine-wizard.nine-step li.locked button{opacity:.58;cursor:not-allowed}.quarantine-wizard.nine-step li.locked button:hover{background:transparent}

@@ -1,5 +1,11 @@
 # Changelog
 
+## [21.0.0-6] - 2026-11-06
+- Allow authenticated administrator-role users to review their own changes across governed NLI approval workflows while retaining validation and audit evidence.
+- Preserve quarantine exclusion and evidence deletion across reuploads and queue pruning; prevent stale replay results from reopening disposed work.
+- Keep QRW review, rollout approval, exact client acknowledgement, replay, and verification in the same workspace with numbered, colored progress.
+- Use verified Ver21 R5 (`v21.0.0-5`) as the source, upgrade, and rollback baseline.
+
 ## [21.0.0-5] - 2026-11-04
 - Improve Guided Parser Repair Wizard Steps 3–4 with operator-defined field names and labels, plus evidence-backed position, range, key-value, and delimiter extraction.
 - Bound delimiter and string inputs, support multiword key-value values, cap automatic mapping suggestions at 128 fields, and validate overlap before saving or generating a candidate.

@@ -621,7 +621,10 @@ func TestAIFailureProposalIsDiagnosticReviewOnlyAndDoesNotRetainRaw(t *testing.T
 	}
 	id, _ := created["id"].(string)
 	response, data = f.request(http.MethodPost, "/api/v1/assurance/ai-proposals/"+id+"/approve", map[string]any{})
-	if response.StatusCode != http.StatusConflict {
-		t.Fatalf("proposal creator approved their own AI proposal: %d %s", response.StatusCode, data)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("administrator could not approve their own AI proposal: %d %s", response.StatusCode, data)
+	}
+	if decodeMap(t, data)["parser_pack_created"] != false {
+		t.Fatalf("diagnostic approval created a live parser pack: %s", data)
 	}
 }

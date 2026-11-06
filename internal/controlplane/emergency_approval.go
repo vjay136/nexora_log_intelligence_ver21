@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"nexora.local/nli-v20/internal/auth"
 	"nexora.local/nli-v20/internal/middleware"
 	metastore "nexora.local/nli-v20/internal/store"
 )
@@ -33,8 +34,16 @@ func principalHasPermission(principal *middleware.SecurityContext, permission st
 	return false
 }
 
+// principalCanReviewChange applies after the route's permission check. Only
+// an authenticated administrator may review a change they created; usernames
+// and individual emergency permissions never grant that exception.
+func principalCanReviewChange(principal *middleware.SecurityContext, createdBy string) bool {
+	return principal != nil && principal.Username != "" &&
+		(principal.Username != createdBy || principal.Role == auth.RoleAdmin)
+}
+
 // approvalMode preserves independent approval as the normal path. An
-// administrator may also approve their own parser change when they provide an
+// administrator may also approve their own change when they provide an
 // auditable reason. Emergency self-approval remains available for callers that
 // want to bind the decision to an exact revision and digest, but is no longer
 // the only way for an administrator to finish the governed QRW workflow.
@@ -49,7 +58,7 @@ func (s *Server) approvalMode(doc metastore.Document, principal *middleware.Secu
 		}
 		return "independent", details, nil
 	}
-	if !principalHasPermission(principal, middleware.PermissionEmergencyApprove) {
+	if !principalCanReviewChange(principal, doc.CreatedBy) {
 		return "", nil, fmt.Errorf("creator cannot approve own change; administrator approval permission is required")
 	}
 	reason := strings.TrimSpace(request.Reason)

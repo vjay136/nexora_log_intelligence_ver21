@@ -845,7 +845,7 @@ func (s *Server) handleParserAssetTransition(w http.ResponseWriter, r *http.Requ
 			jsonError(w, "asset is not awaiting review", http.StatusConflict)
 			return
 		}
-		if doc.CreatedBy == principal.Username {
+		if !principalCanReviewChange(principal, doc.CreatedBy) {
 			jsonError(w, "creator cannot approve own parser asset", http.StatusConflict)
 			return
 		}

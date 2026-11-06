@@ -4,7 +4,7 @@ Nexora Log Intelligence Ver21 is a deterministic, review-gated log parsing and f
 
 > Install from the single versioned release archive in a fresh directory. Verify its external `.sha256` file and the complete internal `SHA256SUMS`; never mix loose files from different releases.
 
-Release `21.0.0-5` (Ver21 R5) is the current release. Public RPM aliases, archives, installers, uninstallers, AWS helpers, and Cloudflare helpers use Ver21-only filenames. The Go module path (`nexora.local/nli-v20`), RPM package names (`nli-client` and `nli-controller-agent`), systemd services, and state/configuration paths intentionally remain stable for in-place compatibility; the WebView payload is installed under `/usr/share/nli/webview_ver21`. See [All NLI features](All_NLI_features.md), [Ver21 Release 5 notes](docs/V21_R5_RELEASE_NOTES.md), [Ver21 Release 5 test results](docs/V21_R5_TEST_RESULTS.md), and the [Ver21 Release 4 notes](docs/V21_R4_RELEASE_NOTES.md), [R4 test results](docs/V21_R4_TEST_RESULTS.md), and [R4 surgical diagnostics runbook](docs/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md) for the previous release baseline.
+Release `21.0.0-6` (Ver21 R6) is the current release, based on the verified Ver21 R5 source and packages (`v21.0.0-5`). R6 fixes administrator approvals, durable quarantine dispositions, and the in-workspace review, deployment, acknowledgement, and replay flow. Public artifacts retain Ver21 filenames and upgrade-compatible package, service, configuration, and state identities. See [All NLI features](All_NLI_features.md), [R6 release notes](docs/V21_R6_RELEASE_NOTES.md), [R6 test results](docs/V21_R6_TEST_RESULTS.md), and [R5 baseline notes](docs/V21_R5_RELEASE_NOTES.md).
 
 ## V18 upgrade baseline architecture
 

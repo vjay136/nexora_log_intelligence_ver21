@@ -232,6 +232,15 @@ func strictJSON(data []byte, target any) error {
 
 func parserDocumentView(doc metastore.Document) map[string]any {
 	view := documentView(doc)
+	// The document hash includes mutable lifecycle evidence. Approval of an
+	// Assurance parser binds its declarative artifact instead; expose that
+	// digest explicitly so catalog callers do not confuse the two contracts.
+	view["approval_checksum"] = doc.Hash
+	if payload, ok := view["payload"].(map[string]any); ok {
+		if definition, ok := payload["parser"].(map[string]any); ok {
+			view["approval_checksum"] = parserArtifactChecksum(definition)
+		}
+	}
 	status := "not_published"
 	switch doc.State {
 	case "draft", "in_review", "rejected":

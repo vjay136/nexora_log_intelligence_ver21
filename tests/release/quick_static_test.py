@@ -133,18 +133,18 @@ if "REQUIRE_PREVIOUS=0" in workflow:
 
 rocky_validation = (root / "tests/rocky/validate.sh").read_text(encoding="utf-8")
 for marker in (
-    "previous client must be the genuine Ver21 R4 RPM",
-    "previous controller must be the genuine Ver21 R4 RPM",
+    "previous client must be the genuine Ver21 R5 RPM",
+    "previous controller must be the genuine Ver21 R5 RPM",
 ):
     if marker not in rocky_validation:
         fail(f"Rocky lifecycle validation is missing previous-release gate {marker!r}")
-if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-4' }}" not in workflow:
-    fail("Ver21 lifecycle validation does not use the published Ver21 R4 baseline")
-if "name: nli-v21-r5-unsigned-release" not in workflow or "--notes-file docs/V21_R5_RELEASE_NOTES.md" not in workflow:
-    fail("Ver21 lifecycle workflow does not publish R5 artifacts and release notes")
+if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-5' }}" not in workflow:
+    fail("Ver21 lifecycle validation does not use the published Ver21 R5 baseline")
+if "name: nli-v21-r6-unsigned-release" not in workflow or "--notes-file docs/V21_R6_RELEASE_NOTES.md" not in workflow:
+    fail("Ver21 lifecycle workflow does not publish R6 artifacts and release notes")
 release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-if "NLI_VERSION=21.0.0" not in release_env or "NLI_RELEASE=5" not in release_env:
-    fail("Ver21 release identity is not 21.0.0-5")
+if "NLI_VERSION=21.0.0" not in release_env or "NLI_RELEASE=6" not in release_env:
+    fail("Ver21 release identity is not 21.0.0-6")
 if "PREVIOUS_RELEASE_REPO: ${{ github.repository }}" not in workflow:
     fail("Ver21 lifecycle validation does not use the current published repository")
 
