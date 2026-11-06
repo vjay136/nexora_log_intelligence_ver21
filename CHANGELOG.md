@@ -1,5 +1,14 @@
 # Changelog
 
+## [21.0.0-9] - 2026-11-06
+
+- Calculate dashboard totals from the selected retained time range and client scope.
+- Reject FieldSense mappings that silently discard structured suffix values while retaining explicit omission choices.
+- Add dynamic Key value EOL extraction with future keys, separator/duplicate controls and shared preview/runtime evidence.
+- Discover complete key/value suffixes without guessing malformed mixed assignments.
+- Synchronize parser deletion/restoration, exact bundle acknowledgements and persisted runtime inventory.
+- Preserve R7/R8 releases and qualify upgrade/rollback against R8.
+
 ## [21.0.0-8] - 2026-11-06
 
 - Add a central adaptive UI design registry, eight visual systems and an Appearance Design Studio with persistent nonsensitive preferences.

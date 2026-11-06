@@ -4,7 +4,7 @@ Nexora Log Intelligence Ver21 is a deterministic, review-gated log parsing and f
 
 > Install from the single versioned release archive in a fresh directory. Verify its external `.sha256` file and the complete internal `SHA256SUMS`; never mix loose files from different releases.
 
-Release `21.0.0-8` (Ver21 R8) uses verified R7 (`v21.0.0-7`, source `bc6b17a20e1a7b2c11903df440a14ad9134697d8`). R8 adds an adaptive Design Studio with eight centrally managed visual systems across the existing application. Existing FieldSense/parser/auth/approval/fleet workflows retain their R7 baseline. See [R8 release notes](docs/V21_R8_RELEASE_NOTES.md), [test results](docs/V21_R8_TEST_RESULTS.md), [design audit](docs/V21_R8_DESIGN_ENGINE_DESIGN.md), [operator guide](docs/V21_R8_DESIGN_ENGINE_GUIDE.md), [record accounting guide](docs/V21_R8_OUTPUT_ACCOUNTING_GUIDE.md), [AI provider guide](docs/V21_R8_AI_PROVIDER_GUIDE.md), and [R7 baseline notes](docs/V21_R7_RELEASE_NOTES.md).
+Release `21.0.0-9` (Ver21 R9) uses released R8 (`v21.0.0-8`, source `82ce826aaf32a34b7aa46127ffaa1f7064e77886`) as its preserved baseline. R9 adds complete structured-tail accounting, configurable Key value EOL mappings, historical-range totals, and synchronized parser deletion/restoration and replay evidence. See [R9 release notes](docs/V21_R9_RELEASE_NOTES.md), [qualification results](docs/V21_R9_TEST_RESULTS.md), and [mapping/lifecycle guide](docs/V21_R9_FIELD_MAPPING_GUIDE.md). R7 and R8 historical releases remain available.
 
 ## V18 upgrade baseline architecture
 

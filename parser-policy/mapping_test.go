@@ -14,6 +14,7 @@ func TestNFIMappingStageRoundTripAndProductionExecution(t *testing.T) {
 		{Name: "loglevel", Method: "delimiter", Source: "2", Delimiter: ";", Part: "1", Confirmed: true},
 		{Name: "event", Method: "delimiter", Source: "2", Delimiter: ";", Part: "2", Confirmed: true},
 		{Name: "status", Method: "key_value", Source: "status"},
+		{Name: "ignored_server", Method: "key_value", Source: "server", OutputPolicy: "omit", Policy: "optional"},
 		{Name: "pid", Method: "position", Source: "1", Type: "integer"},
 		{Name: "summary", Method: "derived", Source: "loglevel,event", JoinSeparator: " / "},
 		{Name: "extra", Method: "constant", DefaultValue: `{"enabled":true}`, Type: "object"},

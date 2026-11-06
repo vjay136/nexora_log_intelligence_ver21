@@ -1,6 +1,8 @@
--- NLI Ver21 R8 (21.0.0-8) Supabase metadata schema (compatible RPC schema version 1).
--- R8 NFI plans, scope definitions, review states and bundle descriptors use
+-- NLI Ver21 R9 (21.0.0-9) Supabase metadata schema (compatible RPC schema version 1).
+-- R9 NFI plans, scope definitions, review states and bundle descriptors use
 -- existing revisioned JSONB metadata; controller validation/approval stays in NLI.
+-- R9 dynamic KV EOL plans and parser-recovery archives use the same protected RPCs.
+-- Reapplying this bootstrap preserves existing R7/R8 documents and revisions.
 -- Do not run this template directly. `sudo nli-controller-setup` renders an
 -- installation-specific copy at /root/nli-supabase-bootstrap.sql.
 
@@ -100,8 +102,8 @@ begin
   end if;
   select count(*) into v_count from public.nli_documents;
   return jsonb_build_object('status', 'ok', 'schema_version', 1, 'revisions', v_count,
-    'bootstrap_release', '21.0.0-8',
-    'persistence_capabilities', jsonb_build_array('revisioned_jsonb', 'nfi_mapping_plan_metadata', 'scope_policy_metadata', 'nullable_object_array_payloads'),
+    'bootstrap_release', '21.0.0-9',
+    'persistence_capabilities', jsonb_build_array('revisioned_jsonb', 'nfi_mapping_plan_metadata', 'scope_policy_metadata', 'nullable_object_array_payloads', 'dynamic_kv_eol_metadata', 'parser_recovery_archive'),
     'validation_authority', 'nli-controller');
 end;
 $$;
@@ -306,7 +308,7 @@ grant execute on function public.nli_list_documents(text,text,integer,integer) t
 grant execute on function public.nli_delete_document(text,text,boolean,text) to anon;
 
 comment on table public.nli_documents is
-  'NLI Ver21 R8 compatible RPC v1 revisioned JSONB control-plane metadata; NFI mapping/scope/review metadata is validated by the controller. Assurance raw logs are AES-GCM encrypted by the controller before insertion.';
+  'NLI Ver21 R9 compatible RPC v1 revisioned JSONB control-plane metadata; NFI mapping/scope/review metadata is validated by the controller. Assurance raw logs are AES-GCM encrypted by the controller before insertion.';
 
 notify pgrst, 'reload schema';
 commit;

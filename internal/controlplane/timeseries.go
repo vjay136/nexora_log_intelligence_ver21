@@ -217,6 +217,14 @@ func (s *Server) handleMetricsTimeSeries(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "range must be an hour/day/week/month/year duration or all; from and to must be a valid UTC RFC3339 pair within retention", http.StatusBadRequest)
 		return
 	}
+	requestedFrom, requestedTo := from, to
+	// Minute aggregates cannot answer cuts through the middle of a minute.
+	// Return effective aligned bounds instead of silently losing the first
+	// bucket or implying second-precise attribution.
+	from = from.Truncate(time.Minute)
+	if to != to.Truncate(time.Minute) {
+		to = to.Truncate(time.Minute).Add(time.Minute)
+	}
 	step := adaptiveMetricStep(to.Sub(from))
 	if stepName != "" && stepName != "auto" {
 		step, ok = parseMetricDuration(stepName, steps, time.Minute)
@@ -297,9 +305,33 @@ func (s *Server) handleMetricsTimeSeries(w http.ResponseWriter, r *http.Request)
 		}
 		points = append(points, map[string]any{"timestamp": bucket.time.Format(time.RFC3339), "logs_received": bucket.received, "logs_parsed": bucket.parsed, "logs_quarantined": bucket.quarantined, "errors": bucket.errors, "parse_latency_ms_avg": latency, "parse_rate_pct": parseRate, "ai_requests": bucket.aiRequests, "ai_success": bucket.aiSuccess, "ai_failure": bucket.aiFailure, "ai_latency_ms_avg": aiLatency})
 	}
+	retained, baseline, observedAt := s.metricHistory.query(from, to, step, nodeID)
+	canonicalAvailable := len(baseline) > 0
+	for _, bucket := range retained {
+		canonicalAvailable = canonicalAvailable || bucket.Read > 0 || bucket.Parsed > 0 || bucket.Quarantine > 0 || bucket.Errors > 0
+	}
+	historySource := "canonical_latest_cumulative_counters"
+	if !canonicalAvailable {
+		// Older clients can send bounded parser metadata before their first
+		// canonical counter envelope. Preserve that compatibility without mixing
+		// event occurrences into authoritative cumulative counter intervals.
+		for _, bucket := range buckets {
+			if bucket.received > 0 {
+				historySource = "bounded_parser_metadata_legacy"
+				break
+			}
+		}
+	}
+	encodedBaseline := map[string]any{}
+	for key, value := range baseline {
+		encodedBaseline[key] = map[string]any{"generation": value.Generation, "read": strconv.FormatUint(value.Read, 10), "parsed": strconv.FormatUint(value.Parsed, 10), "quarantine": strconv.FormatUint(value.Quarantine, 10), "errors": strconv.FormatUint(value.Errors, 10)}
+	}
+	if historySource == "bounded_parser_metadata_legacy" {
+		encodedBaseline = nil
+	}
 	canonical := make([]map[string]any, 0, bucketCount)
-	if nodeID == "" {
-		for index, bucket := range s.metricHistory.window(from, to, step) {
+	if canonicalAvailable || historySource != "bounded_parser_metadata_legacy" {
+		for index, bucket := range retained {
 			points[index]["received"] = bucket.Read
 			points[index]["parsed"] = bucket.Parsed
 			points[index]["quarantine"] = bucket.Quarantine
@@ -310,7 +342,7 @@ func (s *Server) handleMetricsTimeSeries(w http.ResponseWriter, r *http.Request)
 			canonical = append(canonical, map[string]any{
 				"timestamp": bucket.At.Format(time.RFC3339),
 				"received":  bucket.Read, "parsed": bucket.Parsed, "quarantine": bucket.Quarantine, "errors": bucket.Errors,
-				"read_delta": strconv.FormatUint(bucket.Read, 10), "parsed_delta": strconv.FormatUint(bucket.Parsed, 10), "quarantine_delta": strconv.FormatUint(bucket.Quarantine, 10),
+				"error_delta": strconv.FormatUint(bucket.Errors, 10), "read_delta": strconv.FormatUint(bucket.Read, 10), "parsed_delta": strconv.FormatUint(bucket.Parsed, 10), "quarantine_delta": strconv.FormatUint(bucket.Quarantine, 10),
 				"read_per_second": float64(bucket.Read) / step.Seconds(), "parsed_per_second": float64(bucket.Parsed) / step.Seconds(), "quarantine_per_second": float64(bucket.Quarantine) / step.Seconds(),
 			})
 		}
@@ -361,7 +393,7 @@ func (s *Server) handleMetricsTimeSeries(w http.ResponseWriter, r *http.Request)
 	if stepName == "" && step != time.Minute {
 		resolvedStep = "auto"
 	}
-	jsonOK(w, map[string]any{"schema_version": "1", "range": rangeNameOrDefault(normalizedRange, "1h"), "step": resolvedStep, "from": from.Format(time.RFC3339), "to": to.Format(time.RFC3339), "node_id": nodeID, "points": points, "canonical_history": map[string]any{"scope": "all_sources", "bucket_width_seconds": 60, "query_step_seconds": int64(step.Seconds()), "count_encoding": "decimal_string", "points": canonical, "freshness": freshness, "retention_seconds": int64(metricHistoryRetention.Seconds()), "source": "canonical_latest_cumulative_counters"}, "fleet": map[string]any{"stats": s.fleet.Stats(), "clients": clientMetrics}, "system": system, "retention": map[string]any{"raw_logs": false, "event_payloads": false, "secrets": false, "series_source": "bounded_parser_metadata_and_latest_heartbeat"}})
+	jsonOK(w, map[string]any{"schema_version": "1", "requested_from": requestedFrom.Format(time.RFC3339), "requested_to": requestedTo.Format(time.RFC3339), "range": rangeNameOrDefault(normalizedRange, "1h"), "step": resolvedStep, "from": from.Format(time.RFC3339), "to": to.Format(time.RFC3339), "node_id": nodeID, "points": points, "canonical_history": map[string]any{"counter_baseline": encodedBaseline, "observed_at": observedAt, "scope": map[bool]string{true: "all_sources", false: "selected_node"}[nodeID == ""], "node_id": nodeID, "time_precision": "minute", "legacy_node_history": "per-node totals are retained from R9; older fleet-only buckets cannot be attributed to a node", "bucket_width_seconds": 60, "query_step_seconds": int64(step.Seconds()), "count_encoding": "decimal_string", "points": canonical, "freshness": freshness, "retention_seconds": int64(metricHistoryRetention.Seconds()), "source": historySource, "canonical_counters_available": canonicalAvailable}, "fleet": map[string]any{"stats": s.fleet.Stats(), "clients": clientMetrics}, "system": system, "retention": map[string]any{"raw_logs": false, "event_payloads": false, "secrets": false, "series_source": "bounded_parser_metadata_and_latest_heartbeat"}})
 }
 
 func nullableAverage(total float64, count int) any {

@@ -43,6 +43,7 @@ type ExecutionResult struct {
 }
 
 type capturedField struct {
+	Dynamic     bool
 	Value       interface{}
 	Source      bool
 	Start       int

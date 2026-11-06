@@ -926,6 +926,8 @@ func (s *Server) appendQuarantineHistory(ctx context.Context, event quarantineHi
 }
 
 func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Request) {
+	s.parserMutationMu.Lock()
+	defer s.parserMutationMu.Unlock()
 	if r.Method != http.MethodPost {
 		jsonError(w, "POST required", http.StatusMethodNotAllowed)
 		return
@@ -1014,7 +1016,8 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 			"desired_bundle_hash":  desiredBundleHash,
 			"active_bundle_hash":   activeBundleHash,
 			"sync_status":          syncStatus,
-			"next_action":          "wait for the parser-sync command acknowledgement, then retry; inspect Parser Fleet Sync if the client reports failed or drifted",
+			"next_action":          "Prepare the current bundle rollout for the selected client, approve it in this workspace, then refresh verification. Replay unlocks when that exact bundle is acknowledged.",
+			"actions":              map[string]any{"prepare_rollout": map[string]any{"method": "POST", "path": "/api/v1/parser-sync/rollout", "body": map[string]any{"target_mode": "origin", "origin_node_id": request.NodeID, "bundle_hash": bundle.BundleHash}}, "verify": map[string]any{"method": "POST", "path": "/api/v1/parser-sync/verify", "body": map[string]any{"node_ids": []string{request.NodeID}, "bundle_hash": bundle.BundleHash}}},
 		})
 		return
 	}
@@ -1027,7 +1030,7 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	payload := map[string]any{"node_id": request.NodeID, "record_ids": ids, "requested_at": time.Now().UTC(), "mode": "quarantine_file_replay", "success_semantics": "awaiting_per_record_parser_confirmation"}
+	payload := map[string]any{"expected_asset_bundle_hash": bundle.BundleHash, "node_id": request.NodeID, "record_ids": ids, "requested_at": time.Now().UTC(), "mode": "quarantine_file_replay", "success_semantics": "awaiting_per_record_parser_confirmation"}
 	rollout, err := s.rollouts.Create(rolloutTypeReplay, "Replay quarantined client records", principal.Username, []string{request.NodeID}, payload)
 	if err != nil {
 		jsonError(w, "could not create replay rollout", http.StatusInternalServerError)

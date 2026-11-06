@@ -723,7 +723,7 @@ func enforceSchema(rule ParserRule, fields workingSet) error {
 		if strings.HasPrefix(name, "_") {
 			continue
 		}
-		if _, exists := rule.FieldSchema[name]; !exists {
+		if _, exists := rule.FieldSchema[name]; !exists && !fields[name].Dynamic {
 			return fail("schema_unknown_field", "parser emitted a field absent from its schema")
 		}
 	}

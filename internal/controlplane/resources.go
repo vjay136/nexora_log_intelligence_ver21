@@ -28,6 +28,7 @@ import (
 	"nexora.local/nli-v20/internal/auditlog"
 	"nexora.local/nli-v20/internal/auth"
 	"nexora.local/nli-v20/internal/engine"
+	"nexora.local/nli-v20/internal/familyprofile"
 	"nexora.local/nli-v20/internal/fleet"
 	"nexora.local/nli-v20/internal/middleware"
 	"nexora.local/nli-v20/internal/protocol"
@@ -144,6 +145,10 @@ func unsafeDeclarative(value any) error {
 }
 
 func (s *Server) handleParserPacks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.parserMutationMu.Lock()
+		defer s.parserMutationMu.Unlock()
+	}
 	permission := middleware.PermissionReadParsers
 	if r.Method != http.MethodGet {
 		permission = middleware.PermissionManageParsers
@@ -178,6 +183,17 @@ func (s *Server) handleParserPacks(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if id == "deleted" || familyprofile.IsBuiltinPackID(id) {
+			jsonError(w, "parser ID is reserved or belongs to the embedded baseline", 409)
+			return
+		}
+		if _, err := s.metadata.Get(r.Context(), "parser-packs", id, 0); err == nil {
+			jsonError(w, "parser ID already exists; edit its draft or create a repair", 409)
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			jsonError(w, "parser uniqueness cannot be verified", 503)
+			return
+		}
 		input["review_state"] = "draft"
 		input["activated"] = false
 		payload, _ := json.Marshal(input)
@@ -193,6 +209,10 @@ func (s *Server) handleParserPacks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) handleParserPack(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.parserMutationMu.Lock()
+		defer s.parserMutationMu.Unlock()
+	}
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/parser-packs/"), "/")
 	parts := strings.Split(path, "/")
 	id := parts[0]
@@ -249,12 +269,12 @@ func (s *Server) handleParserPack(w http.ResponseWriter, r *http.Request) {
 		s.auditAction(principal, "parser.update", "parser-packs/"+id, "success", nil)
 		jsonOK(w, documentView(saved))
 	case http.MethodDelete:
-		if err := s.metadata.Delete(r.Context(), "parser-packs", id, false, principal.Username); err != nil {
-			jsonError(w, "parser deletion failed", http.StatusInternalServerError)
+		doc, err := s.metadata.Get(r.Context(), "parser-packs", id, 0)
+		if err != nil {
+			jsonError(w, "parser pack not found", 404)
 			return
 		}
-		s.auditAction(principal, "parser.delete", "parser-packs/"+id, "success", nil)
-		jsonOK(w, map[string]string{"status": "deleted"})
+		s.deleteParserDocument(w, r, principal, doc)
 	default:
 		jsonError(w, "unsupported method", http.StatusMethodNotAllowed)
 	}
@@ -432,6 +452,10 @@ func (s *Server) handleParserAction(w http.ResponseWriter, r *http.Request, id, 
 }
 
 func (s *Server) handleConfiguration(w http.ResponseWriter, r *http.Request, collection string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		s.parserMutationMu.Lock()
+		defer s.parserMutationMu.Unlock()
+	}
 	permission := middleware.PermissionReadParsers
 	if r.Method != http.MethodGet {
 		permission = middleware.PermissionManageParsers
@@ -479,6 +503,10 @@ func (s *Server) handleConfiguration(w http.ResponseWriter, r *http.Request, col
 // collection endpoints remain the list/create surface; item routes provide
 // read, edit, delete, and deterministic JSON download for the UI's asset tabs.
 func (s *Server) handleConfigurationResource(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		s.parserMutationMu.Lock()
+		defer s.parserMutationMu.Unlock()
+	}
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/config/"), "/"), "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		jsonError(w, "configuration collection and asset id are required", http.StatusBadRequest)
@@ -1413,6 +1441,10 @@ func interfaceStrings(value any) []string {
 	return out
 }
 func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		s.parserMutationMu.Lock()
+		defer s.parserMutationMu.Unlock()
+	}
 	if r.Method != http.MethodPost {
 		jsonError(w, "POST required", http.StatusMethodNotAllowed)
 		return
@@ -1571,6 +1603,8 @@ func (s *Server) cancelRollout(w http.ResponseWriter, r *http.Request, id string
 }
 
 func (s *Server) updateSyncFromHeartbeat(request protocol.HeartbeatRequest) {
+	s.fleetSyncMu.Lock()
+	defer s.fleetSyncMu.Unlock()
 	doc, err := s.metadata.Get(context.Background(), "fleet-sync", request.NodeID, 0)
 	state := map[string]any{"node_id": request.NodeID}
 	creator := "node:" + request.NodeID
@@ -1581,6 +1615,9 @@ func (s *Server) updateSyncFromHeartbeat(request protocol.HeartbeatRequest) {
 	state["active_config_hash"] = request.ConfigHash
 	state["active_asset_bundle_hash"] = request.ActiveAssetBundleHash
 	state["active_asset_revisions"] = request.ActiveAssetRevisions
+	if validRuntimeInventory(request.RuntimeInventory) {
+		state["runtime_inventory"] = request.RuntimeInventory
+	}
 	state["last_seen"] = time.Now().UTC()
 	desired := fmt.Sprint(state["desired_config_hash"])
 	state["drifted"] = desired != "" && desired != request.ConfigHash
@@ -1594,10 +1631,19 @@ func (s *Server) updateSyncFromHeartbeat(request protocol.HeartbeatRequest) {
 			state["asset_sync_status"] = "drifted"
 		}
 	}
+	if request.RuntimeInventory != nil {
+		if current, err := s.buildActiveParserBundle(context.Background()); err == nil && request.ActiveAssetBundleHash == current.BundleHash && !runtimeInventoryMatchesBundle(request.RuntimeInventory, current) {
+			state["asset_sync_status"] = "drifted"
+			state["asset_drifted"] = true
+			state["asset_sync_error"] = "client parser files differ from the acknowledged bundle; retry the current parser rollout"
+		}
+	}
 	payload, _ := json.Marshal(state)
 	_, _ = s.metadata.Put(context.Background(), metastore.Document{Collection: "fleet-sync", ID: safeID(request.NodeID), State: "reported", Payload: payload, CreatedBy: creator})
 }
 func (s *Server) handleNodeState(w http.ResponseWriter, r *http.Request) {
+	s.fleetSyncMu.Lock()
+	defer s.fleetSyncMu.Unlock()
 	if r.Method != http.MethodPost {
 		jsonError(w, "POST required", http.StatusMethodNotAllowed)
 		return
@@ -1684,6 +1730,8 @@ func (s *Server) handleFleetResource(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "invalid desired state", http.StatusBadRequest)
 			return
 		}
+		s.fleetSyncMu.Lock()
+		defer s.fleetSyncMu.Unlock()
 		doc, _ := s.metadata.Get(r.Context(), "fleet-sync", safeID(nodeID), 0)
 		state := map[string]any{"node_id": nodeID}
 		_ = json.Unmarshal(doc.Payload, &state)

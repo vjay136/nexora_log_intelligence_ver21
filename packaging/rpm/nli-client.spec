@@ -1,5 +1,5 @@
 %{!?nli_version:%global nli_version 21.0.0}
-%{!?nli_release:%global nli_release 5}
+%{!?nli_release:%global nli_release 9}
 Name:           nli-client
 Version:        %{nli_version}
 Release:        %{nli_release}%{?dist}
@@ -52,7 +52,7 @@ install -m 0644 configs/outputs.example.json %{buildroot}%{_docdir}/%{name}/outp
 install -m 0644 systemd/nli-agent.service systemd/nli-client-control.service systemd/nli-client-bootstrap.service %{buildroot}/usr/lib/systemd/system/
 install -m 0644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 install -m 0644 PARSER_CATALOG.md %{buildroot}%{_docdir}/%{name}/PARSER_CATALOG.md
-install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
+install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
 install -m 0644 metrics/README.md metrics/metric-catalog.json metrics/prometheus-scrape.yml metrics/grafana-dashboard.json %{buildroot}%{_datadir}/nli/metrics/
 
 %pre
@@ -139,10 +139,16 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %doc %{_docdir}/%{name}/V21_R8_DESIGN_ENGINE_GUIDE.md
 %doc %{_docdir}/%{name}/V21_R8_OUTPUT_ACCOUNTING_GUIDE.md
 %doc %{_docdir}/%{name}/V21_R8_AI_PROVIDER_GUIDE.md
+%doc %{_docdir}/%{name}/V21_R9_RELEASE_NOTES.md
+%doc %{_docdir}/%{name}/V21_R9_TEST_RESULTS.md
+%doc %{_docdir}/%{name}/V21_R9_FIELD_MAPPING_GUIDE.md
 %doc %{_docdir}/%{name}/nli-output-audit.py
 %doc %{_docdir}/%{name}/VER21_IMPLEMENTATION_PLAN.md
 
 %changelog
+* Fri Nov 06 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-9
+- Preserve structured tail evidence; add dynamic KV EOL mappings and synchronized parser lifecycle.
+
 * Fri Nov 06 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-8
 - Add adaptive UI design systems and preserve the qualified R7 parser baseline.
 

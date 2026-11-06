@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,9 +33,10 @@ type historyBucket struct {
 }
 
 type metricHistoryFile struct {
-	Version int                      `json:"version"`
-	Buckets []historyBucket          `json:"buckets"`
-	Sources map[string]historySource `json:"sources"`
+	Version int                        `json:"version"`
+	Buckets []historyBucket            `json:"buckets"`
+	Sources map[string]historySource   `json:"sources"`
+	Nodes   map[string][]historyBucket `json:"nodes,omitempty"`
 }
 
 // metricHistory retains only fixed-width aggregates. Counter deltas are derived
@@ -44,12 +46,13 @@ type metricHistory struct {
 	path         string
 	sources      map[string]historySource
 	buckets      map[int64]*historyBucket
+	nodes        map[string]map[int64]*historyBucket
 	lastPersist  time.Time
 	lastObserved time.Time
 }
 
 func newMetricHistory(path string) (*metricHistory, error) {
-	h := &metricHistory{path: path, sources: map[string]historySource{}, buckets: map[int64]*historyBucket{}}
+	h := &metricHistory{path: path, sources: map[string]historySource{}, buckets: map[int64]*historyBucket{}, nodes: map[string]map[int64]*historyBucket{}}
 	b, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -58,6 +61,15 @@ func newMetricHistory(path string) (*metricHistory, error) {
 		var saved metricHistoryFile
 		if err := json.Unmarshal(b, &saved); err != nil {
 			return nil, err
+		}
+		for node, buckets := range saved.Nodes {
+			h.nodes[node] = map[int64]*historyBucket{}
+			for _, bucket := range buckets {
+				if time.Since(bucket.At) <= metricHistoryRetention {
+					item := bucket
+					h.nodes[node][item.At.Unix()] = &item
+				}
+			}
 		}
 		h.sources = saved.Sources
 		if h.sources == nil {
@@ -83,6 +95,7 @@ func (h *metricHistory) observe(sources []telemetry.StreamFileTelemetry, now tim
 	h.lastObserved = now
 	var rd, parsed, quarantine, errs uint64
 	updated := make(map[string]historySource, len(sources))
+	deltas := map[string]historyBucket{}
 	for _, sample := range sources {
 		key := sample.NodeID + "\x00" + sample.Source
 		old, ok := h.sources[key]
@@ -115,6 +128,18 @@ func (h *metricHistory) observe(sources []telemetry.StreamFileTelemetry, now tim
 				return err
 			}
 		}
+		delta := historyBucket{Read: sample.ReadLines, Parsed: sample.Normalized, Quarantine: sample.Quarantined, Errors: sample.Errors}
+		if ok && old.Generation == sample.ProcessGeneration {
+			delta.Read = counterDelta(old.Read, sample.ReadLines)
+			delta.Parsed = counterDelta(old.Parsed, sample.Normalized)
+			delta.Quarantine = counterDelta(old.Quarantine, sample.Quarantined)
+			delta.Errors = counterDelta(old.Errors, sample.Errors)
+		}
+		current := deltas[sample.NodeID]
+		if err := addHistoryBucket(&current, delta); err != nil {
+			return err
+		}
+		deltas[sample.NodeID] = current
 		updated[key] = historySource{sample.ProcessGeneration, sample.ReadLines, sample.Normalized, sample.Quarantined, sample.Errors}
 	}
 	key := now.Truncate(time.Minute).Unix()
@@ -123,13 +148,8 @@ func (h *metricHistory) observe(sources []telemetry.StreamFileTelemetry, now tim
 		for key, source := range updated {
 			h.sources[key] = source
 		}
-		cutoff := now.Add(-metricHistoryRetention).Unix()
-		for k := range h.buckets {
-			if k < cutoff {
-				delete(h.buckets, k)
-			}
-		}
 		if h.lastPersist.IsZero() || now.Sub(h.lastPersist) >= time.Minute {
+			h.pruneLocked(now)
 			if err := h.persistLocked(); err != nil {
 				return err
 			}
@@ -157,25 +177,61 @@ func (h *metricHistory) observe(sources []telemetry.StreamFileTelemetry, now tim
 	if err != nil {
 		return err
 	}
+	candidates := map[string]historyBucket{}
+	for node, delta := range deltas {
+		if delta.Read == 0 && delta.Parsed == 0 && delta.Quarantine == 0 && delta.Errors == 0 {
+			continue
+		}
+		value := historyBucket{At: time.Unix(key, 0).UTC()}
+		if existing := h.nodes[node][key]; existing != nil {
+			value = *existing
+		}
+		if err := addHistoryBucket(&value, delta); err != nil {
+			return err
+		}
+		candidates[node] = value
+	}
+	for node, candidate := range candidates {
+		if h.nodes[node] == nil {
+			h.nodes[node] = map[int64]*historyBucket{}
+		}
+		value := candidate
+		h.nodes[node][key] = &value
+	}
 	b.Read, b.Parsed, b.Quarantine, b.Errors = readTotal, parsedTotal, quarantineTotal, errorTotal
 	for key, source := range updated {
 		h.sources[key] = source
 	}
-	cutoff := now.Add(-metricHistoryRetention).Unix()
-	for k := range h.buckets {
-		if k < cutoff {
-			delete(h.buckets, k)
-		}
-	}
 	// Persist at most once per bucket, keeping the retained state bounded and
 	// avoiding a disk write on every high-rate telemetry publication.
 	if h.lastPersist.IsZero() || now.Sub(h.lastPersist) >= time.Minute {
+		h.pruneLocked(now)
 		if err := h.persistLocked(); err != nil {
 			return err
 		}
 		h.lastPersist = now
 	}
 	return nil
+}
+
+// Expiry is maintenance, not work for every active counter batch.
+func (h *metricHistory) pruneLocked(now time.Time) {
+	cutoff := now.Add(-metricHistoryRetention).Unix()
+	for node, buckets := range h.nodes {
+		for key := range buckets {
+			if key < cutoff {
+				delete(buckets, key)
+			}
+		}
+		if len(buckets) == 0 {
+			delete(h.nodes, node)
+		}
+	}
+	for key := range h.buckets {
+		if key < cutoff {
+			delete(h.buckets, key)
+		}
+	}
 }
 
 func addCount(a, b uint64) (uint64, error) {
@@ -197,7 +253,13 @@ func (h *metricHistory) persistLocked() error {
 	for _, b := range h.buckets {
 		items = append(items, *b)
 	}
-	data, err := json.Marshal(metricHistoryFile{Version: 1, Buckets: items, Sources: h.sources})
+	nodes := map[string][]historyBucket{}
+	for node, buckets := range h.nodes {
+		for _, bucket := range buckets {
+			nodes[node] = append(nodes[node], *bucket)
+		}
+	}
+	data, err := json.Marshal(metricHistoryFile{Version: 2, Buckets: items, Sources: h.sources, Nodes: nodes})
 	if err != nil {
 		return err
 	}
@@ -211,9 +273,57 @@ func (h *metricHistory) persistLocked() error {
 	return os.Rename(tmp, h.path)
 }
 
-func (h *metricHistory) window(from, to time.Time, step time.Duration) []historyBucket {
+func (h *metricHistory) flush() error {
+	if h == nil {
+		return nil
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.lastObserved.IsZero() {
+		return nil
+	}
+	return h.persistLocked()
+}
+
+func addHistoryBucket(target *historyBucket, delta historyBucket) error {
+	read, err := addCount(target.Read, delta.Read)
+	if err != nil {
+		return err
+	}
+	parsed, err := addCount(target.Parsed, delta.Parsed)
+	if err != nil {
+		return err
+	}
+	quarantine, err := addCount(target.Quarantine, delta.Quarantine)
+	if err != nil {
+		return err
+	}
+	errors, err := addCount(target.Errors, delta.Errors)
+	if err != nil {
+		return err
+	}
+	target.Read, target.Parsed, target.Quarantine, target.Errors = read, parsed, quarantine, errors
+	return nil
+}
+func (h *metricHistory) window(from, to time.Time, step time.Duration) []historyBucket {
+	return h.windowNode(from, to, step, "")
+}
+func (h *metricHistory) windowNode(from, to time.Time, step time.Duration, node string) []historyBucket {
+	buckets, _, _ := h.query(from, to, step, node)
+	return buckets
+}
+func (h *metricHistory) query(from, to time.Time, step time.Duration, node string) ([]historyBucket, map[string]historySource, time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	baseline := map[string]historySource{}
+	for key, value := range h.sources {
+		if node == "" || strings.HasPrefix(key, node+"\x00") {
+			baseline[key] = value
+		}
+	}
+	return h.windowLocked(from, to, step, node), baseline, h.lastObserved
+}
+func (h *metricHistory) windowLocked(from, to time.Time, step time.Duration, node string) []historyBucket {
 	out := make([]historyBucket, 0, int(to.Sub(from)/step))
 	for at := from; at.Before(to); at = at.Add(step) {
 		out = append(out, historyBucket{At: at})
@@ -221,7 +331,11 @@ func (h *metricHistory) window(from, to time.Time, step time.Duration) []history
 	if len(out) == 0 {
 		return out
 	}
-	for minute, source := range h.buckets {
+	buckets := h.buckets
+	if node != "" {
+		buckets = h.nodes[node]
+	}
+	for minute, source := range buckets {
 		at := time.Unix(minute, 0).UTC()
 		if at.Before(from) || !at.Before(to) {
 			continue

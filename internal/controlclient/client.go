@@ -56,6 +56,7 @@ type Config struct {
 	MetricsURL           string            `json:"metrics_url"`
 	PollSeconds          int               `json:"poll_seconds"`
 	TelemetryPollSeconds int               `json:"telemetry_poll_seconds"`
+	TelemetryPollMS      int               `json:"telemetry_poll_ms,omitempty"`
 	Tags                 map[string]string `json:"tags"`
 	AllowInsecureHTTP    bool              `json:"allow_insecure_http"`
 	AllowPackageUpdates  bool              `json:"allow_package_updates"`
@@ -112,6 +113,9 @@ func (c *Config) setDefaults() {
 		c.PollSeconds = 15
 	}
 	if c.TelemetryPollSeconds <= 0 {
+		if c.TelemetryPollMS == 0 {
+			c.TelemetryPollMS = 250
+		}
 		c.TelemetryPollSeconds = 1
 	}
 	if c.PackageSpoolDir == "" {
@@ -155,6 +159,9 @@ func (c Config) validate() error {
 	}
 	if c.PollSeconds < 5 || c.PollSeconds > 3600 {
 		return fmt.Errorf("poll_seconds must be 5..3600")
+	}
+	if c.TelemetryPollMS != 0 && (c.TelemetryPollMS < 100 || c.TelemetryPollMS > 60000) {
+		return fmt.Errorf("telemetry_poll_ms must be 100..60000")
 	}
 	if c.TelemetryPollSeconds < 1 || c.TelemetryPollSeconds > 60 {
 		return fmt.Errorf("telemetry_poll_seconds must be 1..60")
@@ -266,6 +273,9 @@ type Client struct {
 	journal           map[string]protocol.CommandResult
 	processGeneration string
 	syncSequence      atomic.Uint64
+	streamMu          sync.Mutex
+	lastStreamDigest  [32]byte
+	lastStreamSent    time.Time
 }
 
 func New(cfg Config, executor Executor) (*Client, error) {
@@ -292,7 +302,7 @@ func New(cfg Config, executor Executor) (*Client, error) {
 func (c *Client) Run(ctx context.Context) error {
 	var streamReady atomic.Bool
 	go func() {
-		interval := time.Duration(c.cfg.TelemetryPollSeconds) * time.Second
+		interval := c.cfg.telemetryInterval()
 		timer := time.NewTimer(telemetryJitter(interval))
 		defer timer.Stop()
 		failures := 0
@@ -398,6 +408,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	result.FinishedAt = time.Now().UTC()
 	result.Message = message
 	result.ConfigHash = fileSHA256(c.cfg.AgentConfigPath)
+	result.RuntimeInventory = c.runtimeParserInventory()
 	// A parser bundle is acknowledged with the command result itself. Waiting
 	// for the next periodic heartbeat left a successfully applied bundle looking
 	// unacknowledged for an entire poll interval (or indefinitely when the
@@ -529,19 +540,30 @@ func (c *Client) heartbeat(ctx context.Context) error {
 	bundleHash, assetRevisions := activeAssetBundleStatus(filepath.Join(c.cfg.AssetDir, "bundle.json"))
 	request := protocol.HeartbeatRequest{
 		NodeID: c.nodeID, Version: engine.Version, ConfigHash: fileSHA256(c.cfg.AgentConfigPath),
-		Metrics: metrics, Health: "online", Parsers: parsers, ActiveAssetBundleHash: bundleHash, ActiveAssetRevisions: assetRevisions,
+		RuntimeInventory: c.runtimeParserInventory(), Metrics: metrics, Health: "online", Parsers: parsers, ActiveAssetBundleHash: bundleHash, ActiveAssetRevisions: assetRevisions,
 	}
 	return c.requestJSON(ctx, http.MethodPost, "/api/v1/node/heartbeat", request, nil, nil)
 }
 
 func (c *Client) sendStreamTelemetry(ctx context.Context) error {
+	c.streamMu.Lock()
+	defer c.streamMu.Unlock()
 	collectedAt := time.Now().UTC()
 	files, err := readStreamFiles(c.cfg.MetricsURL)
 	if err != nil {
 		return fmt.Errorf("read agent stream snapshot: %w", err)
 	}
-	request := protocol.StreamTelemetryRequest{SchemaVersion: telemetry.SyncSchemaVersion, NodeID: c.nodeID, ProcessGeneration: c.processGeneration, Sequence: c.syncSequence.Add(1), CollectedAt: collectedAt, PublishedAt: time.Now().UTC(), CollectionIntervalMS: int64(c.cfg.TelemetryPollSeconds) * 1000, PublicationIntervalMS: int64(c.cfg.TelemetryPollSeconds) * 1000, FullSnapshot: true, StreamFiles: files}
-	return c.requestJSON(ctx, http.MethodPost, "/api/v1/node/stream-telemetry", request, nil, nil)
+	digest := streamSnapshotDigest(files)
+	if !c.lastStreamSent.IsZero() && digest == c.lastStreamDigest && collectedAt.Sub(c.lastStreamSent) < time.Second {
+		return nil
+	}
+	request := protocol.StreamTelemetryRequest{SchemaVersion: telemetry.SyncSchemaVersion, NodeID: c.nodeID, ProcessGeneration: c.processGeneration, Sequence: c.syncSequence.Add(1), CollectedAt: collectedAt, PublishedAt: time.Now().UTC(), CollectionIntervalMS: c.cfg.telemetryInterval().Milliseconds(), PublicationIntervalMS: c.cfg.telemetryInterval().Milliseconds(), FullSnapshot: true, StreamFiles: files}
+	if err := c.requestJSON(ctx, http.MethodPost, "/api/v1/node/stream-telemetry", request, nil, nil); err != nil {
+		return err
+	}
+	c.lastStreamSent = collectedAt
+	c.lastStreamDigest = digest
+	return nil
 }
 
 func newProcessGeneration() string {
@@ -610,7 +632,8 @@ func (c *Client) apply(ctx context.Context, command *protocol.Command) (string, 
 		return "nli-agent restarted", c.executor.RestartAgent(ctx)
 	case rollout.TypeReplay:
 		var request struct {
-			RecordIDs []string `json:"record_ids"`
+			RecordIDs               []string `json:"record_ids"`
+			ExpectedAssetBundleHash string   `json:"expected_asset_bundle_hash,omitempty"`
 		}
 		if len(command.Payload) > 0 {
 			if err := json.Unmarshal(command.Payload, &request); err != nil {
@@ -619,6 +642,12 @@ func (c *Client) apply(ctx context.Context, command *protocol.Command) (string, 
 		}
 		if len(request.RecordIDs) > 1000 {
 			return "", fmt.Errorf("quarantine replay is limited to 1000 records")
+		}
+		if request.ExpectedAssetBundleHash != "" {
+			active, _ := activeAssetBundleStatus(filepath.Join(c.cfg.AssetDir, "bundle.json"))
+			if active != request.ExpectedAssetBundleHash {
+				return "", fmt.Errorf("replay parser bundle changed: expected %s; verify and prepare replay again", request.ExpectedAssetBundleHash)
+			}
 		}
 		return c.executor.Replay(ctx, c.cfg.QuarantinePath, request.RecordIDs)
 	case rollout.TypePackageUpdate:

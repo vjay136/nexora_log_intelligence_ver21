@@ -28,4 +28,4 @@ with tempfile.TemporaryDirectory() as temporary:
  env["NLI_SETUP_SUPABASE_HASH"]="invalid"
  result=subprocess.run([sys.executable,"-c",script,str(root/"supabase/nli_schema.sql"),str(target)],env=env,capture_output=True)
  assert result.returncode != 0
-print("R8 generated Supabase bootstrap contract: PASS")
+print("R9 generated Supabase bootstrap contract: PASS")

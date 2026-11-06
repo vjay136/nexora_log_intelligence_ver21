@@ -2,11 +2,15 @@
 
 ## Source and release boundary
 
-- Authoritative R8 source baseline: verified Ver21 R7 (`v21.0.0-7`) at commit `bc6b17a20e1a7b2c11903df440a14ad9134697d8`.
-- Ver20 R6 remains historical migration evidence only and is not the R8 implementation base.
-- Working release: Ver21 `21.0.0-8` in the dedicated Ver21 repository.
+- Authoritative R9 source baseline: released Ver21 R8 (`v21.0.0-8`) at commit `82ce826aaf32a34b7aa46127ffaa1f7064e77886`; R7 and R8 published history stays preserved.
+- Ver20 R6 remains historical migration evidence only and is not the R9 implementation base.
+- Working release: Ver21 `21.0.0-9` in the dedicated Ver21 repository.
 - Compatibility boundary: retain RPM package identities, systemd units, and state/configuration paths so an in-place upgrade does not fork production state. Published artifacts use Ver21-only filenames.
 - No feature is permitted to fabricate parser readiness, telemetry, client acknowledgements, or AI results.
+
+## R9: complete source mapping and synchronized lifecycle
+
+Apply structured-tail evidence accounting to native FieldSense execution and preview; add configurable dynamic Key value EOL extraction and future-key root outputs. Retain legacy reviewed native projections, explicit operator omission and all eligible existing parser candidates. Aggregate selected-range dashboard counters and retain exact origin-bundle acknowledgement before replay. Publish recoverable parser deletion/restoration metadata, materialized runtime inventories and R9-only package/release evidence. See [R9 guide](V21_R9_FIELD_MAPPING_GUIDE.md).
 
 ## R8: adaptive application design
 

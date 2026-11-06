@@ -111,8 +111,26 @@ func compileExtended(cf *compiledField, seen map[string]bool) error {
 	if f.KeyOptions, err = cloneKeys(f.KeyOptions); err != nil {
 		return err
 	}
-	if !contains([]string{"", "include", "omit", "intermediate"}, f.OutputPolicy) || !contains([]string{"", "preserve", "missing", "null", "reject"}, f.EmptyPolicy) {
+	if !contains([]string{"", "include", "omit", "intermediate", "flatten"}, f.OutputPolicy) || !contains([]string{"", "preserve", "missing", "null", "reject"}, f.EmptyPolicy) {
 		return fmt.Errorf("invalid output or empty policy")
+	}
+	if f.OutputPolicy == "flatten" && (f.Method != "kv_all" || f.Type != "object") {
+		return fmt.Errorf("flatten requires kv_all with object type")
+	}
+	if f.EndOfLine && f.Method != "kv_all" {
+		return fmt.Errorf("end_of_line requires kv_all extraction")
+	}
+	if f.Method == "kv_all" && f.Source != "" && f.Source != "raw" {
+		start, err := index(f.Source, 1)
+		if err != nil {
+			return err
+		}
+		if f.SourceEnd != "" {
+			end, err := index(f.SourceEnd, start)
+			if err != nil || end < start {
+				return fmt.Errorf("invalid key/value source range")
+			}
+		}
 	}
 	if len(f.Description) > 4096 || len(f.Example) > 4096 || len(f.CustomType) > 128 {
 		return fmt.Errorf("type/display metadata exceeds bounds")
@@ -231,6 +249,14 @@ func (r *record) extractExtended(cf compiledField, prior map[string]any) (any, E
 		return r.raw, e, true, nil
 	}
 	if f.Method == "kv_all" || f.Method == "key_value" {
+		if f.Method == "kv_all" {
+			selected, start, end, found, err := r.keySource(cf)
+			if err != nil || !found {
+				return nil, e, found, err
+			}
+			e.Start, e.End, e.Source = start, end, true
+			return extractKeys(selected, f, e)
+		}
 		return extractKeys(r.raw, f, e)
 	}
 	if f.Method == "regex_all" || f.Method == "regex_groups" || f.Method == "token_match" {
@@ -326,13 +352,16 @@ func extractKeys(raw string, f Field, e Evidence) (any, Evidence, bool, error) {
 	}
 	delimiters := f.PairDelimiters
 	if delimiters == "" {
-		delimiters = ":;, \t\r\n"
+		delimiters = ":;,| \t\r\n"
 	}
-	pairs, err := scanPairsMany(raw, separators, delimiters)
+	pairs, err := scanPairsManyMode(raw, separators, delimiters, f.RequireComplete)
 	if err != nil {
 		return nil, e, false, err
 	}
 	normalized := map[string][]pair{}
+	if f.RequireComplete && len(pairs) == 0 {
+		return nil, e, false, fmt.Errorf("key/value tail contains no pairs")
+	}
 	for key, values := range pairs {
 		canonical := key
 		if alias, ok := f.KeyAliases[key]; ok {

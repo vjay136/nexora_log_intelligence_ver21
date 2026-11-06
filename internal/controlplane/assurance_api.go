@@ -1089,16 +1089,7 @@ func (s *Server) handleAssuranceParser(w http.ResponseWriter, r *http.Request) {
 			s.auditAction(p, "assurance.parser_update", "parser-packs/"+id, "success", nil)
 			jsonOK(w, map[string]any{"id": id, "revision": saved.Revision, "state": "draft", "validation": validation})
 		case http.MethodDelete:
-			if doc.State != "draft" && doc.State != "rejected" {
-				jsonError(w, "only draft or rejected parsers may be deleted", 409)
-				return
-			}
-			if err := s.metadata.Delete(r.Context(), "parser-packs", id, false, p.Username); err != nil {
-				jsonError(w, "parser draft deletion failed", 500)
-				return
-			}
-			s.auditAction(p, "assurance.parser_delete", "parser-packs/"+id, "success", nil)
-			jsonOK(w, map[string]string{"status": "deleted"})
+			s.deleteParserDocument(w, r, p, doc)
 		default:
 			w.Header().Set("Allow", "GET, PUT, DELETE")
 			jsonError(w, "GET, PUT or DELETE required", 405)

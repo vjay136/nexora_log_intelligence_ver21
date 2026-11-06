@@ -236,7 +236,16 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 		metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "all_packs_failed")
 		// A failing add-on alone must not disable an existing JSON/text parser.
 		// Reviewed embedded-family validation failures retain quarantine policy.
-		return &V5ParseResult{ParseTelemetry: metadata, Success: false, Quarantined: hasEmbeddedCandidate}
+		// An explicit source-completeness failure is authoritative even when a
+		// managed mapping is the sole candidate: generic fallback must not turn
+		// the same discarded structured suffix into a normalized record.
+		incomplete := false
+		for _, code := range metadata.ErrorCodes {
+			if code == "incomplete_structured_tail" {
+				incomplete = true
+			}
+		}
+		return &V5ParseResult{ParseTelemetry: metadata, Success: false, Quarantined: hasEmbeddedCandidate || incomplete}
 	}
 
 	selected := executions[selectedIndex].result

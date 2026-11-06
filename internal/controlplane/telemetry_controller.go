@@ -62,6 +62,7 @@ func NewStreamHub(maxSubscribers int) *StreamHub {
 func (h *StreamHub) Publish(sample telemetry.StreamFileTelemetry) {
 	h.mu.Lock()
 	if h.storeLocked(sample) {
+		sample = h.latest[sample.NodeID+"\x00"+sample.Source]
 		revision := h.revision.Add(1)
 		now := time.Now().UTC()
 		sources := h.snapshotLocked(now)
@@ -77,6 +78,12 @@ func (h *StreamHub) Publish(sample telemetry.StreamFileTelemetry) {
 }
 
 func (h *StreamHub) storeLocked(sample telemetry.StreamFileTelemetry) bool {
+	// JSON numbers lose integer precision beyond 2^53 in browser clients.
+	// Derive these strings from trusted native counters, never caller strings.
+	sample.ExactCounts = map[string]string{
+		"read_lines": fmt.Sprint(sample.ReadLines), "normalized": fmt.Sprint(sample.Normalized),
+		"quarantined": fmt.Sprint(sample.Quarantined), "errors": fmt.Sprint(sample.Errors),
+	}
 	key := sample.NodeID + "\x00" + sample.Source
 	if _, exists := h.latest[key]; !exists && len(h.latest) >= h.maxSources {
 		h.rejectedBatches++
@@ -208,7 +215,7 @@ func (h *StreamHub) PublishBatch(batch telemetry.SyncBatch) telemetry.SyncIngest
 			h.recordIssueLocked("source_errors", "collection", "warning", "nli-agent", batch.NodeID, sample.Source, "source reported cumulative read or output errors", fmt.Sprintf("errors=%d", sample.Errors), now)
 		}
 		if h.storeLocked(sample) {
-			accepted = append(accepted, sample)
+			accepted = append(accepted, h.latest[sample.NodeID+"\x00"+sample.Source])
 		}
 	}
 	h.acceptedBatches++
@@ -241,6 +248,25 @@ func (h *StreamHub) PublishBatch(batch telemetry.SyncBatch) telemetry.SyncIngest
 		})
 	}
 	return telemetry.SyncIngestResult{Status: "accepted", Revision: revision, Sequence: batch.Sequence, SequenceGaps: h.sequenceGaps, Accepted: len(accepted)}
+}
+
+// Retention needs only this accepted batch, rather than a sorted copy of every
+// source in the fleet on each active telemetry tick.
+func (h *StreamHub) acceptedBatchSources(batch telemetry.SyncBatch) []telemetry.StreamFileTelemetry {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]telemetry.StreamFileTelemetry, 0, len(batch.StreamFiles))
+	seen := make(map[string]bool, len(batch.StreamFiles))
+	for _, source := range batch.StreamFiles {
+		if seen[source.Source] {
+			continue
+		}
+		seen[source.Source] = true
+		if sample, ok := h.latest[batch.NodeID+"\x00"+source.Source]; ok && sample.ProcessGeneration == batch.ProcessGeneration && sample.Sequence == batch.Sequence {
+			out = append(out, sample)
+		}
+	}
+	return out
 }
 
 func (h *StreamHub) Snapshot() []telemetry.StreamFileTelemetry {

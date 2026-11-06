@@ -289,6 +289,9 @@ func ApplyContext(ctx context.Context, p *ParserDef, input string) (map[string]i
 		if err != nil {
 			return nil, []string{err.Error()}
 		}
+		if err := compiled.ValidateComplete(input, result); err != nil {
+			return nil, []string{err.Error()}
+		}
 		return result.Values, nil
 	}
 	captures := make(map[string]string)

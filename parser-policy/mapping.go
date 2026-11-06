@@ -14,6 +14,13 @@ func (e *ParserPackExecutor) executeMappingStage(ctx context.Context, request *E
 	if err != nil {
 		return 0, 0, fail("mapping_validation", err.Error())
 	}
+	if err := plan.ValidateComplete(request.Input, result); err != nil {
+		return 0, 0, fail("incomplete_structured_tail", err.Error())
+	}
+	dynamic := map[string]bool{}
+	for _, name := range result.DynamicFields {
+		dynamic[name] = true
+	}
 	captured := make(map[string]capturedField, len(result.Values))
 	for name, value := range result.Values {
 		evidence := result.Evidence[name]
@@ -21,7 +28,7 @@ func (e *ParserPackExecutor) executeMappingStage(ctx context.Context, request *E
 		if !evidence.Source {
 			ruleID = "nfi:" + stage.ID
 		}
-		captured[name] = capturedField{Value: value, Source: evidence.Source, Start: evidence.Start, End: evidence.End, DerivedRule: ruleID}
+		captured[name] = capturedField{Value: value, Source: evidence.Source, Start: evidence.Start, End: evidence.End, DerivedRule: ruleID, Dynamic: dynamic[name]}
 	}
 	return mergeCaptured(rule, fields, captured, false)
 }

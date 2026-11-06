@@ -51,6 +51,7 @@ type Metrics struct {
 }
 
 type HeartbeatRequest struct {
+	RuntimeInventory      *ParserRuntimeInventory         `json:"runtime_inventory,omitempty"`
 	NodeID                string                          `json:"node_id"`
 	Version               string                          `json:"version"`
 	ConfigHash            string                          `json:"config_hash"`
@@ -66,6 +67,25 @@ type HeartbeatRequest struct {
 // StreamTelemetryRequest carries only bounded source counters on a faster
 // cadence than the full node heartbeat.
 type StreamTelemetryRequest = telemetry.SyncBatch
+
+// ParserRuntimeInventory reports paths and digests only, never parser contents.
+type ParserRuntimeInventory struct {
+	ManagedFilesDigest  string              `json:"managed_files_digest"`
+	Truncated           bool                `json:"truncated,omitempty"`
+	TotalFiles          int                 `json:"total_files"`
+	ParserDirectory     string              `json:"parser_directory"`
+	ManagedManifestPath string              `json:"managed_manifest_path"`
+	BundlePath          string              `json:"bundle_path"`
+	InventoryPath       string              `json:"inventory_path"`
+	BundleHash          string              `json:"bundle_hash"`
+	Files               []ParserRuntimeFile `json:"files"`
+}
+type ParserRuntimeFile struct {
+	ID                string `json:"id"`
+	Path              string `json:"path"`
+	SHA256            string `json:"sha256"`
+	ControllerManaged bool   `json:"controller_managed"`
+}
 
 type ParserInventory struct {
 	ID          string `json:"id"`
@@ -86,15 +106,16 @@ type Command struct {
 }
 
 type CommandResult struct {
-	NodeID                string         `json:"node_id"`
-	CommandID             string         `json:"command_id"`
-	Status                string         `json:"status"` // completed or failed
-	Message               string         `json:"message,omitempty"`
-	StartedAt             time.Time      `json:"started_at"`
-	FinishedAt            time.Time      `json:"finished_at"`
-	ConfigHash            string         `json:"config_hash,omitempty"`
-	ActiveAssetBundleHash string         `json:"active_asset_bundle_hash,omitempty"`
-	ActiveAssetRevisions  map[string]int `json:"active_asset_revisions,omitempty"`
+	RuntimeInventory      *ParserRuntimeInventory `json:"runtime_inventory,omitempty"`
+	NodeID                string                  `json:"node_id"`
+	CommandID             string                  `json:"command_id"`
+	Status                string                  `json:"status"` // completed or failed
+	Message               string                  `json:"message,omitempty"`
+	StartedAt             time.Time               `json:"started_at"`
+	FinishedAt            time.Time               `json:"finished_at"`
+	ConfigHash            string                  `json:"config_hash,omitempty"`
+	ActiveAssetBundleHash string                  `json:"active_asset_bundle_hash,omitempty"`
+	ActiveAssetRevisions  map[string]int          `json:"active_asset_revisions,omitempty"`
 }
 
 type EventBatch struct {

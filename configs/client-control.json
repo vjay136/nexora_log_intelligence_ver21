@@ -25,5 +25,6 @@
   "quarantine_path": "/var/log/nli/quarantine.jsonl",
   "quarantine_raw_upload_enabled": false,
   "quarantine_raw_upload_max_records": 100,
-  "quarantine_raw_upload_max_bytes": 1048576
+  "quarantine_raw_upload_max_bytes": 1048576,
+  "telemetry_poll_ms": 250
 }

@@ -66,6 +66,9 @@ func (s *Server) handleMappingPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := compiled.ExecuteTrace(ctx, input.Raw)
+	if err == nil {
+		err = compiled.ValidateComplete(input.Raw, result)
+	}
 	if fieldSenseContextError(w, ctx) {
 		return
 	}
@@ -105,10 +108,11 @@ func (s *Server) handleFieldMappingStatus(w http.ResponseWriter, r *http.Request
 		"analysis":     s.fieldSenseAnalysis().status(),
 		"generated_at": time.Now().UTC(), "states": states, "profiles": profiles, "profile_count": len(profiles),
 		"methods": fieldmapping.Methods, "operations": fieldmapping.Operations, "types": fieldmapping.Types,
-		"limits":                 map[string]int{"max_input_bytes": fieldmapping.MaxInputBytes, "max_fields": fieldmapping.MaxFields, "max_operations_per_field": fieldmapping.MaxOperations, "max_learning_samples": 100},
-		"minimum_client_release": "21.0.0-7",
-		"execution":              "The same bounded native plan runs in controller preview and R7 client parser bundles. Saved drafts require validation, approval and exact-bundle acknowledgement before replay.",
-		"learning":               "Deterministic structural suggestions from operator samples; ambiguous meanings require operator labels. No external AI calls or automatic parser activation.",
+		"limits":                              map[string]int{"max_input_bytes": fieldmapping.MaxInputBytes, "max_fields": fieldmapping.MaxFields, "max_operations_per_field": fieldmapping.MaxOperations, "max_learning_samples": 100},
+		"minimum_client_release":              "21.0.0-7",
+		"dynamic_tail_minimum_client_release": "21.0.0-9",
+		"execution":                           "The same bounded native plan runs in controller preview and enrolled clients. Dynamic EOL/flatten plans require R9 clients. Saved drafts require validation, approval and exact-bundle acknowledgement before replay.",
+		"learning":                            "Deterministic structural suggestions from operator samples; ambiguous meanings require operator labels. No external AI calls or automatic parser activation.",
 	})
 }
 
@@ -274,7 +278,16 @@ func assuranceMappingRuntimePack(id, version, author string, definition map[stri
 		return nil, err
 	}
 	names := make([]string, 0, len(plan.Fields))
+	dynamic := false
+	minimumClient := "21.0.0-7"
 	for _, field := range plan.Fields {
+		if field.OutputPolicy == "flatten" || field.Method == "kv_all" && (field.Source != "" || field.EndOfLine) {
+			minimumClient = "21.0.0-9"
+		}
+		if field.OutputPolicy == "flatten" {
+			dynamic = true
+			continue
+		}
 		names = append(names, field.Name)
 	}
 	sort.Strings(names)
@@ -291,7 +304,7 @@ func assuranceMappingRuntimePack(id, version, author string, definition map[stri
 		return nil, err
 	}
 	pack := &parserpolicy.ParserPack{ID: id, Version: version, Revision: 1, SourceType: "manual", Author: author, ReviewState: parserpolicy.ReviewStateApproved, CreatedAt: time.Now().UTC(), ResourceLimits: limits,
-		Metadata: map[string]string{"subsystem": "nfi", "mapping_engine": "nfi-v1", "minimum_client_release": "21.0.0-7"},
+		Metadata: map[string]string{"subsystem": "nfi", "mapping_engine": "nfi-v1", "minimum_client_release": minimumClient},
 		Rules: []parserpolicy.ParserRule{{ID: id + "-rule", Name: id, Priority: 1, ServiceSelectors: selectors,
 			Stages:        []parserpolicy.Stage{{ID: id + "-mapping", Name: "NFI native field mapping", Type: parserpolicy.StageType("mapping"), Config: stageConfig, FailurePolicy: parserpolicy.FailurePolicyRejectRule}},
 			FailurePolicy: parserpolicy.FailurePolicyQuarantine, ProjectionMode: parserpolicy.ProjectionModeAllowlist, AllowedFields: names, CountPolicy: parserpolicy.CountPolicyProjection}}}
@@ -299,6 +312,13 @@ func assuranceMappingRuntimePack(id, version, author string, definition map[stri
 		pack.Metadata["selection_policy"] = "reviewed_mapping"
 		priority, _ := nfiMappingPriority(definition)
 		pack.Metadata["mapping_priority"] = strconv.Itoa(priority)
+	}
+	if dynamic {
+		// Dynamic keys must survive projection, including keys first seen after
+		// approval. The mapping stage validates their extraction and collisions.
+		pack.Rules[0].ProjectionMode = parserpolicy.ProjectionModeAll
+		pack.Rules[0].AllowedFields = nil
+		pack.Rules[0].CountPolicy = parserpolicy.CountPolicyAllowDerived
 	}
 	if scopePattern != "" {
 		pack.Rules[0].IncludePredicates = []parserpolicy.Predicate{{Type: "regex", Field: "input", Pattern: scopePattern}}

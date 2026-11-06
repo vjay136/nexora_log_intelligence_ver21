@@ -8,6 +8,12 @@ const helpers=app.slice(app.indexOf('  const QRW_RESERVED='),app.indexOf('  func
 const extraction=app.slice(app.indexOf('  function qrwSlice('),app.indexOf('  async function qrwValidateCandidate('));
 function engine(){return vm.runInNewContext(`${helpers}\n${extraction}\n({field:qrwField,suggest:qrwSuggestedFields,merge:qrwMergeControllerSuggestions,extract:qrwExtract,tokens:qrwTokens,pairs:qrwPairs,plan:fields=>{state.qrwFields=fields;return qrwPlan();}})`,{TextEncoder,TextDecoder,state:{qrwFields:[]}});}
 
+test('Key value EOL round trips as a line-bounded native dynamic plan while explicit multiline remains distinct',()=>{
+ const e=engine(),field=e.field({name:'tail_fields',method:'kv_eol',source:'9',unit:'token',type:'object',policy:'required',output_policy:'flatten',assignment_separators:['=',':'],pair_delimiters:':;| \t\r\n',require_complete:true});
+ const native=JSON.parse(JSON.stringify(e.plan([field]))).fields[0];assert.equal(native.method,'kv_all');assert.equal(native.end_of_line,true);assert.equal(native.require_complete,true);assert.deepEqual(native.assignment_separators,['=',':']);assert.equal(native.source,'9');assert.equal(native.output_policy,'flatten');assert.equal(e.field(native).method,'kv_eol');
+ const explicit=e.plan([e.field({...native,end_of_line:false})]).fields[0];assert.equal(explicit.method,'kv_all');assert.equal(explicit.end_of_line,false);
+});
+
 test('Controller suggestions retain operator labels, ordered transformations and extra manual fields',()=>{
  const e=engine(),existing=[e.field({name:'my_service',label:'My service',method:'position',source:'2',operations:[{op:'prefix',value:'prod-'}]}),e.field({name:'audit_tag',method:'constant',default_value:'manual'})];
  const fields=e.merge([{name:'service',method:'position',source:'2',type:'string'},{name:'host',method:'position',source:'1',type:'string'}],existing);

@@ -1,0 +1,21 @@
+# Ver21 R9 field mapping and parser lifecycle guide
+
+For `Note;SieveRuleMsg`, map token 8 using delimiter `;`: part 1 is the operator-labelled `loglevel`, part 2 is `event`. Suggestions label observed values; verify meanings and types before approval.
+
+For `status=failed:reason=notneeded:server=cloud` beginning at token 9, choose **Key value EOL — End of line**, set start 9, assignment `=`, and pair delimiters such as colon, semicolon, pipe and whitespace. The tail emits root fields `status`, `reason`, `server` and future observed keys through the current line ending. No fixed list of key names is required. Quoted values retain spaces/separators; `reason=not needed` remains one value. Use explicit colon assignment for `|status:failed|reason:notneeded|server:cloud`.
+
+All positions are 1-based; an explicit end is inclusive. Character selections use Unicode characters, byte selections reject cuts through a Unicode character. Expert `kv_all` without EOL enabled may intentionally scan multiple lines; use it only when that input is one logical record. EOL does not authorize silent loss of structured data on later lines in the same record.
+
+The strict tail scanner rejects unexplained fragments, malformed quotes/nesting and ambiguous unquoted separator-like values. Quote literal punctuation or configure the actual assignment grammar. The mixed input `status:failed reason;notneeded server;cloud` is not automatically interpreted as a universal format.
+
+Use key aliases/prefix/suffix to choose output names. Include/exclude filters explicitly choose retained keys. Duplicate policy may reject, select first/last, or retain an array. Values default to source-preserving strings; for a typed named value, exclude its original dynamic key and add a separate typed key/value mapping. Root collisions and reserved/internal names are rejected. A flattened container must have object type; its container label is not emitted.
+
+Upgrade both controller and client to R9 before using new source-ranged, flattened or EOL tail plans. Their metadata declares minimum_client_release `21.0.0-9`. The new EOL/strict-tail flags are rejected by older strict decoders; metadata does not upgrade a client, and older clients are not qualified for R9 tail semantics.
+
+Test all fields and generate/validate the candidate in the wizard. Review exact validation evidence before publishing. Publication and rollout must reach the origin client's exact acknowledged bundle before replay can be verified; an offline client cannot be represented as synchronized. Deleting a parser removes it from the next active bundle while retaining recoverable source metadata. Restore into review when needed and validate/publish a new revision; inspect the client's persisted runtime inventory to confirm the installed generation.
+
+An authenticated administrator-role user can authorize their own work while retaining validation and audit checks. New parser packs are additional candidates alongside eligible built-in and existing approved parsers. Deleting one custom parser does not imply quarantine when another approved parser legitimately handles that format.
+
+Controller materialized files are under `<StateDir>/parser-assets/`: `bundle.json`, `active-parsers/<runtime_id>.json`, and `runtime-inventory.json`. Clients normally keep actual active managed packs in `/var/lib/nli/parsers/`, the ownership manifest `.nli-managed-parsers.json`, and verified bundle/inventory under `/var/lib/nli/parser-assets/`. These projections contain parser definitions and hashes, without raw logs or provider keys. Inventory responses bound displayed descriptors to 128 and report truncation/total count; inspect the full on-host managed manifest for larger fleets of packs.
+
+Deletion archives the source revision, actor and time in revisioned `parser-trash` metadata (existing local/Supabase persistence), removes the active identity, and creates a removal rollout requiring approval. The client changes only after that real bundle is approved, delivered and acknowledged. Deleted-parser restore requires a distinct parser ID and reason; the restored object is an unvalidated draft with fresh checksum and no inherited activation/approval. Validate, submit, approve and publish it before rollout. The runtime synchronization view shows exact acknowledgements and the next blocking action.

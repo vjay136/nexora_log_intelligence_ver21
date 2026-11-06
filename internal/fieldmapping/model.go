@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -84,6 +85,7 @@ type Field struct {
 	QuoteAware      *bool       `json:"quote_aware,omitempty"`
 	Operations      []Operation `json:"operations,omitempty"`
 	OutputPolicy    string      `json:"output_policy,omitempty"`
+	EndOfLine       bool        `json:"end_of_line,omitempty"`
 	EmptyPolicy     string      `json:"empty_policy,omitempty"`
 	CustomType      string      `json:"custom_type,omitempty"`
 	CustomPattern   string      `json:"custom_pattern,omitempty"`
@@ -145,6 +147,7 @@ type Selection struct {
 }
 
 type KeyOptions struct {
+	RequireComplete      bool              `json:"require_complete,omitempty"`
 	AssignmentSeparators []string          `json:"assignment_separators,omitempty"`
 	KeyAliases           map[string]string `json:"key_aliases,omitempty"`
 	KeyInclude           []string          `json:"key_include,omitempty"`
@@ -177,9 +180,10 @@ type TraceStep struct {
 }
 
 type Result struct {
-	Values   map[string]any         `json:"values"`
-	Evidence map[string]Evidence    `json:"evidence"`
-	Trace    map[string][]TraceStep `json:"trace,omitempty"`
+	Values        map[string]any         `json:"values"`
+	Evidence      map[string]Evidence    `json:"evidence"`
+	Trace         map[string][]TraceStep `json:"trace,omitempty"`
+	DynamicFields []string               `json:"dynamic_fields,omitempty"`
 }
 
 type compiledField struct {
@@ -568,7 +572,36 @@ func (c *Compiled) execute(ctx context.Context, raw string, trace bool) (Result,
 			}
 		}
 		if !hidden {
-			result.Values[f.field.Name] = value
+			if f.field.OutputPolicy == "flatten" {
+				object, ok := value.(map[string]any)
+				if !ok {
+					return result, fmt.Errorf("flatten output requires an object")
+				}
+				keys := make([]string, 0, len(object))
+				for key := range object {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				for _, key := range keys {
+					if !fieldName.MatchString(key) || strings.HasPrefix(key, "_") || contains(ReservedNames, strings.ToLower(key)) {
+						return result, fmt.Errorf("dynamic key %q must be a non-reserved output identifier", key)
+					}
+					if _, exists := prior[key]; exists {
+						return result, fmt.Errorf("dynamic key %q collides with a mapped field", key)
+					}
+					if len(result.Values) >= MaxFields {
+						return result, fmt.Errorf("dynamic output exceeds field limit")
+					}
+					result.Values[key], prior[key] = object[key], object[key]
+					result.Evidence[key] = evidence
+					result.DynamicFields = append(result.DynamicFields, key)
+				}
+			} else {
+				if _, exists := result.Values[f.field.Name]; exists {
+					return result, fmt.Errorf("mapped field %q collides with a dynamic key", f.field.Name)
+				}
+				result.Values[f.field.Name] = value
+			}
 		}
 		result.Evidence[f.field.Name] = evidence
 	}

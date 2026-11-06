@@ -1279,7 +1279,16 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		reader := bufio.NewReaderSize(t.file, 64*1024)
 
 		processed := 0
+		lastLiveProgress := time.Now()
 		for ; processed < batchSize; processed++ {
+			// Expose cumulative progress during a long durable batch. This is
+			// observation only: output/WAL acknowledgements and cursor commits
+			// remain at their existing boundaries. At most ten snapshots/sec.
+			if now := time.Now(); now.Sub(lastLiveProgress) >= 100*time.Millisecond {
+				depth, capacity := outputQueueStats()
+				streamSamples.put(t.stream.publish(t.input.Path, "reading", depth, capacity, now))
+				lastLiveProgress = now
+			}
 			if ctx.Err() != nil {
 				return nil
 			}

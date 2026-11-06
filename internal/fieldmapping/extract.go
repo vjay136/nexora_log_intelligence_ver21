@@ -310,6 +310,9 @@ func scanPairs(raw, separator, delimiters string) (map[string][]pair, error) {
 	return scanPairsMany(raw, []string{separator}, delimiters)
 }
 func scanPairsMany(raw string, separators []string, delimiters string) (map[string][]pair, error) {
+	return scanPairsManyMode(raw, separators, delimiters, false)
+}
+func scanPairsManyMode(raw string, separators []string, delimiters string, complete bool) (map[string][]pair, error) {
 	keyAt := func(raw string, pos int, _ string) (string, int, bool) {
 		for _, sep := range separators {
 			if k, e, ok := keyAt(raw, pos, sep); ok {
@@ -323,12 +326,23 @@ func scanPairsMany(raw string, separators []string, delimiters string) (map[stri
 	pos := 0
 	pairCount := 0
 	for pos < len(raw) {
+		if complete {
+			for pos < len(raw) && boundary(raw[pos], delimiters) {
+				pos++
+			}
+			if pos == len(raw) {
+				break
+			}
+		}
 		if pos > 0 && !boundary(raw[pos-1], delimiters) {
 			pos++
 			continue
 		}
 		key, valueStart, ok := keyAt(raw, pos, separator)
 		if !ok {
+			if complete {
+				return nil, fmt.Errorf("key/value tail has an unconsumed fragment at byte %d", pos+1)
+			}
 			pos++
 			continue
 		}
@@ -406,7 +420,17 @@ func scanPairsMany(raw string, separators []string, delimiters string) (map[stri
 		for valueEnd > valueStart && (raw[valueEnd-1] == ' ' || raw[valueEnd-1] == '\t' || raw[valueEnd-1] == '\r' || raw[valueEnd-1] == '\n') {
 			valueEnd--
 		}
+		if complete {
+			for valueEnd > valueStart && (boundary(raw[valueEnd-1], delimiters) && raw[valueEnd-1] != ':') {
+				valueEnd--
+			}
+		}
 		text := raw[valueStart:valueEnd]
+		if complete {
+			if err := strictPairValue(text, delimiters); err != nil {
+				return nil, fmt.Errorf("key %q: %w", key, err)
+			}
+		}
 		if len(text) >= 2 && (text[0] == '\'' || text[0] == '"') && text[len(text)-1] == text[0] {
 			q := text[0]
 			text = text[1 : len(text)-1]

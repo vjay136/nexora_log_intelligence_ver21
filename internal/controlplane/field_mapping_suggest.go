@@ -295,9 +295,26 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 		family = "timestamp-prefixed-key-value"
 		fields = append(fields, nfiSuggestedField("date", "position", "1", tokens[0]), nfiSuggestedField("time_timezone", "position", "2", tokens[1]))
 	}
+	assignments := []string{"="}
+	discoveryRaw := raw
+	if mail && len(tokens) > 8 {
+		discoveryRaw = strings.TrimSpace(raw[len(nfiSuggestMailHeader.FindString(raw)):])
+	}
+	observations, scanErr := fieldmapping.ScanKeyValues(discoveryRaw, assignments, ":;,| \t\r\n", false)
+	if scanErr != nil {
+		return "", nil, scanErr
+	}
+	if mail && len(observations) == 0 && scanErr == nil {
+		candidate, err := fieldmapping.ScanKeyValues(discoveryRaw, []string{":"}, ":;,| \t\r\n", true)
+		if err == nil && len(candidate) >= 2 {
+			assignments = []string{":"}
+			observations = candidate
+		}
+	}
 	keys := []string{}
 	seen := map[string]bool{}
-	for _, match := range nfiSuggestKVKey.FindAllStringSubmatch(raw, fieldmapping.MaxFields*2) {
+	for _, observation := range observations {
+		match := []string{"", observation.Key}
 		if !seen[match[1]] {
 			seen[match[1]] = true
 			keys = append(keys, match[1])
@@ -311,6 +328,8 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 		for i, key := range keys {
 			f := nfiSuggestedField(fmt.Sprintf("probe_%03d", i), "key_value", key, "")
 			f.Policy = "optional"
+			f.AssignmentSeparators = assignments
+			f.PairDelimiters = ":;,| \t\r\n"
 			probeFields = append(probeFields, f)
 		}
 		compiled, err := fieldmapping.Compile(fieldmapping.Plan{Version: 1, Fields: probeFields})
@@ -337,8 +356,9 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 			name := nfiSuggestionUniqueName(key, used)
 			used[name] = true
 			field := nfiSuggestedField(name, "key_value", key, text)
-			field.KVSeparator = "="
-			field.PairDelimiters = ":;, \t\r\n"
+			field.KVSeparator = assignments[0]
+			field.AssignmentSeparators = assignments
+			field.PairDelimiters = ":;,| \t\r\n"
 			field.Type = nfiSuggestedType(key, text)
 			fields = append(fields, field)
 			if len(fields) >= fieldmapping.MaxFields {

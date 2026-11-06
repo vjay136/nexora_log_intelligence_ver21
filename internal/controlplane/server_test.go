@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -222,7 +223,10 @@ func TestTimeSeriesMetricsAreBoundedAndContainNoEventPayload(t *testing.T) {
 	}
 	result := decodeMap(t, data)
 	points, ok := result["points"].([]any)
-	if !ok || len(points) != 12 || result["schema_version"] != "1" {
+	from, fromErr := time.Parse(time.RFC3339, fmt.Sprint(result["from"]))
+	to, toErr := time.Parse(time.RFC3339, fmt.Sprint(result["to"]))
+	expectedBuckets := int((to.Sub(from) + 5*time.Minute - 1) / (5 * time.Minute))
+	if !ok || fromErr != nil || toErr != nil || len(points) != expectedBuckets || len(points) > 1000 || result["schema_version"] != "1" {
 		t.Fatalf("bad bounded points contract: %s", data)
 	}
 	retention, _ := result["retention"].(map[string]any)

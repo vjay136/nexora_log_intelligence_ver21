@@ -166,6 +166,8 @@ func (s *Server) listInputPathRollouts(w http.ResponseWriter, r *http.Request, p
 }
 
 func (s *Server) markInputPathRolloutDesired(ctxPrincipal string, proposal map[string]any, targets []string) {
+	s.fleetSyncMu.Lock()
+	defer s.fleetSyncMu.Unlock()
 	pathProfile, _ := proposal["input_path_profile"].(map[string]any)
 	if pathProfile == nil {
 		return
@@ -184,6 +186,8 @@ func (s *Server) markInputPathRolloutDesired(ctxPrincipal string, proposal map[s
 }
 
 func (s *Server) recordInputPathRolloutResult(commandID, nodeID, status, message string) {
+	s.fleetSyncMu.Lock()
+	defer s.fleetSyncMu.Unlock()
 	rollout, ok := s.rollouts.Get(commandID)
 	if !ok || rollout == nil {
 		return

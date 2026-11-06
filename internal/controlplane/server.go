@@ -119,6 +119,8 @@ type Server struct {
 	artifactKeys             [][]byte
 	aiMetrics                *aiUsageStore
 	metricHistory            *metricHistory
+	metricIngestMu           sync.Mutex
+	fleetSyncMu              sync.Mutex
 	quarantine               *quarantineVault
 	nupire                   nupireController
 	downloadKey              []byte
@@ -132,6 +134,7 @@ type Server struct {
 	fieldSenseOnce           sync.Once
 	fieldSense               *fieldSenseAdmission
 	parserMutationMu         sync.Mutex
+	parserMaterializeMu      sync.Mutex
 	automaticRuntimeMu       sync.Mutex
 	automaticRuntime         *automaticRuntimeSnapshot
 }
@@ -446,6 +449,11 @@ func openArtifactBlobStore(cfg Config) (metastore.BlobStore, error) {
 func (s *Server) Mux() http.Handler { return s.security.Wrap(s.mux) }
 func (s *Server) Close() error {
 	var errs []string
+	s.metricIngestMu.Lock()
+	if err := s.metricHistory.flush(); err != nil {
+		errs = append(errs, err.Error())
+	}
+	s.metricIngestMu.Unlock()
 	if s.assuranceRuns != nil {
 		s.assuranceRuns.Close()
 	}
@@ -542,6 +550,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/parsers", guard(middleware.PermissionReadParsers, s.handleBuiltinParsers))
 	s.mux.HandleFunc("/api/v1/parser-packs", s.handleParserPacks)
 	s.mux.HandleFunc("/api/v1/parser-packs/", s.handleParserPack)
+	s.mux.HandleFunc("/api/v1/parser-packs/deleted", s.handleDeletedParsers)
+	s.mux.HandleFunc("/api/v1/parser-packs/deleted/", s.handleDeletedParsers)
 	for _, route := range []struct{ path, collection string }{{"/api/v1/config/kv", "kv-config"}, {"/api/v1/config/static-patterns", "static-patterns"}, {"/api/v1/config/projections", "projections"}, {"/api/v1/config/templates", "templates"}, {"/api/v1/config/regex", "regex-patterns"}, {"/api/v1/config/known-keys", "known-keys"}, {"/api/v1/config/semantic-extraction", "semantic-extraction"}, {"/api/v1/config/output-destinations", "output-destinations"}, {"/api/v1/config/input-paths", "input-paths"}} {
 		collection := route.collection
 		s.mux.HandleFunc(route.path, func(w http.ResponseWriter, r *http.Request) { s.handleConfiguration(w, r, collection) })
@@ -873,12 +883,17 @@ func (s *Server) handleNodeStreamTelemetry(w http.ResponseWriter, r *http.Reques
 		jsonOK(w, map[string]any{"status": "accepted_legacy", "schema_version": telemetry.SyncSchemaVersion, "upgrade_recommended": true})
 		return
 	}
+	// Keep accepted batches and retained deltas in the same order, including
+	// concurrent requests from one node. An older counter must never become a
+	// false reset after a newer batch was retained.
+	s.metricIngestMu.Lock()
+	defer s.metricIngestMu.Unlock()
 	result := s.streamTelemetry.PublishBatch(request)
 	if result.Status == "accepted" {
 		// The canonical live state has already accepted this batch. Retention is
 		// best-effort so a local history disk failure cannot trigger client retries
 		// or turn an accepted publication into an apparent ingestion failure.
-		_ = s.metricHistory.observe(s.streamTelemetry.Snapshot(), time.Now().UTC())
+		_ = s.metricHistory.observe(s.streamTelemetry.acceptedBatchSources(request), time.Now().UTC())
 	}
 	jsonOK(w, result)
 }

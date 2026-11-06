@@ -77,6 +77,8 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
     if (path === '/api/v1/auth/login') { authenticated = true; return fulfill({ status: 'ok' }); }
     if (path === '/api/v1/auth/me') return authenticated ? fulfill({ username: 'test-operator', role, permissions: ['assurance:run'] }) : fulfill({ error: 'unauthorized' }, 401);
     if (path === '/api/v1/field-mapping') return fulfill({engine:'native-field-mapping-v1',profile_count:0,profiles:[],methods:['position','key_value','delimiter','character'],operations:['split','merge','replace'],limits:{max_fields:128,max_operations:16,max_input_bytes:1048576}});
+    if (path === '/api/v1/parser-packs/deleted') return fulfill({deleted_parsers:[],count:0});
+    if (path === '/api/v1/parser-sync/runtime') return fulfill({controller:{status:'unavailable',parsers:[]},clients:[]});
     if (path === '/api/v1/auth/csrf') return fulfill({ csrf_token: 'browser-test-csrf' });
     if (path === '/api/v1/auth/logout') { authenticated = false; return fulfill({ status: 'ok' }); }
     if (path === '/api/v1/nupire/snapshot') return fulfill({ candidates: nupireCandidates, count: nupireCandidates.length, evolution_state: 'available' });
@@ -183,6 +185,63 @@ async function login(page) {
 
 const designStyles=['skeuomorphism','minimalism','glassmorphism','neumorphism','claymorphism','bento-grid','retro-y2k','liquid-glass'];
 
+test('R9 historical dashboard counts follow range and client and reject late responses',async({page})=>{
+ await mockController(page);let pending;
+ const history=count=>({from:'2026-11-06T00:00:00Z',to:'2026-11-06T01:00:00Z',points:[{timestamp:'2026-11-06T00:59:00Z'}],canonical_history:{points:[{timestamp:'2026-11-06T00:59:00Z',read_delta:String(count),parsed_delta:String(count-2),quarantine_delta:'2',errors:'0'}]}});
+ await page.route('**/api/v1/metrics/timeseries?**',async route=>{const query=new URL(route.request().url()).searchParams;if(query.get('range')==='6h'){pending=route;return;}const count=query.get('node_id')?17:query.get('range')==='24h'?49:9;await route.fulfill({contentType:'application/json',body:JSON.stringify(history(count))});});
+ await login(page);const input=page.getByTestId('live-dashboard-kpis').locator('.dashboard-kpi strong').nth(0);await expect(input).toHaveText('49');await page.locator('#dashboard-range').selectOption('1h');await expect(input).toHaveText('9');
+ await page.locator('#dashboard-range').selectOption('6h');await expect.poll(()=>!!pending).toBe(true);await page.locator('#dashboard-range').selectOption('24h');await expect(input).toHaveText('49');await pending.fulfill({contentType:'application/json',body:JSON.stringify(history(999))});await expect(page.locator('#dashboard-range')).toHaveValue('24h');await expect(input).toHaveText('49');
+ await page.locator('#dashboard-client').selectOption('node-1');await expect(input).toHaveText('17');await expect(page.locator('#dashboard-client')).toHaveValue('node-1');
+});
+
+test('R9 dashboard adds post-checkpoint live counts without replacing a focused range control',async({page})=>{
+ await mockController(page);await page.addInitScript(()=>{window.__r9Sources=[];window.EventSource=class extends EventTarget{constructor(){super();window.__r9Sources.push(this);setTimeout(()=>this.onopen?.(),0);}close(){}emit(value){this.dispatchEvent(new MessageEvent('sync_delta',{data:JSON.stringify(value)}));}};});
+ const observed=new Date(Date.now()-1000).toISOString();await page.route('**/api/v1/metrics/timeseries?**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({from:'2026-11-06T00:00:00Z',to:'2026-11-07T00:00:00Z',points:[{timestamp:'2026-11-06T00:59:00Z'}],canonical_history:{observed_at:observed,counter_baseline:{['node-1\0/var/log/mail.log']:{generation:'gen-1',read:'120',parsed:'116',quarantine:'4',errors:'0'}},points:[{timestamp:'2026-11-06T00:59:00Z',read_delta:'49',parsed_delta:'47',quarantine_delta:'2',errors:'0'}]}})}));
+ await login(page);const input=page.getByTestId('live-dashboard-kpis').locator('.dashboard-kpi strong').nth(0);await expect(input).toHaveText('49');await page.locator('#dashboard-range').focus();await page.locator('#dashboard-range').evaluate(node=>{window.__r9Range=node;window.__r9Root=document.querySelector('#page').firstElementChild;});
+ await page.evaluate(()=>window.__r9Sources.at(-1).emit({schema_version:'nli.sync.v1',revision:8,generated_at:new Date().toISOString(),source:{node_id:'node-1',source:'/var/log/mail.log',process_generation:'gen-1',sequence:8,counters:{nli_source_records_read_total:125,nli_parser_records_succeeded_total:120,nli_normalized_records_total:120,nli_quarantined_records_total:5,nli_parser_records_failed_total:0},controller_received_at:new Date().toISOString()},aggregate:{nli_source_records_read_total:125,nli_normalized_records_total:120,nli_quarantined_records_total:5}}));
+ await expect(input).toHaveText('54');await expect(page.getByTestId('live-dashboard-kpis').locator('.dashboard-kpi strong').nth(1)).toHaveText('51');await expect.poll(()=>page.evaluate(()=>({focused:document.activeElement===window.__r9Range,connected:window.__r9Range.isConnected,root:document.querySelector('#page').firstElementChild===window.__r9Root}))).toEqual({focused:true,connected:true,root:true});
+});
+
+test('R9 dynamic tail keeps future keys in verified JSON and out of fixed projection',async({page})=>{
+ await mockController(page);let plan;
+ await page.route('**/api/v1/assurance/mapping-preview',async route=>{plan=route.request().postDataJSON().plan;await route.fulfill({contentType:'application/json',body:JSON.stringify({passed:true,actual:{status:'failed',reason:'notneeded',server:'cloud',future_key:'preserved'},errors:[]})});});
+ await login(page);await page.getByTestId('nav-field-mapping').click();await page.locator('#nfi-raw').fill('20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg status=failed:reason=notneeded:server=cloud');
+ page.once('dialog',dialog=>dialog.accept('9'));await page.getByRole('button',{name:'Add dynamic KV tail',exact:true}).click();
+ await expect(page.locator('[data-qrw-row]')).toHaveCount(1);await page.getByRole('button',{name:'Verify on controller',exact:true}).click();await expect(page.locator('#nfi-live-json')).toContainText('future_key');
+ await page.locator('[data-action=nfi-generate]').first().click();await expect(page.locator('#nfi-parser-json')).not.toHaveValue('{}');const parser=JSON.parse(await page.locator('#nfi-parser-json').inputValue());
+ expect(plan.fields[0]).toMatchObject({method:'kv_all',source:'9',source_end:'',unit:'token',output_policy:'flatten',assignment_separators:['='],require_complete:true});expect(parser.fields).toEqual([]);expect(parser.field_mapping).toEqual({});expect(parser.output_schema.fields).toEqual([]);expect(parser.mapping_plan.fields[0]).toMatchObject({method:'kv_all',output_policy:'flatten'});expect(JSON.parse(await page.locator('#nfi-cases-json').inputValue())[0].desired.future_key).toBe('preserved');
+});
+
+test('R9 catalog exposes actual inventory and restores archived parsers as inactive drafts',async({page})=>{
+ await mockController(page);let restored;
+ await page.route('**/api/v1/parser-packs/deleted',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({deleted_parsers:[{id:'retired',name:'Retired parser',original_state:'published',restorable:true}]})}));
+ await page.route('**/api/v1/parser-sync/runtime',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({controller:{status:'materialized',bundle_path:'/var/lib/nli/parser-sync/bundle.json',parser_directory:'/var/lib/nli/parser-sync/parsers',parsers:[{id:'live',path:'/var/lib/nli/parser-sync/parsers/live.json',sha256:'actual-sha'}]},clients:[{node_id:'node-1',status:'pending',exact_acknowledgement:false,blocking_code:'bundle_ack_pending',next_action:'Approve the removal rollout'}]})}));
+ await page.route('**/api/v1/parser-packs/deleted/retired/restore',async route=>{restored=route.request().postDataJSON();await route.fulfill({status:201,contentType:'application/json',body:JSON.stringify({id:restored.id,state:'draft',activated:false})});});
+ await login(page);await page.getByTestId('nav-parsers').click();await expect(page.locator('#page')).toContainText('/var/lib/nli/parser-sync/parsers/live.json');await expect(page.locator('#page')).toContainText('bundle_ack_pending');page.once('dialog',dialog=>dialog.accept('retired-restored'));await page.getByRole('button',{name:'Restore as draft',exact:true}).click();await expect.poll(()=>restored?.id).toBe('retired-restored');expect(restored).not.toHaveProperty('activated');
+});
+
+for(const passes of [true,false])test(`R9 combined wizard generation validates static and Key value EOL together (${passes?'passed':'blocked'})`,async({page})=>{
+ const raw='mailnode status=failed:server=cloud';const mock=await mockController(page,{quarantineRaw:raw,assurancePassed:passes});let nativePlan;
+ await page.route('**/api/v1/assurance/mapping-preview',async route=>{nativePlan=route.request().postDataJSON().plan;await route.fulfill({contentType:'application/json',body:JSON.stringify({passed:true,actual:{hostname:'mailnode',status:'failed',server:'cloud'},errors:[]})});});
+ await login(page);await page.getByTestId('nav-quarantine-wizard').click();await page.getByRole('button',{name:'Inspect',exact:true}).click();await page.getByRole('button',{name:/Review desired schema/}).click();await page.getByText('Import or edit a mapping plan',{exact:true}).click();await page.locator('#nfi-plan-import').fill(JSON.stringify({version:1,fields:[{name:'hostname',method:'position',source:'1',type:'string',policy:'required'},{name:'tail_fields',method:'kv_eol',source:'2',unit:'token',type:'object',policy:'required',output_policy:'flatten',assignment_separators:['='],pair_delimiters:':;| \t\r\n',require_complete:true}]}));await page.getByRole('button',{name:'Import mapping',exact:true}).click();
+ const method=page.locator('[data-qrw-key=method]').nth(1);await expect(method.locator('option:checked')).toHaveText('Key value EOL — End of line');await expect(method.locator('option[value=key_value]')).toHaveCount(1);
+ await page.getByRole('button',{name:'Generate + validate complete parser pack',exact:true}).click();await expect(page.locator('#gprs-parser-helper-form')).toBeVisible();expect(nativePlan.fields[1]).toMatchObject({method:'kv_all',end_of_line:true,source:'2',output_policy:'flatten'});const parser=JSON.parse(await page.locator('#gprs-parser-helper-form [name=parser]').inputValue());expect(parser.fields.map(field=>field.name)).toEqual(['hostname']);expect(parser.mapping_plan.fields).toHaveLength(2);await expect(page.locator('#gprs-parser-helper-form [data-parser-helper-status]')).toContainText(passes?'Complete parser validation passed':'0/1 passed');expect(mock.observed).toContain('POST /api/v1/assurance/parser-preview');expect(mock.observed.some(item=>item.endsWith('/publish'))).toBe(false);
+});
+
+test('R9 native merge removes consumed output schema fields and conditional non-consumption preserves them',async({page})=>{
+ await mockController(page);let actual={merged:'mailnode/smtp'};
+ await page.route('**/api/v1/assurance/mapping-preview',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({passed:true,actual,errors:[]})}));
+ await login(page);await page.getByTestId('nav-field-mapping').click();await page.locator('#nfi-raw').fill('mailnode smtp');await page.getByText('Import or edit a mapping plan',{exact:true}).click();
+ const fields=[{name:'host',method:'position',source:'1',type:'string',policy:'required'},{name:'service',method:'position',source:'2',type:'string',policy:'required'},{name:'merged',method:'constant',default_value:'',type:'string',policy:'required',operations:[{op:'merge',fields:['host','service'],separator:'/',remove_sources:true}]}];
+ await page.locator('#nfi-plan-import').fill(JSON.stringify({version:1,fields}));await page.getByRole('button',{name:'Import mapping',exact:true}).click();await page.getByRole('button',{name:'Verify on controller',exact:true}).click();await page.locator('[data-action=nfi-generate]').first().click();let parser=JSON.parse(await page.locator('#nfi-parser-json').inputValue());expect(parser.fields.map(field=>field.name)).toEqual(['merged']);expect(parser.mapping_plan.fields).toHaveLength(3);
+ fields[2].operations[0]={op:'conditional_merge',fields:['host','service'],separator:'/',remove_sources:true,condition_field:'host',condition_operator:'equals',condition_value:'different',else_value:'unchanged'};actual={host:'mailnode',service:'smtp',merged:'unchanged'};await page.locator('#nfi-plan-import').fill(JSON.stringify({version:1,fields}));await page.getByRole('button',{name:'Import mapping',exact:true}).click();await page.getByRole('button',{name:'Verify on controller',exact:true}).click();await page.locator('[data-action=nfi-generate]').first().click();parser=JSON.parse(await page.locator('#nfi-parser-json').inputValue());expect(parser.fields.map(field=>field.name)).toEqual(['host','service','merged']);expect(parser.fields.find(field=>field.name==='host').required).toBe(false);expect(parser.output_schema.fields.find(field=>field.name==='host').policy).toBe('optional');
+});
+
+test('R9 a delayed wizard load cannot replace a newer quarantine inbox navigation',async({page})=>{
+ await mockController(page);let pending;
+ await page.route('**/api/v1/assurance/cases',route=>{pending=route;});await login(page);await page.getByTestId('nav-quarantine-wizard').click();await expect.poll(()=>!!pending).toBe(true);await page.getByTestId('nav-unknowns').click();await expect(page.locator('#page')).toHaveAttribute('data-page','unknowns');await pending.fulfill({contentType:'application/json',body:'{"cases":[]}'});await expect(page.locator('.card.metric').filter({hasText:'Manual attention'}).locator('.metric-value')).toHaveText('0');await expect(page.locator('#page')).toHaveAttribute('data-page','unknowns');await expect(page.locator('#page h1').filter({hasText:'Quarantine Resolution Wizard'})).toHaveCount(0);
+});
+
 test('R8 Design Studio previews, applies, reverts and persists appearance without replacing a working draft',async({page})=>{
  await mockController(page);await login(page);await page.getByTestId('nav-field-mapping').click();await page.locator('#nfi-raw').fill('mailnode smtp 007');await page.locator('#nfi-raw').evaluate(node=>node.dataset.identity='preserved');
  await page.getByRole('button',{name:'Appearance',exact:true}).click();const studio=page.locator('#design-studio');await expect(studio).toBeVisible();await expect(studio.locator('[data-option]')).toHaveCount(8);
@@ -273,7 +332,7 @@ test('every visible inner tab activates without browser, request, or render erro
 test('one canonical synchronization snapshot feeds Command Center, NHLE, NAPI and NAL', async ({ page }) => {
   await mockController(page);
   await login(page);
-  await expect(page.getByTestId('live-dashboard-kpis')).toContainText('120');
+  await expect(page.getByTestId('live-dashboard-kpis').locator('.dashboard-kpi strong').first()).toHaveText('9,007,199,254,740,993');
   await expect(page.locator('.chart-legend').first()).toContainText('Input (records / bucket)');
   const firstPoint=page.locator('[data-chart-category="Input"]').first();
   await expect(firstPoint).toBeVisible();
@@ -810,12 +869,12 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   expect(mock.qrwRolloutRequests[0]).toEqual({target_mode:'all_eligible',origin_node_id:'node-1',node_ids:[],bundle_hash:checksum});
   const rolloutRow=page.locator('#page tr').filter({hasText:'qrw-rollout-1'});
   await expect(rolloutRow).toContainText('all_eligible · 2 client(s)');
-  await expect(rolloutRow.getByRole('button',{name:'Emergency approve exact bundle'})).toBeEnabled();
+  await expect(rolloutRow.getByRole('button',{name:'Administrator approve exact bundle'})).toBeEnabled();
   await expect(page.getByRole('button',{name:'Propose to origin client'})).toBeDisabled();
   await expect(page.getByRole('button',{name:'Propose to all eligible clients'})).toBeDisabled();
   await expect(page.locator('.qrw-next-action')).toContainText('Complete the audited rollout approval');
   await rolloutRow.locator('[data-rollout-reason]').fill('Restore this exact reviewed bundle to the origin client');
-  await rolloutRow.getByRole('button',{name:'Emergency approve exact bundle'}).click();
+  await rolloutRow.getByRole('button',{name:'Administrator approve exact bundle'}).click();
   await expect.poll(()=>mock.rolloutApprovalRequests).toHaveLength(1);
   expect(mock.rolloutApprovalRequests[0]).toEqual({id:'qrw-rollout-1',body:{reason:'Restore this exact reviewed bundle to the origin client',emergency_self_approval:true,expected_revision:1,expected_bundle_hash:checksum}});
   await expect(page.locator('.qrw-next-action')).toContainText('Verify the origin client acknowledgement');
@@ -963,7 +1022,7 @@ test('Approvals workspace sends reason-bearing independent and exact emergency a
   await expect(independent.getByRole('button',{name:'Approve reviewed proposal'})).toHaveCount(0);
   const emergency=page.locator('tr').filter({hasText:'Emergency parser rollout'});
   await emergency.locator('[data-rollout-reason]').fill('Production recovery approved by administrator');
-  await emergency.getByRole('button',{name:'Emergency approve exact bundle'}).click();
+  await emergency.getByRole('button',{name:'Administrator approve exact bundle'}).click();
   await expect.poll(()=>mock.rolloutApprovalRequests).toHaveLength(2);
   expect(mock.rolloutApprovalRequests[1]).toEqual({id:'emergency-proposal',body:{reason:'Production recovery approved by administrator',emergency_self_approval:true,expected_revision:8,expected_bundle_hash:hash}});
 });
@@ -1232,8 +1291,8 @@ test('live dashboard renders controller metrics, client filter, pipeline timing 
   const { observed } = await mockController(page);
   await login(page);
   await expect(page.locator('#page').getByRole('heading', { name: 'Command Center' })).toBeVisible();
-  await expect(page.getByTestId('live-dashboard-kpis')).toContainText('120');
-  await expect(page.getByText('96.67% success')).toBeVisible();
+  await expect(page.getByTestId('live-dashboard-kpis').locator('.dashboard-kpi strong').first()).toHaveText('9,007,199,254,740,993');
+  await expect(page.getByText('100.00% success')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Pipeline time travel' })).toBeVisible();
   await expect(page.getByText('/var/log/mail.log').first()).toBeVisible();
   await expect(page.locator('#page')).not.toContainText('service=');

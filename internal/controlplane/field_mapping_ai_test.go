@@ -43,6 +43,10 @@ func mappingAIProviderFixture(t *testing.T, f *apiFixture, reply string, inspect
 func TestFieldMappingAICompoundProposalUsesNativeSchemaAndStaysEphemeral(t *testing.T) {
 	f := newAPIFixture(t)
 	definition, desired := nfiExampleDefinition()
+	// Private unrequested values are intentionally omitted, rather than being
+	// silently dropped by an otherwise successful AI proposal.
+	fixturePlan := definition["mapping_plan"].(map[string]any)
+	fixturePlan["fields"] = append(fixturePlan["fields"].([]any), map[string]any{"name": "ignored_owner", "method": "key_value", "source": "owner", "output_policy": "omit"}, map[string]any{"name": "ignored_password", "method": "key_value", "source": "password", "output_policy": "omit"})
 	encoded, _ := json.Marshal(map[string]any{"plan": definition["mapping_plan"]})
 	manual := fieldmapping.Plan{Version: 1, Fields: []fieldmapping.Field{{Name: "password", Method: "constant", Source: "manual-private-source", DefaultValue: "manual-private-default", Preview: "manual-private-preview", Evidence: "manual-private-evidence", Example: "manual-private-example", Description: "manual-private-description", Operations: []fieldmapping.Operation{{Op: "replace", Find: "manual-private-find", Replace: "manual-private-replace", Value: "manual-private-value"}}}}}
 	manualBefore, _ := json.Marshal(manual)
