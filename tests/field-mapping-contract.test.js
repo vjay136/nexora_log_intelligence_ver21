@@ -58,3 +58,17 @@ test('NFI preserves quote policy, array selection and empty/default/optional sem
   assert.match(e.extract(e.field({name:'flag',method:'constant',default_value:'TRUE',type:'boolean',policy:'required'}),'').error,/boolean/);
   const suggestions=e.suggest('raw=x source=y parser_id=z');assert.deepEqual(Array.from(suggestions,field=>field.name),['raw_value','source_value','parser_id_value']);
 });
+
+
+test('NFI applies absence policies to missing nested keys without masking malformed values',()=>{
+  const e=engine(),raw='msg=MISREPORT=action;keep|geo;US';
+  const base={name:'reason',method:'key_value',source:'msg',operations:[{op:'strip_prefix',value:'MISREPORT='},{op:'key_value',value:'reason',delimiter:';',separator:'|'},{op:'prefix',value:'reason:'}]};
+  assert.equal(e.extract(e.field({...base,policy:'optional'}),raw).absent,true);
+  assert.equal(e.extract(e.field({...base,policy:'nullable'}),raw).value,null);
+  assert.equal(e.extract(e.field({...base,policy:'default',default_value:'unavailable'}),raw).value,'unavailable');
+  assert.match(e.extract(e.field({...base,policy:'required'}),raw).error,/Required nested/);
+  assert.match(e.extract(e.field({...base,policy:'optional',null_policy:'reject'}),raw).error,/rejects/);
+  assert.match(e.extract(e.field({...base,policy:'optional'}),'msg="unfinished').error,/Unterminated/);
+  const malformed=e.field({...base,policy:'optional',type:'integer',operations:base.operations.slice(0,2)});
+  assert.match(e.extract(malformed,'msg=MISREPORT=reason;invalid').error,/not an integer/);
+});

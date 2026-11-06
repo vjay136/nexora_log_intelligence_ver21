@@ -128,7 +128,7 @@ func applyOperation(value any, op Operation, re *regexp.Regexp, prior map[string
 		}
 		items := pairs[op.Value]
 		if len(items) == 0 {
-			return nil, fmt.Errorf("nested key %q is absent", op.Value)
+			return nil, fmt.Errorf("%w: nested key %q", ErrSourceAbsent, op.Value)
 		}
 		if len(items) > 1 {
 			return nil, fmt.Errorf("nested key %q is duplicated", op.Value)

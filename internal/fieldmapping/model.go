@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -29,6 +30,10 @@ var Operations = []string{"split", "select", "substring", "character", "byte", "
 var Types = []string{"string", "integer", "number", "boolean", "timestamp", "ip", "port", "object", "array"}
 var ReservedNames = []string{"raw", "nli", "meta", "source", "envelope", "parser_id", "attempt_count", "ordered_attempts", "parse_telemetry"}
 var fieldName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
+
+// ErrSourceAbsent distinguishes an absent nested selector from malformed input
+// or a conversion failure. Only absence may invoke the field presence policy.
+var ErrSourceAbsent = errors.New("source value is absent")
 
 type Plan struct {
 	Version int     `json:"version"`
@@ -376,35 +381,44 @@ func (c *Compiled) Execute(ctx context.Context, raw string) (Result, error) {
 			return result, fmt.Errorf("field %q: %w", f.field.Name, err)
 		}
 		if !found || value == nil {
-			if f.field.Policy == "default" {
-				value = f.field.DefaultValue
-				found = true
-				evidence = Evidence{Start: -1, End: -1, Description: "explicit configured default"}
-			} else if f.field.NullPolicy == "reject" {
-				return result, fmt.Errorf("field %q: null or missing value is rejected by policy", f.field.Name)
-			} else if f.field.Policy == "nullable" || f.field.NullPolicy == "preserve_null" {
-				value = nil
-				found = true
-				evidence = Evidence{Start: -1, End: -1, Description: "explicit nullable absence"}
-			} else if f.field.Policy == "optional" && f.field.NullPolicy != "reject" {
+			var omit bool
+			value, omit, evidence, err = resolveAbsence(f.field)
+			if err != nil {
+				return result, fmt.Errorf("field %q: %w", f.field.Name, err)
+			}
+			if omit {
 				continue
-			} else {
-				return result, fmt.Errorf("field %q: required source value is absent", f.field.Name)
 			}
 		}
+		omitField, operationsExecuted := false, 0
 		if value != nil {
 			for i, op := range f.field.Operations {
 				if err := ctx.Err(); err != nil {
 					return result, err
 				}
+				operationsExecuted = i + 1
 				value, err = applyOperation(value, op, f.ops[i], result.Values)
 				if err != nil {
-					return result, fmt.Errorf("field %q operation %d: %w", f.field.Name, i+1, err)
+					if !errors.Is(err, ErrSourceAbsent) {
+						return result, fmt.Errorf("field %q operation %d: %w", f.field.Name, i+1, err)
+					}
+					value, omitField, evidence, err = resolveAbsence(f.field)
+					if err != nil {
+						return result, fmt.Errorf("field %q operation %d: %w", f.field.Name, i+1, err)
+					}
+					// A fallback replaces the missing final field, not the input to
+					// the remaining selector operations. It is still type-validated.
+					break
 				}
 				if n := valueSize(value); n > MaxInputBytes {
 					return result, fmt.Errorf("field %q transformed value exceeds bounds", f.field.Name)
 				}
 			}
+		}
+		if omitField {
+			continue
+		}
+		if value != nil {
 			if f.field.Transform != "none" {
 				value, err = applyOperation(value, Operation{Op: f.field.Transform}, nil, result.Values)
 				if err != nil {
@@ -419,7 +433,7 @@ func (c *Compiled) Execute(ctx context.Context, raw string) (Result, error) {
 				return result, fmt.Errorf("field %q: %w", f.field.Name, err)
 			}
 		}
-		evidence.Operations = len(f.field.Operations)
+		evidence.Operations = operationsExecuted
 		if f.field.Method == "constant" || f.field.Method == "derived" || len(f.field.Operations) > 0 || f.field.Transform != "none" {
 			evidence.Source = false
 			evidence.Description = "reviewed mapping: " + evidence.Description
@@ -432,4 +446,23 @@ func (c *Compiled) Execute(ctx context.Context, raw string) (Result, error) {
 		result.Evidence[f.field.Name] = evidence
 	}
 	return result, nil
+}
+
+func resolveAbsence(f Field) (any, bool, Evidence, error) {
+	evidence := Evidence{Start: -1, End: -1}
+	if f.Policy == "default" {
+		evidence.Description = "explicit configured default"
+		return f.DefaultValue, false, evidence, nil
+	}
+	if f.NullPolicy == "reject" {
+		return nil, false, evidence, fmt.Errorf("null or missing value is rejected by policy")
+	}
+	if f.Policy == "nullable" || f.NullPolicy == "preserve_null" {
+		evidence.Description = "explicit nullable absence"
+		return nil, false, evidence, nil
+	}
+	if f.Policy == "optional" {
+		return nil, true, evidence, nil
+	}
+	return nil, false, evidence, fmt.Errorf("required source value is absent")
 }
