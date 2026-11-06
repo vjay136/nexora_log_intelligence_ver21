@@ -19,3 +19,8 @@ Use the genuine R6 RPMs for upgrade and rollback qualification. Package/service 
 ## Evidence and limits
 
 `V21_R7_TEST_RESULTS.md` records measured qualification. The design document contains the R6 audit and issue-to-improvement matrix, compatibility boundary, original implementation provenance, and the broader engineering-prompt capability checklist. No claim is made that every unknown log format has a unique interpretation, that all listed protocol parsers were rewritten, or that NFI has unmeasured universal accuracy or throughput.
+
+
+## Supabase bootstrap identity and persistence
+
+The installation-specific SQL file now identifies Ver21 R7 (`21.0.0-7`) and clearly directs operators to run the complete generated file. The packaged template remains a template until the setup helper renders its controller digest. RPC schema version 1 is intentionally unchanged: existing revisioned JSONB already stores NFI plans, ordered operations, scopes, nullable/object/array values and review metadata. R6 document revisions remain compatible. Authenticated SQL health adds release and persistence-capability metadata; controller/runtime validation and approvals remain authoritative. No live project is changed by the release build.

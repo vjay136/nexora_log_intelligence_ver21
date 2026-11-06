@@ -1,4 +1,6 @@
--- NLI V20 Supabase metadata schema (RPC schema version 1).
+-- NLI Ver21 R7 (21.0.0-7) Supabase metadata schema (compatible RPC schema version 1).
+-- R7 NFI plans, scope definitions, review states and bundle descriptors use
+-- existing revisioned JSONB metadata; controller validation/approval stays in NLI.
 -- Do not run this template directly. `sudo nli-controller-setup` renders an
 -- installation-specific copy at /root/nli-supabase-bootstrap.sql.
 
@@ -97,7 +99,10 @@ begin
     raise exception using errcode = '42501', message = 'NLI controller authentication failed';
   end if;
   select count(*) into v_count from public.nli_documents;
-  return jsonb_build_object('status', 'ok', 'schema_version', 1, 'revisions', v_count);
+  return jsonb_build_object('status', 'ok', 'schema_version', 1, 'revisions', v_count,
+    'bootstrap_release', '21.0.0-7',
+    'persistence_capabilities', jsonb_build_array('revisioned_jsonb', 'nfi_mapping_plan_metadata', 'scope_policy_metadata', 'nullable_object_array_payloads'),
+    'validation_authority', 'nli-controller');
 end;
 $$;
 
@@ -301,7 +306,7 @@ grant execute on function public.nli_list_documents(text,text,integer,integer) t
 grant execute on function public.nli_delete_document(text,text,boolean,text) to anon;
 
 comment on table public.nli_documents is
-  'NLI V20 revisioned control-plane metadata. Assurance raw logs are AES-GCM encrypted by the controller before insertion.';
+  'NLI Ver21 R7 compatible RPC v1 revisioned JSONB control-plane metadata; NFI mapping/scope/review metadata is validated by the controller. Assurance raw logs are AES-GCM encrypted by the controller before insertion.';
 
 notify pgrst, 'reload schema';
 commit;

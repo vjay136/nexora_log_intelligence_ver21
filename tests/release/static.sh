@@ -39,6 +39,7 @@ grep -Fq -- '--token-file /etc/nli/cloudflare/tunnel-token' "$ROOT/scripts/setup
 ! grep -Fq -- '--token "$tunnel_token"' "$ROOT/scripts/setup-controller-rocky.sh" || { echo 'Cloudflare tunnel token must not appear in process arguments' >&2; exit 1; }
 grep -Fq 'nli-certbot-renew.timer' "$ROOT/scripts/setup-controller-rocky.sh" || { echo 'Nginx ACME mode must install persistent certificate renewal' >&2; exit 1; }
 python3 "$ROOT/tests/release/controller_edge_contract_test.py" "$ROOT"
+python3 "$ROOT/tests/release/supabase_bootstrap_test.py" "$ROOT"
 python3 "$ROOT/tests/release/controller_edge_selinux_test.py" "$ROOT"
 python3 "$ROOT/tests/release/aws_install_contract_test.py" "$ROOT"
 node --test "$ROOT/tests/cloudflare-tunnel-ver21.test.js" "$ROOT/tests/aws-cloudflare-orchestrator-ver21.test.js" "$ROOT/tests/vercel-preflight.test.js"

@@ -10,6 +10,9 @@ on:
       - 'scripts/release/**'
       - 'tests/release/**'
       - 'tests/rocky/**'
+      - 'supabase/**'
+      - 'tests/supabase/**'
+      - 'scripts/setup-controller-rocky.sh'
       - 'docs/V21_R2_RELEASE_NOTES.md'
       - 'docs/V21_R2_TEST_RESULTS.md'
       - 'docs/V21_R3_RELEASE_NOTES.md'
@@ -50,7 +53,9 @@ jobs:
       - name: Validate release infrastructure
         env:
           NLI_BUILD_SCRATCH: ${{ runner.temp }}
-        run: make release-static
+        run: |
+          git show v21.0.0-6:supabase/nli_schema.sql > '${{ runner.temp }}/nli-r6-schema.sql'
+          NLI_PREVIOUS_SUPABASE_SCHEMA='${{ runner.temp }}/nli-r6-schema.sql' make release-static
       - name: Test Go and Web contracts
         run: |
           go test ./...

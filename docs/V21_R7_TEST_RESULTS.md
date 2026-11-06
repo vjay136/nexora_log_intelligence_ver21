@@ -9,10 +9,11 @@ Release: `21.0.0-7`. Verified source and rollback baseline: R6 `v21.0.0-6`, comm
 | Complete Go suite, `go vet ./...` and full Linux `-race ./...` | PASS in pinned Go 1.24.9 container; final follow-up additionally covered by the published source workflow |
 | Native mapping selectors, ordered operations, types, null/default, bounds and malformed input | PASS; includes Unicode byte boundaries, quoted CSV/KV, nested MISREPORT, duplicate policies and exact requested SMTP example |
 | Preview → saved candidate → administrator review → publication → production parity | PASS; same native plan and exact typed JSON output |
+| Supabase generated bootstrap and persistence | PASS: R7 header and generated-file instructions, release-identity guard, fresh install, rerun, genuine R6 SQL upgrade, unchanged R6 revisions, exact NFI plan/scope/null/array/object roundtrip, controller authentication and direct-table denial |
 | Client bundle installation and runtime execution | PASS; exact hash acknowledgement, atomic install, tampered bundle rejection |
 | Original-source and service isolation | PASS; whitespace positions, scoped JSON mapping, unrelated JSON fast path, truncated mapping quarantine, canonical service inference and guarded global override |
 | Operator corpus qualification | PASS: all 51 private records execute through individual and merged corpus plans across seven structural profiles; corpus content excluded from published source/assets |
-| Mapping fuzzing | PASS: initial 163,550 and final 133,221 executions in bounded six-second runs |
+| Mapping fuzzing | PASS: 163,550 and 133,221 initial executions; final optional-field fix additionally passed 109,086 executions in a bounded six-second run |
 | Affected mapping/runtime/client race checks | PASS; adapter and engine race checks also passed after source-parity fixes |
 | Browser UI scenarios | All 81 scenarios passed across the full run and focused reruns; a trace-output collision required a unique-directory rerun |
 | JavaScript contracts, syntax, Vite build and clean web-only export | PASS: 39 contract tests; Vite production build and export succeed |

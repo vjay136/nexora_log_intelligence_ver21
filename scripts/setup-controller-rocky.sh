@@ -1065,12 +1065,24 @@ valid_env_secret "$supabase_storage_secret" || fail 'Supabase secret key is not 
 valid_env_secret "$assurance_key" || fail 'Assurance encryption key is not safe for a systemd EnvironmentFile'
 supabase_secret_sha256=$(printf '%s' "$supabase_controller_secret" | sha256sum | awk '{print $1}')
 NLI_SETUP_SUPABASE_HASH=$supabase_secret_sha256 python3 - "$SUPABASE_SCHEMA_TEMPLATE" "$SUPABASE_BOOTSTRAP_FILE" <<'PY'
-import os, pathlib, sys
+import os, pathlib, re, sys
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 placeholder = "__NLI_CONTROLLER_SECRET_SHA256__"
 if source.count(placeholder) != 1:
     raise SystemExit("Supabase schema template placeholder is missing or repeated")
-rendered = source.replace(placeholder, os.environ["NLI_SETUP_SUPABASE_HASH"])
+digest = os.environ["NLI_SETUP_SUPABASE_HASH"]
+if not re.fullmatch(r"[0-9a-f]{64}", digest):
+    raise SystemExit("Supabase controller digest must be SHA-256 hex")
+rendered = source.replace(placeholder, digest)
+rendered = rendered.replace(
+    "-- Do not run this template directly. `sudo nli-controller-setup` renders an\n"
+    "-- installation-specific copy at /root/nli-supabase-bootstrap.sql.",
+    "-- Generated installation-specific bootstrap for Ver21 R7 (21.0.0-7).\n"
+    "-- Run this COMPLETE generated file in this project's Supabase SQL Editor.\n"
+    "-- RPC schema version 1 remains compatible with existing R6 metadata."
+)
+if placeholder in rendered:
+    raise SystemExit("Supabase bootstrap contains an unresolved placeholder")
 target = pathlib.Path(sys.argv[2])
 target.write_text(rendered, encoding="utf-8")
 target.chmod(0o600)
