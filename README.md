@@ -4,7 +4,7 @@ Nexora Log Intelligence Ver21 is a deterministic, review-gated log parsing and f
 
 > Install from the single versioned release archive in a fresh directory. Verify its external `.sha256` file and the complete internal `SHA256SUMS`; never mix loose files from different releases.
 
-Release `21.0.0-6` (Ver21 R6) is the current release, based on the verified Ver21 R5 source and packages (`v21.0.0-5`). R6 fixes administrator approvals, durable quarantine dispositions, and the in-workspace review, deployment, acknowledgement, and replay flow. Public artifacts retain Ver21 filenames and upgrade-compatible package, service, configuration, and state identities. See [All NLI features](All_NLI_features.md), [R6 release notes](docs/V21_R6_RELEASE_NOTES.md), [R6 test results](docs/V21_R6_TEST_RESULTS.md), and [R5 baseline notes](docs/V21_R5_RELEASE_NOTES.md).
+Release `21.0.0-7` (Ver21 R7) is the current release, based on verified Ver21 R6 (`v21.0.0-6`, source `905ce45bca9d54d2fd8fcf4505ba21e3e274a611`). R7 introduces **NFI — Native Field Intelligence**, a bounded mapping plan shared by preview and runtime parsing, with a dedicated Field Mapping workspace and embedded Steps 3–4 controls. Existing parser, approval, quarantine, rollout, and output contracts remain compatible. See [R7 release notes](docs/V21_R7_RELEASE_NOTES.md), [R7 test results](docs/V21_R7_TEST_RESULTS.md), [field mapping guide](docs/V21_R7_FIELD_MAPPING_GUIDE.md), [audit and design](docs/V21_R7_MAPPING_DESIGN.md), and [R6 baseline notes](docs/V21_R6_RELEASE_NOTES.md).
 
 ## V18 upgrade baseline architecture
 

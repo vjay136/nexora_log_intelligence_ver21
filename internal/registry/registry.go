@@ -2,6 +2,7 @@
 package registry
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,21 +14,24 @@ import (
 	"strings"
 	"sync"
 
+	"nexora.local/nli-v20/internal/fieldmapping"
 	"nexora.local/nli-v20/internal/grok"
 	"nexora.local/nli-v20/internal/typeinfer"
 )
 
 // ParserDef is a declarative parser definition — never executable code.
 type ParserDef struct {
-	ID          string           `json:"id"`
-	Version     int              `json:"version"`
-	Description string           `json:"description"`
-	Format      string           `json:"format"` // hint: json, syslog_rfc3164, etc.
-	Pattern     string           `json:"pattern,omitempty"`
-	PatternType string           `json:"pattern_type,omitempty"` // grok or regex
-	TemplateIDs []string         `json:"template_ids,omitempty"`
-	Fields      []FieldDef       `json:"fields"`
-	Tests       []RegressionTest `json:"tests,omitempty"`
+	ID           string             `json:"id"`
+	Version      int                `json:"version"`
+	Description  string             `json:"description"`
+	Format       string             `json:"format"` // hint: json, syslog_rfc3164, etc.
+	Pattern      string             `json:"pattern,omitempty"`
+	PatternType  string             `json:"pattern_type,omitempty"` // grok or regex
+	TemplateIDs  []string           `json:"template_ids,omitempty"`
+	Fields       []FieldDef         `json:"fields"`
+	Tests        []RegressionTest   `json:"tests,omitempty"`
+	MappingPlan  *fieldmapping.Plan `json:"mapping_plan,omitempty"`
+	ScopePattern string             `json:"scope_pattern,omitempty"`
 }
 
 // FieldDef describes one extracted field.
@@ -93,6 +97,12 @@ func cloneParserDef(p *ParserDef) *ParserDef {
 		return nil
 	}
 	clone := *p
+	if p.MappingPlan != nil {
+		encoded, _ := json.Marshal(p.MappingPlan)
+		var plan fieldmapping.Plan
+		_ = json.Unmarshal(encoded, &plan)
+		clone.MappingPlan = &plan
+	}
 	clone.TemplateIDs = append([]string(nil), p.TemplateIDs...)
 	clone.Fields = append([]FieldDef(nil), p.Fields...)
 	clone.Tests = make([]RegressionTest, len(p.Tests))
@@ -197,6 +207,24 @@ func Validate(p *ParserDef) error {
 	if p.Version < 1 {
 		return fmt.Errorf("parser version must be positive")
 	}
+	if p.PatternType == "mapping" {
+		if len(p.ScopePattern) > 1024 {
+			return fmt.Errorf("NFI scope pattern exceeds 1024 bytes")
+		}
+		if p.ScopePattern != "" {
+			if _, err := regexp.Compile(p.ScopePattern); err != nil {
+				return fmt.Errorf("invalid NFI scope pattern: %w", err)
+			}
+		}
+		if p.MappingPlan == nil {
+			return fmt.Errorf("NFI mapping_plan is required")
+		}
+		_, err := fieldmapping.Compile(*p.MappingPlan)
+		return err
+	}
+	if p.MappingPlan != nil {
+		return fmt.Errorf("mapping_plan requires pattern_type mapping")
+	}
 	if len(p.Fields) == 0 || len(p.Fields) > 256 {
 		return fmt.Errorf("parser must define 1..256 fields")
 	}
@@ -239,6 +267,20 @@ func validSource(source string) bool {
 func Apply(p *ParserDef, input string) (map[string]interface{}, []string) {
 	if err := Validate(p); err != nil {
 		return nil, []string{err.Error()}
+	}
+	if p.PatternType == "mapping" {
+		if p.ScopePattern != "" && !regexp.MustCompile(p.ScopePattern).MatchString(input) {
+			return nil, []string{"input does not match NFI scope pattern"}
+		}
+		compiled, err := fieldmapping.Compile(*p.MappingPlan)
+		if err != nil {
+			return nil, []string{err.Error()}
+		}
+		result, err := compiled.Execute(context.Background(), input)
+		if err != nil {
+			return nil, []string{err.Error()}
+		}
+		return result.Values, nil
 	}
 	captures := make(map[string]string)
 	if p.Pattern != "" {

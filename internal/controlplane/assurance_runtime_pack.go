@@ -18,6 +18,9 @@ import (
 // narrow: unsupported declarative forms stay test-only instead of being
 // silently interpreted differently in production.
 func assuranceRuntimePack(id, version, author string, definition map[string]any, cases []assuranceRequest) (*parserpolicy.ParserPack, error) {
+	if definition["pattern_type"] == "mapping" {
+		return assuranceMappingRuntimePack(id, version, author, definition, cases)
+	}
 	if definition["pattern_type"] != "regex" {
 		return nil, fmt.Errorf("only validated regex candidates can be published to runtime")
 	}

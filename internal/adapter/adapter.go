@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"log"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -75,10 +76,11 @@ type configurationError struct{ message string }
 func (err *configurationError) Error() string { return err.message }
 
 type V5ParseResult struct {
-	EventPayload   *telemetry.EventPayload
-	ParseTelemetry *telemetry.ParseTelemetry
-	Success        bool
-	Quarantined    bool
+	EventPayload    *telemetry.EventPayload
+	ParseTelemetry  *telemetry.ParseTelemetry
+	Success         bool
+	Quarantined     bool
+	ReviewedMapping bool
 }
 
 type profileCandidate struct {
@@ -93,6 +95,10 @@ type profileExecution struct {
 }
 
 func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engine.Source) *V5ParseResult {
+	return adapter.tryParseV5Production(input, source, false)
+}
+
+func (adapter *ParserPackAdapter) tryParseV5Production(input string, source engine.Source, reviewedOnly bool) *V5ParseResult {
 	started := time.Now()
 	trimmed := strings.TrimSpace(input)
 	service := runtimeService(source.Service, trimmed)
@@ -100,8 +106,27 @@ func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engi
 		return &V5ParseResult{Success: false}
 	}
 	candidates := adapter.candidates(service)
-	if service == "smtp" || service == "smtp-in" || service == "smtp-out" {
+	if reviewedOnly {
+		filtered := candidates[:0]
+		for _, candidate := range candidates {
+			if reviewedMappingProfile(candidate.profile) {
+				filtered = append(filtered, candidate)
+			}
+		}
+		candidates = filtered
+	}
+	if !reviewedOnly && (service == "smtp" || service == "smtp-in" || service == "smtp-out") {
 		candidates = append([]profileCandidate{{profile: adapter.smtpCompatibility, specificity: 0}}, candidates...)
+	}
+	hasReviewedMapping := false
+	for index := range candidates {
+		if reviewedMappingProfile(candidates[index].profile) {
+			candidates[index].specificity = -1
+			hasReviewedMapping = true
+		}
+	}
+	if hasReviewedMapping {
+		sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].specificity < candidates[j].specificity })
 	}
 	if len(candidates) == 0 {
 		return &V5ParseResult{Success: false}
@@ -126,8 +151,12 @@ func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engi
 		if candidate.profile.Pack.ID == adapter.smtpCompatibility.Pack.ID {
 			executionService = "smtp"
 		}
+		executionInput := trimmed
+		if mappingProfile(candidate.profile) {
+			executionInput = input
+		}
 		result, err := candidate.profile.Executor.Execute(&parserpolicy.ExecutionRequest{
-			Input: trimmed, NodeID: source.Hostname, Service: executionService, SourceType: "file", Context: ctx,
+			Input: executionInput, NodeID: source.Hostname, Service: executionService, SourceType: "file", Context: ctx,
 			SourceMetadata: map[string]string{
 				"hostname": source.Hostname,
 				"service":  service,
@@ -179,7 +208,7 @@ func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engi
 		metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "empty_event_payload")
 		return &V5ParseResult{ParseTelemetry: metadata, Success: false, Quarantined: true}
 	}
-	return &V5ParseResult{EventPayload: selected.EventPayload, ParseTelemetry: metadata, Success: true}
+	return &V5ParseResult{EventPayload: selected.EventPayload, ParseTelemetry: metadata, Success: true, ReviewedMapping: reviewedMappingProfile(executions[selectedIndex].candidate.profile)}
 }
 
 func (adapter *ParserPackAdapter) candidates(service string) []profileCandidate {
@@ -223,6 +252,13 @@ func successfulExecution(result *parserpolicy.ExecutionResult, err error) bool {
 func betterExecution(candidate, current profileExecution) bool {
 	candidateTelemetry := candidate.result.ParseTelemetry
 	currentTelemetry := current.result.ParseTelemetry
+	// NFI output schemas are an explicit, reviewed operator choice. A managed
+	// mapping may replace a built-in interpretation only after its complete
+	// bounded plan and required fields succeed. Other profiles retain the
+	// established specificity and evidence ordering below.
+	if reviewedMappingProfile(candidate.candidate.profile) != reviewedMappingProfile(current.candidate.profile) {
+		return reviewedMappingProfile(candidate.candidate.profile)
+	}
 	// A successful exact or family parser must remain authoritative over a
 	// successful wildcard recovery parser. Field count only breaks ties inside
 	// the same selector tier.
@@ -242,6 +278,25 @@ func betterExecution(candidate, current profileExecution) bool {
 		return candidate.candidate.profile.Pack.Revision > current.candidate.profile.Pack.Revision
 	}
 	return candidate.candidate.profile.Pack.ID < current.candidate.profile.Pack.ID
+}
+
+// Mapping selectors address the original source; legacy profiles retain trimmed input.
+func mappingProfile(profile familyprofile.Profile) bool {
+	if profile.Pack == nil {
+		return false
+	}
+	for _, rule := range profile.Pack.Rules {
+		for _, stage := range rule.Stages {
+			if stage.Type == parserpolicy.StageTypeMapping {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func reviewedMappingProfile(profile familyprofile.Profile) bool {
+	return profile.Managed && profile.Pack != nil && profile.Pack.Metadata["selection_policy"] == "reviewed_mapping" && profile.Pack.Metadata["mapping_engine"] == "nfi-v1"
 }
 
 func (adapter *ParserPackAdapter) aggregateTelemetry(input, nodeID string, executions []profileExecution, selectedIndex int, started time.Time) *telemetry.ParseTelemetry {
@@ -305,6 +360,10 @@ func executionAttempts(execution profileExecution) []telemetry.ParserAttempt {
 		Outcome:  outcome, FailureReason: reason,
 	}}
 }
+
+// RuntimeService shares the exact production routing decision with reviewed
+// candidate validation so inferred scopes and fleet execution cannot diverge.
+func RuntimeService(configured, input string) string { return runtimeService(configured, input) }
 
 func runtimeService(configured, input string) string {
 	configured = canonicalService(configured)
@@ -399,8 +458,21 @@ func elapsedMillis(started time.Time) int64 {
 	return milliseconds
 }
 
+func (adapter *ParserPackAdapter) TryParseV5Raw(input string, source engine.Source) *engine.V5ParseResult {
+	return adapter.TryParseV5(input, source)
+}
+
+// Only reviewed managed mappings may precede the existing JSON fast path.
+func (adapter *ParserPackAdapter) TryParseReviewedV5Raw(input string, source engine.Source) *engine.V5ParseResult {
+	result := adapter.tryParseV5Production(input, source, true)
+	return adapter.engineResult(result)
+}
+
 func (adapter *ParserPackAdapter) TryParseV5(input string, source engine.Source) *engine.V5ParseResult {
-	result := adapter.TryParseV5Production(input, source)
+	return adapter.engineResult(adapter.TryParseV5Production(input, source))
+}
+
+func (adapter *ParserPackAdapter) engineResult(result *V5ParseResult) *engine.V5ParseResult {
 	metadata := map[string]interface{}{}
 	parserID := ""
 	confidence, coverage, latency := 0.0, 0.0, int64(0)
@@ -455,7 +527,7 @@ func (adapter *ParserPackAdapter) TryParseV5(input string, source engine.Source)
 	}
 	return &engine.V5ParseResult{
 		EventPayload: payload, ParseTelemetry: metadata,
-		Success: result.Success, Quarantined: result.Quarantined,
+		Success: result.Success, Quarantined: result.Quarantined, ReviewedMapping: result.ReviewedMapping,
 		ParserID: parserID, Confidence: confidence, EvidenceCoverage: coverage, LatencyMs: latency,
 		AttemptCount: attemptCount, FallbackDepth: fallbackDepth, Trace: trace, FieldEvidence: fieldEvidence,
 	}

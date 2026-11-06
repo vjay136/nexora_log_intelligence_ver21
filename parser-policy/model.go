@@ -127,6 +127,7 @@ const (
 	StageTypeDrop             StageType = "drop"
 	StageTypeOutputMapping    StageType = "output_mapping"
 	StageTypeSemanticExtract  StageType = "semantic_extract"
+	StageTypeMapping          StageType = "mapping"
 )
 
 // StaticLayoutConfig defines static positional parsing
@@ -183,6 +184,7 @@ type FieldDef struct {
 	PreserveLeadingZero bool             `json:"preserve_leading_zero,omitempty"`
 	Aliases             []string         `json:"aliases,omitempty" validate:"dive,min=1,max=64"`
 	CollisionPolicy     CollisionPolicy  `json:"collision_policy,omitempty"`
+	Nullable            bool             `json:"nullable,omitempty"`
 }
 
 type FieldType string
@@ -196,6 +198,8 @@ const (
 	FieldTypeIP     FieldType = "ip"
 	FieldTypeURL    FieldType = "url"
 	FieldTypeEmail  FieldType = "email"
+	FieldTypeObject FieldType = "object"
+	FieldTypeArray  FieldType = "array"
 )
 
 type RangeConstraint struct {
@@ -442,7 +446,7 @@ func validateStage(stage Stage, context string) error {
 
 	// Validate type
 	switch stage.Type {
-	case StageTypeStaticLayout, StageTypeRegex, StageTypeGrok, StageTypeMixedKV, StageTypeLogfmt, StageTypeJSON, StageTypeTimestamp, StageTypeReplace, StageTypeRename, StageTypeTypeConversion, StageTypeFieldProjection, StageTypeConditionalMatch, StageTypeDrop, StageTypeOutputMapping, StageTypeSemanticExtract, StageTypeDelimited, StageTypeKV:
+	case StageTypeStaticLayout, StageTypeRegex, StageTypeGrok, StageTypeMixedKV, StageTypeLogfmt, StageTypeJSON, StageTypeTimestamp, StageTypeReplace, StageTypeRename, StageTypeTypeConversion, StageTypeFieldProjection, StageTypeConditionalMatch, StageTypeDrop, StageTypeOutputMapping, StageTypeSemanticExtract, StageTypeMapping, StageTypeDelimited, StageTypeKV:
 		// Valid types
 	default:
 		return fmt.Errorf("%s: invalid stage type: %s", context, stage.Type)
@@ -670,7 +674,7 @@ func validateRule(rule ParserRule, context string) error {
 	}
 	if rule.CountPolicy == CountPolicyExactSource {
 		for _, stage := range rule.Stages {
-			if stage.Type == StageTypeSemanticExtract {
+			if stage.Type == StageTypeSemanticExtract || stage.Type == StageTypeMapping {
 				return fmt.Errorf("%s: semantic extraction creates derived fields and requires allow_derived or projection count policy", context)
 			}
 		}
@@ -862,7 +866,7 @@ func isValidCountPolicy(policy CountPolicy) bool {
 
 func isValidFieldType(fieldType FieldType) bool {
 	switch fieldType {
-	case FieldTypeString, FieldTypeInt, FieldTypeFloat, FieldTypeBool, FieldTypeTime, FieldTypeIP, FieldTypeURL, FieldTypeEmail:
+	case FieldTypeString, FieldTypeInt, FieldTypeFloat, FieldTypeBool, FieldTypeTime, FieldTypeIP, FieldTypeURL, FieldTypeEmail, FieldTypeObject, FieldTypeArray:
 		return true
 	default:
 		return false

@@ -2,13 +2,19 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
 const tabs = [
-  'operations','monitoring','streams','sync-fabric','nhle-monitor','napi-monitor','nal-monitor','assurance','api-monitor','field-integrity','fleet','parser-sync','clients','controller','parsers','migration','input-paths','kv','static',
-  'projection','studio','regex','knownkeys','semantic','engine-network','engine-url','engine-email','engine-subject','outputs','metadata','unknowns','drift','performance','rollouts','artifacts','security','system','ai',
+  'operations','monitoring','streams','assurance','quarantine-wizard','upes','rollouts','parser-sync','artifacts','parser-workspace','nupire','field-integrity','ai','parsers','field-mapping','studio','regex','knownkeys','drift','notifications','sync-fabric','nhle-monitor','napi-monitor','nal-monitor','input-paths','migration','outputs','metadata','unknowns','performance','kv','static','projection','semantic','engine-network','engine-url','engine-email','engine-subject','fleet','clients','controller','api-monitor','system','communications','security',
 ];
 const liveWorkspaceContracts = {
   operations: { paths: ['/api/v1/sync/snapshot'], text: 'Command Center' },
   monitoring: { paths: [], text: 'NLI Monitoring' },
   assurance: { paths: ['/api/v1/assurance/cases','/api/v1/assurance/runs'], text: 'Production parser assurance' },
+  'quarantine-wizard': { paths: ['/api/v1/quarantine/records'], text: 'Guided Parser Repair Studio' },
+  upes: { paths: ['/api/v1/quarantine/records'], text: 'Unstoppable Parsing Engine Support' },
+  'parser-workspace': { paths: ['/api/v1/assurance/parsers'], text: 'Complete parser artifact editor' },
+  nupire: { paths: ['/api/v1/nupire/snapshot'], text: 'NUPIRE / EGPE workspace' },
+  'field-mapping': { paths: ['/api/v1/field-mapping','/api/v1/assurance/parsers'], text: 'NFI · Native Field Intelligence' },
+  notifications: { paths: ['/api/v1/notifications'], text: 'Notification center' },
+  communications: { paths: ['/api/v1/communications/status'], text: 'End-to-end communication status' },
   streams: { paths: [], text: 'Streams' },
   'sync-fabric': { paths: [], text: 'Unified Real-Time Synchronization Fabric' },
   'nhle-monitor': { paths: [], text: 'Nexora Hypersonic Log Engine' },
@@ -163,6 +169,33 @@ test('V21 blank-panel regressions: every workspace renders authenticated control
   await page.getByTestId('nav-fleet').click();
   await expect(page.getByText('Fleet desired vs active')).toBeVisible();
   expect(failedAPIs).toEqual([]);
+});
+
+test('R7 NFI maps compound tokens and colon pairs through the real controller and saved native candidate', async ({ page }) => {
+  test.setTimeout(60_000);
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  const raw = '20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg status=failed:reason=notneeded:server=cloud';
+  await page.locator('#nfi-raw').fill(raw);
+  await page.getByRole('button', { name: 'Suggest from raw log', exact: true }).click();
+  const confirmations = page.getByLabel('Confirm delimiter interpretation');
+  await confirmations.nth(0).check();
+  await confirmations.nth(1).check();
+  await page.getByRole('button', { name: 'Test all fields', exact: true }).click();
+  const verified = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/assurance/mapping-preview' && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Verify on controller', exact: true }).click();
+  const preview = await verified;
+  expect(preview.status()).toBe(200);
+  expect(await preview.json()).toMatchObject({ passed:true, actual:{loglevel:'Note', event:'SieveRuleMsg', status:'failed', reason:'notneeded', server:'cloud'} });
+  await page.locator('[data-action=nfi-generate]').first().click();
+  const parser = JSON.parse(await page.locator('#nfi-parser-json').inputValue());
+  expect(parser.pattern_type).toBe('mapping');
+  expect(parser.mapping_plan.fields.find(field=>field.name==='event')).toMatchObject({method:'delimiter',source:'8',delimiter:';',part:'2'});
+  await page.locator('#nfi-parser-name').fill(`nfi-packaged-${Date.now()}`);
+  const saved = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/assurance/parsers' && response.request().method() === 'POST');
+  await page.getByRole('button', { name:'Validate and save review-gated draft', exact:true }).click();
+  expect((await saved).status()).toBe(201);
+  await expect(page.locator('#page-title')).toHaveText('NFI · Native Field Intelligence');
 });
 
 test('legacy Assurance regressions: complete valid JSON, traversal, manual retention, exact log download and purge', async ({ page }) => {

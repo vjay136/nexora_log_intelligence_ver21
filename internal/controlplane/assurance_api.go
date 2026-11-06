@@ -730,6 +730,11 @@ func validateParserCandidate(definition map[string]any, cases []assuranceRequest
 			cases = append(cases, assuranceRequest{Raw: test.Input, Desired: test.Expected})
 		}
 	}
+	if parser.PatternType == "mapping" {
+		if _, _, _, err := nfiMappingScope(definition, *parser.MappingPlan, cases); err != nil {
+			return map[string]any{"status": "invalid_definition", "reason": err.Error(), "total": len(cases), "passed": 0, "failed": len(cases), "score": 0, "errors": []string{err.Error()}}
+		}
+	}
 	passed := 0
 	outcomes := make([]map[string]any, 0, len(cases))
 	for index, item := range cases {

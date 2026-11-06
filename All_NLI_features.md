@@ -1,7 +1,13 @@
 # Nexora Log Intelligence Ver21 — Implemented Feature Inventory
 
-Release identity: `21.0.0-2`
+Release identity: `21.0.0-7`
 Document scope: behavior implemented in this repository; this is not a performance guarantee or a substitute for deployment qualification.
+
+## NFI — Native Field Intelligence (R7)
+
+NFI provides a dedicated **Field Mapping** workspace (`field-mapping`) and the shared mapping controls embedded in Quarantine Resolution Wizard Steps 3–4. An operator can inspect source token and character positions, rename fields/labels, select ranges, split compound tokens, extract quoted or escaped key-value data, read structured paths, combine fields, and apply ordered literal or bounded-regex operations before typed validation. The same declarative mapping plan is validated by the controller and used by the client ParserPack runtime; approval, exact bundle hashes, acknowledgement, replay and rollback remain governed.
+
+The mapping guide documents supported methods, presence/null policies, bounds, and known limitations. It does not claim universal interpretation of unknown logs or change existing input framing and destination contracts. See [R7 field mapping guide](docs/V21_R7_FIELD_MAPPING_GUIDE.md) and [audit/design](docs/V21_R7_MAPPING_DESIGN.md).
 
 ## Product boundary and compatibility
 
@@ -16,7 +22,7 @@ Ver21 deliberately preserves the following compatibility identities:
 - Configuration roots: `/etc/nli`.
 - Durable state roots: `/var/lib/nli`, `/var/lib/nli-control-client`, and `/var/lib/nli-controller`.
 - Installed WebView root: `/usr/share/nli/webview_ver21`.
-- Release artifacts use Ver21 names: `nli_client_ver21.rpm`, `nli_controller_agent_ver21.rpm`, `webview_ver21.zip`, `webapp_ver21.zip`, and `nli-v21.0.0-2-x86_64.tar.gz`.
+- Release artifacts use Ver21 names: `nli_client_ver21.rpm`, `nli_controller_agent_ver21.rpm`, `webview_ver21.zip`, `webapp_ver21.zip`, and `nli-v21.0.0-7-x86_64.tar.gz`.
 
 These stable names allow RPM to perform an in-place major-version upgrade without creating duplicate services or abandoning existing configuration and state. They do not mean the product is still Ver20.
 

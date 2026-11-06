@@ -19,7 +19,7 @@ The sidebar contains these workspaces (some content depends on controller data a
 |---|---|
 | Command | Live Dashboard (aggregated parsing/fleet metrics); Assurance Lab (sample runs, corpus, drafts and retained fixtures); Field Integrity & Corpus Proof; Fleet & Sync. |
 | Assurance & Release | Assurance Lab; UPES · Parser Recovery; Approvals & Rollouts; Parser Fleet Sync; Signed Artifacts & Upgrades; Parser Creation Workspace; NUPIRE / EGPE. |
-| Policy | Parser Catalog & Priority; Parser Fleet Sync; Migration Center; KV Delimiter Config; Static Positional Patterns; Field Capture & Projection; Regex, Templates & Studio; Regex Pattern Library; Known Key Catalog; Semantic Extraction Policy. |
+| Policy | NFI — Native Field Intelligence / Field Mapping (`field-mapping`); Parser Catalog & Priority; Parser Fleet Sync; Migration Center; KV Delimiter Config; Static Positional Patterns; Field Capture & Projection; Regex, Templates & Studio; Regex Pattern Library; Known Key Catalog; Semantic Extraction Policy. |
 | Parser Engines | Network Identity, URL, Email Address, and Encoded Subject capability pages. These inspect specialized engine behavior; RFC 2047 decoding is content decoding, not decryption. |
 | Runtime | Live Metadata; Quarantine & Reprocessing; API Monitor; Template Drift; Performance & Backpressure; Rollouts; Signed Artifacts & Upgrades. |
 | Governance | Users, RBAC & Audit; System Health & Storage; AI API Key Integration; Controller Agent Management; Client Agent Management. |
@@ -27,6 +27,12 @@ The sidebar contains these workspaces (some content depends on controller data a
 Operations and runtime views primarily show aggregated counters, hashes, service/health state, parser revision, and metadata. Normal production raw event bodies are not retained by the control plane. Use Assurance deliberately for sample evidence.
 
 **API Monitor** makes authenticated live probes and displays route, purpose, HTTP result, latency, and last-check time. A permission response such as 401/403 proves reachability but does not grant access. The page records no request bodies, credentials, or log payloads.
+
+## NFI — Native Field Intelligence
+
+Open **Field Mapping** (`field-mapping`) to work on a representative raw record without leaving the mapping workspace. The same editor is embedded in Quarantine Resolution Wizard Steps 3–4 and Assurance repair. Inspect numbered tokens and Unicode character positions, choose the source range, name the output field, and add ordered split, substring, literal replacement/removal, case, prefix/suffix, or merge operations. Key-value extraction can use colon, semicolon, comma, or whitespace boundaries while retaining quoted and escaped content. Use the controller preview before saving a candidate; local hints do not establish production readiness.
+
+Import/export a mapping plan to reuse the same field definitions across the parser-creation and output-review workflows. Test the exact desired JSON, then save and validate the generated parser candidate. Approval, publication, client bundle acknowledgement, replay and rollback remain required. The [R7 field mapping guide](V21_R7_FIELD_MAPPING_GUIDE.md) provides the SMTP example and the precise limits. The sidebar inventory now contains 45 primary workspaces.
 
 ## 3. Assurance Lab: repeatable sample test
 

@@ -2,11 +2,15 @@
 
 ## Source and release boundary
 
-- Authoritative R6 source baseline: verified Ver21 R5 (`v21.0.0-5`); R6 work starts at commit `64dbb2f1292efe3fea417f0adf97acffcd026730`.
-- Ver20 R6 remains historical migration evidence only and is not the R6 implementation base.
-- Working release: Ver21 `21.0.0-6` in the dedicated Ver21 repository.
+- Authoritative R7 source baseline: verified Ver21 R6 (`v21.0.0-6`) at commit `905ce45bca9d54d2fd8fcf4505ba21e3e274a611`.
+- Ver20 R6 remains historical migration evidence only and is not the R7 implementation base.
+- Working release: Ver21 `21.0.0-7` in the dedicated Ver21 repository.
 - Compatibility boundary: retain RPM package identities, systemd units, and state/configuration paths so an in-place upgrade does not fork production state. Published artifacts use Ver21-only filenames.
 - No feature is permitted to fabricate parser readiness, telemetry, client acknowledgements, or AI results.
+
+## R7: NFI — Native Field Intelligence
+
+Implement a bounded native `mapping_plan` with one preview/runtime meaning. The dedicated `field-mapping` workspace and embedded Steps 3–4 editors let operators compose token, delimiter, Unicode character, byte, line, structured-path, key-value, regex, constant and derived-field extraction with ordered transformations. R6 regex and native parser fast paths remain valid. See [mapping audit and design](V21_R7_MAPPING_DESIGN.md) and the [field mapping guide](V21_R7_FIELD_MAPPING_GUIDE.md) for the failure matrix, exact example, compatibility boundary, limits and qualification plan.
 
 ## High-priority implementation tracks
 
@@ -55,4 +59,4 @@
 - Offboarded managed parsers disappear from the next applied client overlay.
 - Anonymous login probing creates no system-error notification.
 - AI credentials never appear in API responses, logs, notifications, or downloaded configuration.
-- All release workflows and published artifacts identify Ver21 `21.0.0-6` while retaining documented upgrade-compatible package/service names.
+- All release workflows and published artifacts identify Ver21 `21.0.0-7` while retaining documented upgrade-compatible package/service names.

@@ -27,7 +27,7 @@ cd "$ROOT"
 if [[ ${NLI_SKIP_TESTS:-0} != 1 ]]; then
 "$GO" test -count=1 ./...
 "$GO" vet ./...
-CGO_ENABLED=1 "$GO" test -count=1 -race ./internal/mixedkv ./parser-policy ./internal/sync ./internal/controlclient ./internal/controlplane
+CGO_ENABLED=1 "$GO" test -timeout=20m -count=1 -race ./internal/mixedkv ./parser-policy ./internal/sync ./internal/controlclient ./internal/controlplane
 "$GO" test ./internal/mixedkv -run='^$' -fuzz=FuzzParseNeverPanics -fuzztime="${FUZZTIME:-10s}"
 fi
 

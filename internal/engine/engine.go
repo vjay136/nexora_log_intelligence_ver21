@@ -36,6 +36,7 @@ type V5ParseResult struct {
 	ParseTelemetry   map[string]interface{} // Metadata only
 	Success          bool
 	Quarantined      bool
+	ReviewedMapping  bool
 	ParserID         string
 	Confidence       float64
 	EvidenceCoverage float64
@@ -49,6 +50,16 @@ type V5ParseResult struct {
 // V5Parser interface for ParserPack integration (avoids import cycles)
 type V5Parser interface {
 	TryParseV5(input string, source Source) *V5ParseResult
+}
+
+// V5RawParser opts into original-source mapping while legacy integrations retain trimming.
+type V5RawParser interface {
+	TryParseV5Raw(input string, source Source) *V5ParseResult
+}
+
+// ReviewedV5RawParser evaluates only reviewed managed mappings, preserving JSON fast paths otherwise.
+type ReviewedV5RawParser interface {
+	TryParseReviewedV5Raw(input string, source Source) *V5ParseResult
 }
 
 type NLI struct {
@@ -202,7 +213,11 @@ func ParseWithSelectedParser(raw string, source Source, deps *Deps, parserID str
 	}
 
 	envelope := Parse(raw, source, deps)
-	fields, failures := registry.Apply(parserDef, strings.TrimSpace(raw))
+	selectedInput := strings.TrimSpace(raw)
+	if parserDef.PatternType == "mapping" {
+		selectedInput = raw
+	}
+	fields, failures := registry.Apply(parserDef, selectedInput)
 	envelope.Data = fields
 	envelope.NLI.Parser = parserDef.ID
 	envelope.NLI.ParserVersion = parserDef.Version
@@ -212,7 +227,7 @@ func ParseWithSelectedParser(raw string, source Source, deps *Deps, parserID str
 	envelope.Meta.ParserAttempts = 1
 	envelope.Meta.FallbackDepth = 0
 	envelope.Meta.FieldEvidence = nil
-	coverage := evidenceCoverage(strings.TrimSpace(raw), fields)
+	coverage := evidenceCoverage(selectedInput, fields)
 	envelope.Meta.Assurance = Assurance{
 		RawSHA256:        fmt.Sprintf("%x", sha256Sum(raw)),
 		SelectedStrategy: "selected:" + parserDef.ID,
@@ -287,7 +302,16 @@ func ParseWithTruncated(raw string, source Source, deps *Deps, multilineTruncate
 	// instead of running template mining and every text-format fallback. This
 	// keeps the production JSONL path proportional to the record size while
 	// preserving masking, type inference, assurance metadata, and routing.
+	var reviewedResult *V5ParseResult
 	if primaryFormat == detector.FormatJSON {
+		if reviewed, ok := deps.V5Parser.(ReviewedV5RawParser); ok {
+			result := reviewed.TryParseReviewedV5Raw(raw, source)
+			if result != nil && result.Success && len(result.EventPayload) > 0 {
+				reviewedResult = result
+			}
+		}
+	}
+	if primaryFormat == detector.FormatJSON && reviewedResult == nil {
 		candidate := freshCandidate(base)
 		parseJSON(text, &candidate)
 		if candidate.NLI.Parser != "unknown" && candidate.Meta.Extracted > 0 && len(candidate.Meta.Errors) == 0 {
@@ -370,7 +394,14 @@ func ParseWithTruncated(raw string, source Source, deps *Deps, multilineTruncate
 
 	// Try v5 ParserPack execution first.
 	if deps.V5Parser != nil {
-		v5Result := deps.V5Parser.TryParseV5(text, source)
+		v5Result := reviewedResult
+		if v5Result == nil {
+			if rawParser, ok := deps.V5Parser.(V5RawParser); ok {
+				v5Result = rawParser.TryParseV5Raw(raw, source)
+			} else {
+				v5Result = deps.V5Parser.TryParseV5(text, source)
+			}
+		}
 		if v5Result.Quarantined {
 			base.NLI.Parser = v5Result.ParserID
 			base.NLI.Confidence = 0
@@ -402,6 +433,12 @@ func ParseWithTruncated(raw string, source Source, deps *Deps, multilineTruncate
 			envelope.Meta.Assurance.SelectedStrategy = "parserpack:" + v5Result.ParserID
 			envelope.Meta.Assurance.Verified = v5Result.EvidenceCoverage >= 0.8
 			envelope.Meta.Route = confidence.RouteNormal
+			if multilineTruncated && v5Result.ReviewedMapping {
+				envelope.NLI.Confidence = minConfidence(envelope.NLI.Confidence, 0.79)
+				envelope.Meta.Assurance.Verified = false
+				envelope.Meta.Errors = append(envelope.Meta.Errors, "input record was truncated")
+				envelope.Meta.Route = confidence.RouteQuarantine
+			}
 			envelope.Meta.Latency = time.Since(start).Microseconds()
 			return envelope
 		}
@@ -412,7 +449,11 @@ func ParseWithTruncated(raw string, source Source, deps *Deps, multilineTruncate
 	if drainMatch.ParserID != "" && deps.Registry != nil {
 		if parserDef, ok := deps.Registry.Get(drainMatch.ParserID); ok {
 			candidate := freshCandidate(base)
-			fields, failures := registry.Apply(parserDef, text)
+			parserInput := text
+			if parserDef.PatternType == "mapping" {
+				parserInput = raw
+			}
+			fields, failures := registry.Apply(parserDef, parserInput)
 			candidate.Data = fields
 			candidate.Meta.Errors = append(candidate.Meta.Errors, failures...)
 			candidate.Meta.Extracted = len(fields)

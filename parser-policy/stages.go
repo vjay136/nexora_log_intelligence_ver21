@@ -39,6 +39,8 @@ func (e *ParserPackExecutor) executeStage(ctx context.Context, request *Executio
 	var added, modified int
 	var err error
 	switch stage.Type {
+	case StageTypeMapping:
+		added, modified, err = e.executeMappingStage(stageContext, request, rule, stage, fields)
 	case StageTypeStaticLayout, StageTypeDelimited:
 		added, modified, err = e.executeStaticLayoutStage(request, rule, stage, fields)
 	case StageTypeMixedKV, StageTypeKV, StageTypeLogfmt:
@@ -744,6 +746,12 @@ func enforceSchema(rule ParserRule, fields workingSet) error {
 }
 
 func enforceFieldDefinition(value interface{}, definition FieldDef) (interface{}, error) {
+	if value == nil && definition.Nullable {
+		return nil, nil
+	}
+	if definition.Type == FieldTypeArray || definition.Type == FieldTypeObject {
+		return enforceScalarDefinition(value, definition)
+	}
 	if values, ok := value.([]interface{}); ok {
 		if definition.CollisionPolicy != CollisionPolicyArray {
 			return nil, fail("schema_type", "array value requires collision_policy=array")
@@ -806,6 +814,14 @@ func convertDeclaredValue(value interface{}, target FieldType) (interface{}, err
 		return fmt.Sprint(value), nil
 	}
 	switch target {
+	case FieldTypeObject:
+		if _, ok := value.(map[string]interface{}); ok {
+			return value, nil
+		}
+	case FieldTypeArray:
+		if _, ok := value.([]interface{}); ok {
+			return value, nil
+		}
 	case FieldTypeInt:
 		switch typed := value.(type) {
 		case int:

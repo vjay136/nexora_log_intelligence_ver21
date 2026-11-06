@@ -11,14 +11,17 @@ import (
 	"strings"
 	"time"
 
+	"nexora.local/nli-v20/internal/fieldmapping"
+
 	"nexora.local/nli-v20/projection"
 	"nexora.local/nli-v20/telemetry"
 )
 
 type ParserPackExecutor struct {
-	pack       *ParserPack
-	compiled   bool
-	validators map[string]*regexp.Regexp
+	pack         *ParserPack
+	compiled     bool
+	validators   map[string]*regexp.Regexp
+	mappingPlans map[string]*fieldmapping.Compiled
 }
 
 type ExecutionRequest struct {
@@ -93,7 +96,7 @@ func NewParserPackExecutor(pack *ParserPack) (*ParserPackExecutor, error) {
 	if !validation.Valid {
 		return nil, fmt.Errorf("invalid parser pack: %s", strings.Join(validation.Errors, "; "))
 	}
-	executor := &ParserPackExecutor{pack: pack, validators: map[string]*regexp.Regexp{}}
+	executor := &ParserPackExecutor{pack: pack, validators: map[string]*regexp.Regexp{}, mappingPlans: map[string]*fieldmapping.Compiled{}}
 	if err := executor.compile(); err != nil {
 		return nil, fmt.Errorf("compile parser pack: %w", err)
 	}
@@ -110,6 +113,17 @@ func (e *ParserPackExecutor) compile() error {
 		for stageIndex, stage := range rule.Stages {
 			if stage.ResourceLimits != (ResourceLimits{}) && !limitsWithin(stage.ResourceLimits, e.pack.ResourceLimits) {
 				return fmt.Errorf("rule[%d].stage[%d]: stage resource limits exceed pack limits", ruleIndex, stageIndex)
+			}
+			if stage.Type == StageTypeMapping {
+				var plan fieldmapping.Plan
+				if err := decodeStrictConfig(stage.Config, &plan); err != nil {
+					return err
+				}
+				compiled, err := fieldmapping.Compile(plan)
+				if err != nil {
+					return err
+				}
+				e.mappingPlans[rule.ID+"/"+stage.ID] = compiled
 			}
 		}
 		for predicateIndex, predicate := range rule.IncludePredicates {

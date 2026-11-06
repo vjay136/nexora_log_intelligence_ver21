@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"nexora.local/nli-v20/internal/fieldmapping"
 	"nexora.local/nli-v20/internal/grok"
 	"nexora.local/nli-v20/internal/mixedkv"
 	"nexora.local/nli-v20/static-layout"
@@ -239,6 +240,14 @@ type semanticExtractStageConfig struct {
 }
 
 func validateStageConfig(stage Stage) error {
+	if stage.Type == StageTypeMapping {
+		var plan fieldmapping.Plan
+		if err := decodeStrictConfig(stage.Config, &plan); err != nil {
+			return err
+		}
+		_, err := fieldmapping.Compile(plan)
+		return err
+	}
 	switch stage.Type {
 	case StageTypeStaticLayout, StageTypeDelimited:
 		config, err := decodeStaticStageConfig(stage.Config)

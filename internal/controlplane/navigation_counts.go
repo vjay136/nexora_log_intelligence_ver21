@@ -114,6 +114,25 @@ func (s *Server) handleNavigationCounts(w http.ResponseWriter, r *http.Request) 
 	}
 	counts["assurance"] = assuranceCount
 
+	nfiCount := navigationActionCount{States: map[string]int{}, Available: true}
+	if docs, listErr := s.metadata.List(ctx, "parser-packs", metastore.Query{Limit: 1000}); listErr != nil {
+		nfiCount.Available = false
+	} else {
+		for _, doc := range docs {
+			if _, actionable := workflowStates[doc.State]; !actionable {
+				continue
+			}
+			var body struct {
+				Parser map[string]any `json:"parser"`
+			}
+			if json.Unmarshal(doc.Payload, &body) == nil && body.Parser["pattern_type"] == "mapping" {
+				nfiCount.Total++
+				nfiCount.States[doc.State]++
+			}
+		}
+	}
+	counts["field-mapping"] = nfiCount
+
 	quarantineCount := navigationActionCount{States: map[string]int{}, Available: false}
 	if s.quarantine == nil || s.quarantine.store == nil {
 		unavailable[quarantineRecordsCollection] = "quarantine store is not configured"

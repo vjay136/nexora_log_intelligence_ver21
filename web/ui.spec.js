@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 // These browser regressions verify frontend behavior independently of network
 // and database availability. e2e.spec.js separately exercises a real controller.
 const origin = 'http://127.0.0.1:4176';
-const tabs = ['operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
+const tabs = ['operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
 const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
 async function mockController(page, { role = 'admin', healthIdentity = 'v21', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [], rolloutSeed = [], rolloutApprovalFailure = null, replayFailure = null, replayPending = false } = {}) {
@@ -75,6 +75,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
     if (path === '/api/v1/auth/login' && request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { ...headers, allow: 'POST, OPTIONS' } });
     if (path === '/api/v1/auth/login') { authenticated = true; return fulfill({ status: 'ok' }); }
     if (path === '/api/v1/auth/me') return authenticated ? fulfill({ username: 'test-operator', role, permissions: ['assurance:run'] }) : fulfill({ error: 'unauthorized' }, 401);
+    if (path === '/api/v1/field-mapping') return fulfill({engine:'native-field-mapping-v1',profile_count:0,profiles:[],methods:['position','key_value','delimiter','character'],operations:['split','merge','replace'],limits:{max_fields:128,max_operations:16,max_input_bytes:1048576}});
     if (path === '/api/v1/auth/csrf') return fulfill({ csrf_token: 'browser-test-csrf' });
     if (path === '/api/v1/auth/logout') { authenticated = false; return fulfill({ status: 'ok' }); }
     if (path === '/api/v1/nupire/snapshot') return fulfill({ candidates: nupireCandidates, count: nupireCandidates.length, evolution_state: 'available' });
@@ -370,8 +371,8 @@ test('navigation leads with Command Center, Assurance Lab, approvals and notific
   await mockController(page);
   await login(page);
   const ids=await page.locator('.nav-item').evaluateAll(items=>items.map(item=>item.dataset.page));
-  expect(ids.slice(0,18)).toEqual(['operations','monitoring','streams','assurance','quarantine-wizard','upes','rollouts','parser-sync','artifacts','parser-workspace','nupire','field-integrity','ai','parsers','studio','regex','knownkeys','drift']);
-  expect(ids[18]).toBe('notifications');
+  expect(ids.slice(0,19)).toEqual(['operations','monitoring','streams','assurance','quarantine-wizard','upes','rollouts','parser-sync','artifacts','parser-workspace','nupire','field-integrity','ai','parsers','field-mapping','studio','regex','knownkeys','drift']);
+  expect(ids[19]).toBe('notifications');
   const input=ids.indexOf('input-paths'),output=ids.indexOf('outputs'),parsing=ids.indexOf('kv');
   expect(ids[input+1]).toBe('migration');
   expect(ids[input+2]).toBe('outputs');
@@ -485,8 +486,9 @@ test('Quarantine Resolution Wizard maps the required unstructured fixture withou
   await page.getByRole('button',{name:'Test all fields'}).click();
   await page.locator('[data-wizard-step="5"] button').click();
 	await page.getByRole('button',{name:/Prepare candidate from evidence/}).click();
-  await expect(page.getByRole('alert').last()).toContainText('preview-only transform');
-  await expect(editor.locator('[name=parser]')).toHaveValue(initialParser);
+  const transformed=JSON.parse(await editor.locator('[name=parser]').inputValue());
+  expect(transformed.pattern_type).toBe('mapping');
+  expect(transformed.mapping_plan.fields[0].transform).toBe('lowercase');
 	await page.getByRole('button',{name:/Back to mapping/}).click();
   await page.locator('[data-qrw-key=transform]').first().selectOption('none');
   await page.getByRole('button',{name:'Test all fields'}).click();
@@ -494,10 +496,51 @@ test('Quarantine Resolution Wizard maps the required unstructured fixture withou
   await page.getByRole('button',{name:/Prepare candidate from evidence/}).click();
   await expect(editor).toBeVisible();
   const parser=JSON.parse(await editor.locator('[name=parser]').inputValue());
-  expect(parser.pattern).toContain('(?P<event_type>');
+  expect(parser.pattern_type).toBe('mapping');
+  expect(parser.mapping_plan.fields.find(field=>field.name==='event_type')).toMatchObject({method:'delimiter',source:'8',delimiter:';',part:'1',confirmed:true});
   expect(parser.provenance).toMatchObject({kind:'quarantine_resolution_wizard',generated_from_verified_evidence:true});
   await editor.getByRole('button',{name:'Save review-gated draft'}).click();
   await expect.poll(()=>mock.observed.includes('POST /api/v1/assurance/parsers')).toBe(true);
+});
+
+test('NFI maps compound tokens and colon key/value fields into a transform-capable native candidate', async ({page})=>{
+  const raw='20261201 102030123+0530 mailnode smtp 42 0 140026854221568 Note;DeliveryEvent status=failed:reason=notneeded:server=cloud';
+  const mock=await mockController(page,{quarantineRaw:raw});await login(page);
+  await page.getByTestId('nav-quarantine-wizard').click();await page.getByRole('button',{name:'Inspect',exact:true}).click();
+  await page.getByRole('button',{name:/Review desired schema/}).click();await page.getByRole('button',{name:'Suggest from raw log',exact:true}).click();
+  await expect(page.locator('[data-qrw-row]')).toHaveCount(12);
+  const confirmations=page.getByLabel('Confirm delimiter interpretation');await confirmations.nth(0).check();await confirmations.nth(1).check();
+  const event=page.locator('[data-qrw-row]').nth(8);await event.locator('.nfi-operations summary').click();await event.getByRole('button',{name:'Add operation',exact:true}).click();
+  await event.locator('[data-qrw-op-key=op]').selectOption('uppercase');await page.getByRole('button',{name:'Test all fields',exact:true}).click();
+  const desired=JSON.parse(await page.locator('[name=gprs_desired]').inputValue());expect(desired).toMatchObject({loglevel:'Note',event:'DELIVERYEVENT',status:'failed',reason:'notneeded',server:'cloud',thread_id:'140026854221568'});
+  await page.getByRole('button',{name:/5 · Auto-populate complete parser/}).click();
+  const form=page.locator('#gprs-parser-helper-form'),parser=JSON.parse(await form.locator('[name=parser]').inputValue());expect(parser.pattern_type).toBe('mapping');expect(parser.mapping_plan.fields.find(field=>field.name==='event').operations[0].op).toBe('uppercase');
+  await form.getByRole('button',{name:'Save review-gated draft',exact:true}).click();await expect.poll(()=>mock.observed.includes('POST /api/v1/assurance/parsers')).toBe(true);expect(mock.observed.some(request=>request.endsWith('/publish'))).toBe(false);
+});
+
+test('NFI standalone workbench verifies ordered splits, Unicode selections and merged names and saves one governed plan',async({page})=>{
+  const mock=await mockController(page);let verifiedPlan;
+  await page.route('**/api/v1/assurance/mapping-preview',async route=>{verifiedPlan=route.request().postDataJSON().plan;await route.fulfill({contentType:'application/json',body:JSON.stringify({passed:true,actual:{kind:'event:x',symbol:'α',combined:'event:x/α'},fields:[],errors:[]})});});
+  await login(page);await page.getByTestId('nav-field-mapping').click();await expect(page.locator('#page h1')).toHaveText('NFI · Native Field Intelligence');
+  await page.locator('#nfi-raw').fill('α beta;X|Y');await expect(page.locator('.nfi-token').first()).toContainText('chars 1–1');
+  await page.getByText('Import or edit a mapping plan',{exact:true}).click();
+  const fields=[{name:'kind',type:'string',policy:'required',method:'position',source:'2',operations:[{op:'split',delimiter:';',part:2},{op:'split',delimiter:'|',part:1},{op:'lowercase'},{op:'prefix',value:'event:'}]},{name:'symbol',type:'string',policy:'required',method:'character',source:'1',source_end:'1'},{name:'combined',type:'string',policy:'derived',method:'derived',source:'kind,symbol',join_separator:'/'}];
+  await page.locator('#nfi-plan-import').fill(JSON.stringify({version:1,fields,service_scope:'mapping-test',scope_pattern:'^α',reviewed_global_scope:false}));await page.getByRole('button',{name:'Import mapping',exact:true}).click();await page.getByRole('button',{name:'Test all fields',exact:true}).click();
+  await expect(page.locator('[data-qrw-row]').nth(2).locator('[data-qrw-preview]')).toHaveText('event:x/α');
+  await page.getByRole('button',{name:'Verify on controller',exact:true}).click();await expect(page.locator('#qrw-field-status')).toContainText('Verified by controller');expect(verifiedPlan.fields[0].operations).toHaveLength(4);
+  await page.locator('[data-action=nfi-generate]').first().click();const parser=JSON.parse(await page.locator('#nfi-parser-json').inputValue());expect(parser.mapping_plan.fields[2].method).toBe('derived');expect(parser.service_scope).toBe('mapping-test');expect(parser.scope_pattern).toBe('^α');
+  await page.getByRole('button',{name:'Validate and save review-gated draft',exact:true}).click();await expect.poll(()=>mock.observed.includes('POST /api/v1/assurance/parsers')).toBe(true);await expect(page.locator('#page-title')).toHaveText('NFI · Native Field Intelligence');await expect(page.locator('#page tr').filter({hasText:'native-field-mapping'})).toContainText('draft');
+  await page.getByRole('button',{name:'Use candidate in Parser Creation Workspace',exact:true}).click();expect(JSON.parse(await page.locator('#parser-workspace-form [name=parser]').inputValue()).mapping_plan.fields).toHaveLength(3);
+  await page.getByTestId('nav-field-mapping').click();await page.getByRole('button',{name:'Use mapped names in output delivery',exact:true}).click();expect(JSON.parse(await page.locator('#output-profile-form [name=field_columns]').inputValue())).toEqual({kind:'kind',symbol:'symbol',combined:'combined'});
+});
+
+test('NFI corpus profiles report optional evidence and stay explicit review suggestions',async({page})=>{
+  await mockController(page);let request;
+  const fields=[{name:'level',label:'Level',type:'string',policy:'required',method:'key_value',source:'level',confidence:'observed',evidence:'2/2 samples'},{name:'detail',label:'Detail',type:'string',policy:'optional',method:'key_value',source:'detail',confidence:'observed',evidence:'1/2 samples'}];
+  await page.route('**/api/v1/field-mapping/suggest',async route=>{request=route.request().postDataJSON();await route.fulfill({contentType:'application/json',body:JSON.stringify({sample_count:2,fields,profiles:[{name:'key/value structure',sample_count:2,sample:'level=INFO detail=ready',fields}]})});});
+  await login(page);await page.getByTestId('nav-field-mapping').click();await page.getByText('Learn structural suggestions from multiple samples',{exact:true}).click();await page.locator('#nfi-corpus').fill('level=INFO detail=ready\nlevel=WARN');await page.getByRole('button',{name:'Learn sample structures',exact:true}).click();
+  await expect(page.locator('#nfi-learning-status')).toContainText('2 samples inspected');expect(request.samples).toEqual(['level=INFO detail=ready','level=WARN']);await page.getByRole('button',{name:'Review this profile',exact:true}).click();await expect(page.locator('[data-qrw-key=policy]').nth(1)).toHaveValue('optional');await expect(page.locator('#nfi-profile-list')).toContainText('1/2 samples');
+  await page.getByRole('button',{name:'Test all fields',exact:true}).click();await expect(page.locator('#qrw-field-status')).toContainText('2 fields mapped');
 });
 
 test('QRW preserves the supplied SMTP sample structure, multiword key-value reason, and complete-parser handoff', async ({ page }) => {
@@ -723,6 +766,8 @@ test('QRW restores saved candidate validation before rendering review after a br
   await login(page);
   await page.getByTestId('nav-quarantine-wizard').click();
   await page.getByRole('button',{name:'Inspect',exact:true}).click();
+  await expect(page.locator('[data-wizard-step="2"]')).toHaveClass(/active/);
+  await expect.poll(()=>page.evaluate(()=>sessionStorage.getItem('nli.qrw.selected-record'))).toBe('q-1');
   await page.reload();
   await page.getByTestId('nav-quarantine-wizard').click();
   await expect(page.locator('[data-wizard-step="6"]')).toHaveClass(/done/);
