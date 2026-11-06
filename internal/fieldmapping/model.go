@@ -25,9 +25,9 @@ const (
 	MaxPlanBytes  = 2 << 20
 )
 
-var Methods = []string{"position", "delimiter", "character", "byte", "line", "key_value", "regex", "json_path", "constant", "derived"}
-var Operations = []string{"split", "select", "substring", "character", "byte", "line", "key_value", "replace", "remove", "trim", "lowercase", "uppercase", "prefix", "suffix", "add", "strip_prefix", "strip_suffix", "regex_extract", "regex_replace", "join", "merge"}
-var Types = []string{"string", "integer", "number", "boolean", "timestamp", "ip", "port", "object", "array"}
+var Methods = []string{"position", "delimiter", "character", "byte", "line", "key_value", "regex", "json_path", "constant", "derived", "raw", "field", "word", "token", "token_match", "before", "after", "between", "count", "kv_all", "regex_all", "regex_groups"}
+var Operations = []string{"split", "select", "substring", "character", "byte", "line", "key_value", "replace", "remove", "trim", "lowercase", "uppercase", "prefix", "suffix", "add", "strip_prefix", "strip_suffix", "regex_extract", "regex_replace", "join", "merge", "first", "last", "range", "count", "before", "after", "between", "tokenize", "token_match", "split_regex", "split_characters", "split_words", "split_tokens", "conditional_merge", "copy", "mask", "hash", "redact", "normalize", "omit", "exclude"}
+var Types = []string{"string", "integer", "number", "boolean", "timestamp", "ip", "port", "object", "array", "email", "url", "uuid", "ipv6", "date", "datetime", "null", "custom"}
 var ReservedNames = []string{"raw", "nli", "meta", "source", "envelope", "parser_id", "attempt_count", "ordered_attempts", "parse_telemetry"}
 var fieldName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 
@@ -58,6 +58,8 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 }
 
 type Field struct {
+	Selection
+	KeyOptions
 	Name            string      `json:"name"`
 	Label           string      `json:"label,omitempty"`
 	Type            string      `json:"type,omitempty"`
@@ -81,6 +83,12 @@ type Field struct {
 	JoinSeparator   string      `json:"join_separator,omitempty"`
 	QuoteAware      *bool       `json:"quote_aware,omitempty"`
 	Operations      []Operation `json:"operations,omitempty"`
+	OutputPolicy    string      `json:"output_policy,omitempty"`
+	EmptyPolicy     string      `json:"empty_policy,omitempty"`
+	CustomType      string      `json:"custom_type,omitempty"`
+	CustomPattern   string      `json:"custom_pattern,omitempty"`
+	Description     string      `json:"description,omitempty"`
+	Example         string      `json:"example,omitempty"`
 	// These bounded display-only values allow existing browser drafts to be
 	// round-tripped without permitting arbitrary configuration properties.
 	ID         string `json:"id,omitempty"`
@@ -91,19 +99,58 @@ type Field struct {
 }
 
 type Operation struct {
-	Op         string   `json:"op"`
-	Delimiter  string   `json:"delimiter,omitempty"`
-	Part       int      `json:"part,omitempty"`
-	Start      int      `json:"start,omitempty"`
-	End        int      `json:"end,omitempty"`
-	Value      string   `json:"value,omitempty"`
-	Find       string   `json:"find,omitempty"`
-	Replace    string   `json:"replace,omitempty"`
-	Pattern    string   `json:"pattern,omitempty"`
-	Group      string   `json:"group,omitempty"`
-	Fields     []string `json:"fields,omitempty"`
-	Separator  string   `json:"separator,omitempty"`
-	QuoteAware *bool    `json:"quote_aware,omitempty"`
+	Selection
+	KeyOptions
+	Op                string   `json:"op"`
+	Delimiter         string   `json:"delimiter,omitempty"`
+	Part              int      `json:"part,omitempty"`
+	Start             int      `json:"start,omitempty"`
+	End               int      `json:"end,omitempty"`
+	Value             string   `json:"value,omitempty"`
+	Find              string   `json:"find,omitempty"`
+	Replace           string   `json:"replace,omitempty"`
+	Pattern           string   `json:"pattern,omitempty"`
+	Group             string   `json:"group,omitempty"`
+	Fields            []string `json:"fields,omitempty"`
+	Separator         string   `json:"separator,omitempty"`
+	QuoteAware        *bool    `json:"quote_aware,omitempty"`
+	Limit             int      `json:"limit,omitempty"`
+	PreserveDelimiter bool     `json:"preserve_delimiter,omitempty"`
+	ConditionField    string   `json:"condition_field,omitempty"`
+	ConditionOperator string   `json:"condition_operator,omitempty"`
+	ConditionValue    string   `json:"condition_value,omitempty"`
+	ElseValue         string   `json:"else_value,omitempty"`
+	RemoveSources     bool     `json:"remove_sources,omitempty"`
+	Algorithm         string   `json:"algorithm,omitempty"`
+	Mode              string   `json:"mode,omitempty"`
+	tokenPattern      *regexp.Regexp
+}
+
+// Selection is shared by source selectors and ordered operations. All indexes
+// and counts use Unicode characters or explicit token/word units, never bytes
+// unless unit=byte is selected. Ranges remain 1-based and inclusive.
+type Selection struct {
+	BoundaryStart    string   `json:"boundary_start,omitempty"`
+	BoundaryEnd      string   `json:"boundary_end,omitempty"`
+	Occurrence       string   `json:"occurrence,omitempty"`
+	OccurrenceIndex  int      `json:"occurrence_index,omitempty"`
+	PreserveBoundary bool     `json:"preserve_boundary,omitempty"`
+	Direction        string   `json:"direction,omitempty"`
+	Count            int      `json:"count,omitempty"`
+	Unit             string   `json:"unit,omitempty"`
+	Indices          []int    `json:"indices,omitempty"`
+	TokenMode        string   `json:"token_mode,omitempty"`
+	TokenSeparators  []string `json:"token_separators,omitempty"`
+	TokenPattern     string   `json:"token_pattern,omitempty"`
+}
+
+type KeyOptions struct {
+	AssignmentSeparators []string          `json:"assignment_separators,omitempty"`
+	KeyAliases           map[string]string `json:"key_aliases,omitempty"`
+	KeyInclude           []string          `json:"key_include,omitempty"`
+	KeyExclude           []string          `json:"key_exclude,omitempty"`
+	KeyPrefix            string            `json:"key_prefix,omitempty"`
+	KeySuffix            string            `json:"key_suffix,omitempty"`
 }
 
 type Evidence struct {
@@ -112,17 +159,35 @@ type Evidence struct {
 	Source      bool   `json:"source"`
 	Description string `json:"description"`
 	Operations  int    `json:"operations"`
+	Spans       []Span `json:"spans,omitempty"`
+}
+
+type Span struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+type TraceStep struct {
+	Index       int    `json:"index"`
+	Operation   string `json:"operation"`
+	Input       string `json:"input"`
+	Output      string `json:"output"`
+	SourceStart int    `json:"source_start"`
+	SourceEnd   int    `json:"source_end"`
+	Truncated   bool   `json:"truncated,omitempty"`
 }
 
 type Result struct {
-	Values   map[string]any      `json:"values"`
-	Evidence map[string]Evidence `json:"evidence"`
+	Values   map[string]any         `json:"values"`
+	Evidence map[string]Evidence    `json:"evidence"`
+	Trace    map[string][]TraceStep `json:"trace,omitempty"`
 }
 
 type compiledField struct {
-	field   Field
-	pattern *regexp.Regexp
-	ops     []*regexp.Regexp
+	field         Field
+	pattern       *regexp.Regexp
+	ops           []*regexp.Regexp
+	tokenPattern  *regexp.Regexp
+	customPattern *regexp.Regexp
 }
 
 type Compiled struct{ fields []compiledField }
@@ -155,6 +220,10 @@ func boundedRegex(pattern string) (*regexp.Regexp, error) {
 // Compile validates every selector and operation, and precompiles all regular
 // expressions once. The compiled value is immutable and safe to share.
 func Compile(plan Plan) (*Compiled, error) {
+	data, encodeErr := json.Marshal(plan)
+	if encodeErr != nil || len(data) > MaxPlanBytes {
+		return nil, fmt.Errorf("mapping plan exceeds aggregate configuration bounds")
+	}
 	if plan.Version != 1 {
 		return nil, fmt.Errorf("mapping plan version must be 1")
 	}
@@ -198,7 +267,7 @@ func Compile(plan Plan) (*Compiled, error) {
 		if f.Timezone == "" {
 			f.Timezone = "preserve"
 		}
-		if !contains([]string{"string", "integer", "int", "number", "float", "boolean", "bool", "timestamp", "time", "ip", "port", "object", "array"}, f.Type) {
+		if !contains(Types, f.Type) && !contains([]string{"int", "float", "bool", "time"}, f.Type) {
 			return nil, fmt.Errorf("field %q has unsupported type", f.Name)
 		}
 		if !contains([]string{"required", "optional", "nullable", "default", "derived"}, f.Policy) {
@@ -345,6 +414,9 @@ func Compile(plan Plan) (*Compiled, error) {
 				cf.field.Operations[i].QuoteAware = &value
 			}
 		}
+		if err := compileExtended(&cf, seen); err != nil {
+			return nil, fmt.Errorf("field %q: %w", f.Name, err)
+		}
 		compiled.fields = append(compiled.fields, cf)
 		seen[f.Name] = true
 	}
@@ -354,7 +426,18 @@ func Compile(plan Plan) (*Compiled, error) {
 // Execute applies one immutable plan to one bounded record. Any invalid required
 // value rejects the record instead of emitting a partially successful payload.
 func (c *Compiled) Execute(ctx context.Context, raw string) (Result, error) {
+	return c.execute(ctx, raw, false)
+}
+func (c *Compiled) ExecuteTrace(ctx context.Context, raw string) (Result, error) {
+	return c.execute(ctx, raw, true)
+}
+func (c *Compiled) execute(ctx context.Context, raw string, trace bool) (Result, error) {
 	result := Result{Values: map[string]any{}, Evidence: map[string]Evidence{}}
+	prior := map[string]any{}
+	traceBudget := 65536
+	if trace {
+		result.Trace = map[string][]TraceStep{}
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -376,7 +459,11 @@ func (c *Compiled) Execute(ctx context.Context, raw string) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		value, evidence, found, err := scanner.extract(f, result.Values)
+		value, evidence, found, err := scanner.extract(f, prior)
+		if errors.Is(err, ErrSourceAbsent) {
+			found = false
+			err = nil
+		}
 		if err != nil {
 			return result, fmt.Errorf("field %q: %w", f.field.Name, err)
 		}
@@ -391,13 +478,20 @@ func (c *Compiled) Execute(ctx context.Context, raw string) (Result, error) {
 			}
 		}
 		omitField, operationsExecuted := false, 0
+		if trace {
+			appendTrace(&result, f.field.Name, 0, "source", raw, value, evidence, &traceBudget)
+		}
 		if value != nil {
 			for i, op := range f.field.Operations {
 				if err := ctx.Err(); err != nil {
 					return result, err
 				}
 				operationsExecuted = i + 1
-				value, err = applyOperation(value, op, f.ops[i], result.Values)
+				input := value
+				value, err = applyOperation(value, op, f.ops[i], prior)
+				if trace {
+					appendTrace(&result, f.field.Name, i+1, op.Op, input, value, evidence, &traceBudget)
+				}
 				if err != nil {
 					if !errors.Is(err, ErrSourceAbsent) {
 						return result, fmt.Errorf("field %q operation %d: %w", f.field.Name, i+1, err)
@@ -418,6 +512,22 @@ func (c *Compiled) Execute(ctx context.Context, raw string) (Result, error) {
 		if omitField {
 			continue
 		}
+		if text, ok := value.(string); ok && text == "" {
+			switch f.field.EmptyPolicy {
+			case "missing":
+				value, omitField, evidence, err = resolveAbsence(f.field)
+				if err != nil {
+					return result, fmt.Errorf("field %q: %w", f.field.Name, err)
+				}
+				if omitField {
+					continue
+				}
+			case "null":
+				value = nil
+			case "reject":
+				return result, fmt.Errorf("field %q rejects empty values", f.field.Name)
+			}
+		}
 		if value != nil {
 			if f.field.Transform != "none" {
 				value, err = applyOperation(value, Operation{Op: f.field.Transform}, nil, result.Values)
@@ -428,6 +538,9 @@ func (c *Compiled) Execute(ctx context.Context, raw string) (Result, error) {
 			value, err = convert(value, f.field)
 			if err != nil {
 				return result, fmt.Errorf("field %q: %w", f.field.Name, err)
+			}
+			if f.customPattern != nil && !f.customPattern.MatchString(stringValue(value)) {
+				return result, fmt.Errorf("field %q does not satisfy custom type", f.field.Name)
 			}
 			if err = checkRules(value, f.field.Validation); err != nil {
 				return result, fmt.Errorf("field %q: %w", f.field.Name, err)
@@ -442,7 +555,21 @@ func (c *Compiled) Execute(ctx context.Context, raw string) (Result, error) {
 		if outputBytes > MaxInputBytes {
 			return result, fmt.Errorf("mapping output exceeds bounded aggregate size")
 		}
-		result.Values[f.field.Name] = value
+		prior[f.field.Name] = value
+		hidden := f.field.OutputPolicy == "omit" || f.field.OutputPolicy == "intermediate"
+		for _, op := range f.field.Operations {
+			if op.Op == "omit" || op.Op == "exclude" {
+				hidden = true
+			}
+			if op.RemoveSources && mergeCondition(op, prior) {
+				for _, name := range op.Fields {
+					delete(result.Values, name)
+				}
+			}
+		}
+		if !hidden {
+			result.Values[f.field.Name] = value
+		}
 		result.Evidence[f.field.Name] = evidence
 	}
 	return result, nil

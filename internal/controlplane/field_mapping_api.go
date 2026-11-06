@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,11 @@ func (s *Server) handleMappingPreview(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
+	ctx, done, admitted := s.beginFieldSenseAnalysis(w, r)
+	if !admitted {
+		return
+	}
+	defer done()
 	var input struct {
 		Raw  string          `json:"raw"`
 		Plan json.RawMessage `json:"plan"`
@@ -56,12 +62,18 @@ func (s *Server) handleMappingPreview(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	result, err := compiled.Execute(r.Context(), input.Raw)
-	if err != nil {
-		jsonOK(w, map[string]any{"passed": false, "actual": map[string]any{}, "errors": []string{err.Error()}, "persisted": false, "activated": false, "engine": "nfi-v1"})
+	if fieldSenseContextError(w, ctx) {
 		return
 	}
-	jsonOK(w, map[string]any{"passed": true, "actual": result.Values, "fields": result.Evidence, "evidence": result.Evidence, "errors": []string{}, "persisted": false, "activated": false, "engine": "nfi-v1"})
+	result, err := compiled.ExecuteTrace(ctx, input.Raw)
+	if fieldSenseContextError(w, ctx) {
+		return
+	}
+	if err != nil {
+		jsonOK(w, map[string]any{"passed": false, "actual": map[string]any{}, "trace": result.Trace, "evidence": result.Evidence, "errors": []string{err.Error()}, "persisted": false, "activated": false, "engine": "nfi-v1"})
+		return
+	}
+	jsonOK(w, map[string]any{"passed": true, "actual": result.Values, "fields": result.Evidence, "evidence": result.Evidence, "trace": result.Trace, "errors": []string{}, "persisted": false, "activated": false, "engine": "nfi-v1"})
 }
 
 func (s *Server) handleFieldMappingStatus(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +101,8 @@ func (s *Server) handleFieldMappingStatus(w http.ResponseWriter, r *http.Request
 	}
 	sort.Slice(profiles, func(i, j int) bool { return fmt.Sprint(profiles[i]["id"]) < fmt.Sprint(profiles[j]["id"]) })
 	jsonOK(w, map[string]any{
-		"subsystem": "nfi", "name": "Native Field Intelligence", "engine": "nfi-v1", "available": true,
+		"subsystem": "nfi", "name": "NLI FieldSense Studio", "engine": "nfi-v1", "available": true,
+		"analysis":     s.fieldSenseAnalysis().status(),
 		"generated_at": time.Now().UTC(), "states": states, "profiles": profiles, "profile_count": len(profiles),
 		"methods": fieldmapping.Methods, "operations": fieldmapping.Operations, "types": fieldmapping.Types,
 		"limits":                 map[string]int{"max_input_bytes": fieldmapping.MaxInputBytes, "max_fields": fieldmapping.MaxFields, "max_operations_per_field": fieldmapping.MaxOperations, "max_learning_samples": 100},
@@ -105,7 +118,27 @@ func nfiCaseService(item assuranceRequest) string {
 
 // Scope is reviewed alongside the plan. Inferred mappings cannot take over
 // unrelated services; an authoritative global override requires a bounded guard.
+// Priority orders only reviewed native mappings within their reviewed scope.
+func nfiMappingPriority(definition map[string]any) (int, error) {
+	value, exists := definition["mapping_priority"]
+	if !exists || value == nil {
+		return 0, nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid NFI mapping priority")
+	}
+	priority, err := strconv.Atoi(string(data))
+	if err != nil || priority < 0 || priority > 1000 {
+		return 0, fmt.Errorf("NFI mapping priority must be an integer from 0 to 1000")
+	}
+	return priority, nil
+}
+
 func nfiMappingScope(definition map[string]any, plan fieldmapping.Plan, cases []assuranceRequest) ([]string, string, bool, error) {
+	if _, err := nfiMappingPriority(definition); err != nil {
+		return nil, "", false, err
+	}
 	pattern, _ := definition["scope_pattern"].(string)
 	global, _ := definition["reviewed_global_scope"].(bool)
 	if value, exists := definition["scope_pattern"]; exists && value != nil {
@@ -264,6 +297,8 @@ func assuranceMappingRuntimePack(id, version, author string, definition map[stri
 			FailurePolicy: parserpolicy.FailurePolicyQuarantine, ProjectionMode: parserpolicy.ProjectionModeAllowlist, AllowedFields: names, CountPolicy: parserpolicy.CountPolicyProjection}}}
 	if authoritative {
 		pack.Metadata["selection_policy"] = "reviewed_mapping"
+		priority, _ := nfiMappingPriority(definition)
+		pack.Metadata["mapping_priority"] = strconv.Itoa(priority)
 	}
 	if scopePattern != "" {
 		pack.Rules[0].IncludePredicates = []parserpolicy.Predicate{{Type: "regex", Field: "input", Pattern: scopePattern}}

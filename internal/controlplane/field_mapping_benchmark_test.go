@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	parserpolicy "nexora.local/nli-v20/parser-policy"
@@ -30,10 +31,10 @@ func BenchmarkNFIAndR6RegexSameOutput(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		request := &parserpolicy.ExecutionRequest{Input: nfiExample, Service: "smtp", SourceType: "file", Context: context.Background()}
+		request := &parserpolicy.ExecutionRequest{Input: nfiExample, Service: nfiCaseService(cases[0]), SourceType: "file", Context: context.Background()}
 		result, err := executor.Execute(request)
 		if err != nil || result.Quarantined {
-			b.Fatal("benchmark output did not pass reviewed regression")
+			detail,_:=json.Marshal(result);b.Fatalf("benchmark output did not pass reviewed regression: err=%v result=%s",err,detail)
 		}
 		if diff, _ := structuralDiff(result.EventPayload.Fields, desired); len(diff) != 0 {
 			b.Fatal("benchmark outputs differ")

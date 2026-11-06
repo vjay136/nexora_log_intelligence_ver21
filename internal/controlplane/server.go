@@ -84,6 +84,8 @@ type Config struct {
 	MaxArtifactBytes                 int64    `json:"max_artifact_bytes,omitempty"`
 	RateLimit                        int      `json:"rate_limit,omitempty"`
 	RateWindowSeconds                int      `json:"rate_window_seconds,omitempty"`
+	FieldSenseAnalysisConcurrency    int      `json:"fieldsense_analysis_concurrency,omitempty"`
+	FieldSenseAnalysisTimeoutMS      int      `json:"fieldsense_analysis_timeout_ms,omitempty"`
 	// Deprecated in Ver21. Administrator self-approval for parser recovery is
 	// governed by the emergency approval permission plus an explicit reason and
 	// exact revision/hash binding. The field remains readable for compatibility
@@ -127,6 +129,9 @@ type Server struct {
 	notificationQueue        chan notificationDeliveryJob
 	notificationWorkerCancel context.CancelFunc
 	notificationWorkerDone   chan struct{}
+	fieldSenseOnce           sync.Once
+	fieldSense               *fieldSenseAdmission
+	parserMutationMu         sync.Mutex
 }
 
 func New(cfg Config) (*Server, error) {

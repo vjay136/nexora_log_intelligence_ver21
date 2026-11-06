@@ -1,9 +1,13 @@
 # Changelog
 
 ## [21.0.0-7] - 2026-11-06
-- Introduce NFI (Native Field Intelligence) with a dedicated Field Mapping workspace and a shared bounded mapping plan for preview and parser execution.
+- Introduce NLI FieldSense Studio, powered by NFI (Native Field Intelligence), with a shared bounded mapping plan for preview and parser execution.
 - Support custom token/range, Unicode character, byte, line, delimiter, key-value, JSON-path, regex, constant and derived-field mappings with ordered operations.
 - Add source-position inspection, generic suggestions, custom labels, typed validation and mapping import/export while preserving governed parser publication.
+- Add Suggest & Sense and Manual Sense modes, a 16-step Guided Builder, expert controls, contextual examples, per-suggestion review and cancelable native verification.
+- Extend extraction with occurrence/boundary selectors, mixed tokenization, all-key/value extraction and aliases, typed identifiers, masking/hashing/redaction, conditional merges and intermediate/omitted output fields.
+- Repair published native mappings through isolated reviewed drafts with explicit priority and exact-bundle rollback; retain R6 parser compatibility.
+- Generate installation-specific Supabase bootstrap SQL with the R7 identity while preserving existing RPC and revisioned JSONB contracts.
 - Use verified Ver21 R6 (`v21.0.0-6`) for source, upgrade and rollback qualification.
 
 ## [21.0.0-6] - 2026-11-06

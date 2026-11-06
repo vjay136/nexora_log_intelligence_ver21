@@ -687,6 +687,11 @@ func (s *Server) handleAssuranceParserPreview(w http.ResponseWriter, r *http.Req
 		jsonError(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
+	ctx, done, admitted := s.beginFieldSenseAnalysis(w, r)
+	if !admitted {
+		return
+	}
+	defer done()
 	var input assuranceParserInput
 	if decodeJSON(r, &input, 2<<20) != nil || input.Parser == nil || len(input.Cases) == 0 || len(input.Cases) > 100 {
 		jsonError(w, "declarative parser and 1..100 validation cases are required", http.StatusBadRequest)
@@ -696,7 +701,10 @@ func (s *Server) handleAssuranceParserPreview(w http.ResponseWriter, r *http.Req
 		jsonError(w, "unsafe declarative parser", http.StatusBadRequest)
 		return
 	}
-	validation := validateParserCandidate(input.Parser, input.Cases)
+	validation := validateParserCandidateContext(ctx, input.Parser, input.Cases)
+	if fieldSenseContextError(w, ctx) {
+		return
+	}
 	jsonOK(w, map[string]any{
 		"validation":        validation,
 		"artifact_checksum": parserArtifactChecksum(input.Parser),
@@ -707,6 +715,10 @@ func (s *Server) handleAssuranceParserPreview(w http.ResponseWriter, r *http.Req
 }
 
 func validateParserCandidate(definition map[string]any, cases []assuranceRequest) map[string]any {
+	return validateParserCandidateContext(context.Background(), definition, cases)
+}
+
+func validateParserCandidateContext(ctx context.Context, definition map[string]any, cases []assuranceRequest) map[string]any {
 	encoded, _ := json.Marshal(definition)
 	var parser registry.ParserDef
 	if err := json.Unmarshal(encoded, &parser); err != nil {
@@ -738,11 +750,14 @@ func validateParserCandidate(definition map[string]any, cases []assuranceRequest
 	passed := 0
 	outcomes := make([]map[string]any, 0, len(cases))
 	for index, item := range cases {
+		if err := ctx.Err(); err != nil {
+			return map[string]any{"status": "interrupted", "reason": err.Error(), "total": len(cases), "passed": passed, "failed": len(cases) - passed, "errors": []string{err.Error()}}
+		}
 		if strings.TrimSpace(item.Raw) == "" {
 			outcomes = append(outcomes, map[string]any{"index": index, "passed": false, "actual": map[string]any{}, "diff": []map[string]any{}, "errors": []string{"validation input is empty"}})
 			continue
 		}
-		actual, errors := registry.Apply(&parser, item.Raw)
+		actual, errors := registry.ApplyContext(ctx, &parser, item.Raw)
 		diff, _ := structuralDiff(actual, item.Desired)
 		ok := len(errors) == 0 && len(diff) == 0 && len(item.Desired) > 0
 		if ok {
@@ -835,6 +850,8 @@ func (s *Server) handleAssuranceParsers(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "GET or POST required", 405)
 		return
 	}
+	s.parserMutationMu.Lock()
+	defer s.parserMutationMu.Unlock()
 	var input assuranceParserInput
 	if decodeJSON(r, &input, 2<<20) != nil || strings.TrimSpace(input.Name) == "" || len(input.Cases) == 0 || len(input.Cases) > 100 {
 		jsonError(w, "name and 1..100 validation cases are required", 400)
@@ -862,6 +879,13 @@ func (s *Server) handleAssuranceParsers(w http.ResponseWriter, r *http.Request) 
 	}
 	if id == "" {
 		jsonError(w, "parser id is invalid", 400)
+		return
+	}
+	if _, existingErr := s.metadata.Get(r.Context(), "parser-packs", id, 0); existingErr == nil {
+		jsonError(w, "parser id already exists; edit its draft or create a repair draft", http.StatusConflict)
+		return
+	} else if !errors.Is(existingErr, os.ErrNotExist) {
+		jsonError(w, "parser draft uniqueness cannot be verified", http.StatusServiceUnavailable)
 		return
 	}
 	input.Parser["id"] = id
@@ -900,6 +924,10 @@ func (s *Server) handleAssuranceParser(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		jsonError(w, "parser id required", 400)
 		return
+	}
+	if r.Method != http.MethodGet {
+		s.parserMutationMu.Lock()
+		defer s.parserMutationMu.Unlock()
 	}
 	if len(parts) < 2 {
 		permission := middleware.PermissionManageParsers
@@ -953,7 +981,13 @@ func (s *Server) handleAssuranceParser(w http.ResponseWriter, r *http.Request) {
 			if !s.validateParserEvidenceLink(w, r, sourceEvidenceID) {
 				return
 			}
-			payload, _ := json.Marshal(map[string]any{"id": id, "name": input.Name, "version": input.Version, "parser": input.Parser, "artifact_checksum": parserArtifactChecksum(input.Parser), "cases": input.Cases, "validation": validation, "validation_passed": validation["failed"] == 0 && validation["total"] == len(input.Cases), "review_state": "draft", "activated": false, "source_quarantine_record_id": sourceEvidenceID})
+			updated := map[string]any{"id": id, "name": input.Name, "version": input.Version, "parser": input.Parser, "artifact_checksum": parserArtifactChecksum(input.Parser), "cases": input.Cases, "validation": validation, "validation_passed": validation["failed"] == 0 && validation["total"] == len(input.Cases), "review_state": "draft", "activated": false, "source_quarantine_record_id": sourceEvidenceID}
+			for _, key := range []string{"repair_of", "repair_of_revision", "repair_of_checksum", "repair_created_at", "repair_created_by"} {
+				if value, ok := previous[key]; ok {
+					updated[key] = value
+				}
+			}
+			payload, _ := json.Marshal(updated)
 			saved, err := s.metadata.Put(r.Context(), metastore.Document{Collection: "parser-packs", ID: id, State: "draft", Payload: payload, CreatedBy: doc.CreatedBy})
 			if err != nil {
 				jsonError(w, "parser draft update failed", 500)
@@ -1000,6 +1034,10 @@ func (s *Server) handleAssuranceParser(w http.ResponseWriter, r *http.Request) {
 	}
 	var body map[string]any
 	_ = json.Unmarshal(doc.Payload, &body)
+	if action == "clone-draft" {
+		s.cloneParserRepairDraft(w, r, p, doc, body)
+		return
+	}
 	var reviewRequest struct {
 		Reason string `json:"reason"`
 	}
@@ -1102,6 +1140,17 @@ func (s *Server) handleAssuranceParser(w http.ResponseWriter, r *http.Request) {
 		if checksum == "" || checksum != body["approved_checksum"] || checksum != body["artifact_checksum"] {
 			jsonError(w, "approved parser artifact checksum no longer matches", 409)
 			return
+		}
+		if repairOf, _ := body["repair_of"].(string); repairOf != "" {
+			origin, originErr := s.metadata.Get(r.Context(), "parser-packs", repairOf, 0)
+			var original map[string]any
+			if originErr == nil {
+				originErr = json.Unmarshal(origin.Payload, &original)
+			}
+			if originErr != nil || original["artifact_checksum"] != body["repair_of_checksum"] {
+				jsonError(w, "repair source changed; create a fresh repair draft from the current parser", http.StatusConflict)
+				return
+			}
 		}
 		var cases []assuranceRequest
 		if encoded, marshalErr := json.Marshal(body["cases"]); marshalErr == nil {

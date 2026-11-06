@@ -265,6 +265,15 @@ func validSource(source string) bool {
 
 // Apply executes a validated parser definition against one raw record.
 func Apply(p *ParserDef, input string) (map[string]interface{}, []string) {
+	return ApplyContext(context.Background(), p, input)
+}
+
+// ApplyContext allows interactive analysis to stop without changing legacy
+// callers or the compiled production executor.
+func ApplyContext(ctx context.Context, p *ParserDef, input string) (map[string]interface{}, []string) {
+	if err := ctx.Err(); err != nil {
+		return nil, []string{err.Error()}
+	}
 	if err := Validate(p); err != nil {
 		return nil, []string{err.Error()}
 	}
@@ -276,7 +285,7 @@ func Apply(p *ParserDef, input string) (map[string]interface{}, []string) {
 		if err != nil {
 			return nil, []string{err.Error()}
 		}
-		result, err := compiled.Execute(context.Background(), input)
+		result, err := compiled.Execute(ctx, input)
 		if err != nil {
 			return nil, []string{err.Error()}
 		}

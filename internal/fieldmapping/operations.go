@@ -34,6 +34,9 @@ func valueSize(value any) int {
 }
 
 func applyOperation(value any, op Operation, re *regexp.Regexp, prior map[string]any) (any, error) {
+	if v, handled, err := extendedOperation(value, op, re, prior); handled {
+		return v, err
+	}
 	text := stringValue(value)
 	switch op.Op {
 	case "trim":
@@ -210,6 +213,12 @@ func applyOperation(value any, op Operation, re *regexp.Regexp, prior map[string
 }
 
 func convert(value any, f Field) (any, error) {
+	if !validStrings(value, 0) {
+		return nil, fmt.Errorf("value contains invalid UTF-8 or exceeds depth")
+	}
+	if v, handled, err := convertExtended(value, f); handled {
+		return v, err
+	}
 	text := stringValue(value)
 	switch f.Type {
 	case "string":

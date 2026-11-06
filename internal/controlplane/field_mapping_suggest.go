@@ -44,6 +44,11 @@ func (s *Server) handleFieldMappingSuggest(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
+	ctx, done, admitted := s.beginFieldSenseAnalysis(w, r)
+	if !admitted {
+		return
+	}
+	defer done()
 	var request struct {
 		Samples   []string `json:"samples"`
 		Separator string   `json:"separator"`
@@ -65,7 +70,10 @@ func (s *Server) handleFieldMappingSuggest(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	profiles, diagnostics := nfiSuggestCorpus(r.Context(), request.Samples, request.Separator)
+	profiles, diagnostics := nfiSuggestCorpus(ctx, request.Samples, request.Separator)
+	if fieldSenseContextError(w, ctx) {
+		return
+	}
 	fields := []fieldmapping.Field{}
 	if len(profiles) > 0 {
 		fields = profiles[0].Fields

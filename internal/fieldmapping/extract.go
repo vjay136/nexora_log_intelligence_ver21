@@ -70,6 +70,9 @@ func newRecord(raw string) (*record, error) {
 }
 
 func (r *record) extract(cf compiledField, prior map[string]any) (any, Evidence, bool, error) {
+	if extendedMethod(cf.field) {
+		return r.extractExtended(cf, prior)
+	}
 	f := cf.field
 	e := Evidence{Start: -1, End: -1, Description: f.Method + ":" + f.Source}
 	selected := func(s span) (any, Evidence, bool, error) {
@@ -304,6 +307,18 @@ func boundary(c byte, delimiters string) bool {
 // separator. Colons inside URLs, IPv6 addresses and ordinary values survive.
 // Quoted/escaped boundaries are never treated as new pairs.
 func scanPairs(raw, separator, delimiters string) (map[string][]pair, error) {
+	return scanPairsMany(raw, []string{separator}, delimiters)
+}
+func scanPairsMany(raw string, separators []string, delimiters string) (map[string][]pair, error) {
+	keyAt := func(raw string, pos int, _ string) (string, int, bool) {
+		for _, sep := range separators {
+			if k, e, ok := keyAt(raw, pos, sep); ok {
+				return k, e, true
+			}
+		}
+		return "", 0, false
+	}
+	separator := ""
 	output := map[string][]pair{}
 	pos := 0
 	pairCount := 0

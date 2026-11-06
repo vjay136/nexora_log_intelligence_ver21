@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const app=fs.readFileSync(new URL('../web/app.js',import.meta.url),'utf8');
 const helpers=app.slice(app.indexOf('  const QRW_RESERVED='),app.indexOf('  function setupQRWStepPanels('));
 const extraction=app.slice(app.indexOf('  function qrwSlice('),app.indexOf('  async function qrwValidateCandidate('));
-function engine(){return vm.runInNewContext(`${helpers}\n${extraction}\n({field:qrwField,suggest:qrwSuggestedFields,extract:qrwExtract,tokens:qrwTokens,pairs:qrwPairs})`,{TextEncoder,TextDecoder,state:{qrwFields:[]}});}
+function engine(){return vm.runInNewContext(`${helpers}\n${extraction}\n({field:qrwField,suggest:qrwSuggestedFields,extract:qrwExtract,tokens:qrwTokens,pairs:qrwPairs,plan:fields=>{state.qrwFields=fields;return qrwPlan();}})`,{TextEncoder,TextDecoder,state:{qrwFields:[]}});}
 
 test('NFI suggests compound labels and every colon-separated key without a raw-line special case',()=>{
   const e=engine(),raw='20261201 102030123+0530 mailnode smtp 42 0 140026854221568 Note;DeliveryEvent status=failed:reason=notneeded:server=cloud';
@@ -71,4 +71,15 @@ test('NFI applies absence policies to missing nested keys without masking malfor
   assert.match(e.extract(e.field({...base,policy:'optional'}),'msg="unfinished').error,/Unterminated/);
   const malformed=e.field({...base,policy:'optional',type:'integer',operations:base.operations.slice(0,2)});
   assert.match(e.extract(malformed,'msg=MISREPORT=reason;invalid').error,/not an integer/);
+});
+
+
+test('FieldSense preserves executable advanced parameters and previews raw, word and earlier-field sources',()=>{
+  const e=engine(),raw='node   smtp 007';
+  assert.equal(e.extract(e.field({name:'service',method:'word',source:'2',policy:'required'}),raw).value,'smtp');
+  assert.equal(e.extract(e.field({name:'full',method:'raw',policy:'required'}),raw).value,raw);
+  assert.equal(e.extract(e.field({name:'copy',method:'field',source:'service',policy:'required'}),raw,{service:'smtp'}).value,'smtp');
+  const field=e.field({name:'summary',method:'kv_all',type:'object',policy:'optional',assignment_separators:['=',';'],key_aliases:{src:'source_ip'},key_include:['src'],output_policy:'intermediate',empty_policy:'missing',description:'Stable custom description',example:'src=127.0.0.1',operations:[{op:'conditional_merge',fields:['a','b'],condition_field:'status',condition_operator:'equals',condition_value:'ok',else_value:'unknown',remove_sources:true}]});
+  const plan=e.plan([field]);assert.equal(plan.fields[0].output_policy,'intermediate');assert.equal(plan.fields[0].empty_policy,'missing');assert.equal(plan.fields[0].key_aliases.src,'source_ip');assert.equal(plan.fields[0].operations[0].condition_operator,'equals');assert.equal(plan.fields[0].description,'Stable custom description');assert.equal(Object.hasOwn(plan.fields[0],'id'),false);
+  assert.match(e.extract(field,raw).error,/controller/);
 });

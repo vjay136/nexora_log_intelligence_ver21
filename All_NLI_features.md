@@ -3,9 +3,9 @@
 Release identity: `21.0.0-7`
 Document scope: behavior implemented in this repository; this is not a performance guarantee or a substitute for deployment qualification.
 
-## NFI — Native Field Intelligence (R7)
+## NLI FieldSense Studio — powered by NFI (R7)
 
-NFI provides a dedicated **Field Mapping** workspace (`field-mapping`) and the shared mapping controls embedded in Quarantine Resolution Wizard Steps 3–4. An operator can inspect source token and character positions, rename fields/labels, select ranges, split compound tokens, extract quoted or escaped key-value data, read structured paths, combine fields, and apply ordered literal or bounded-regex operations before typed validation. The same declarative mapping plan is validated by the controller and used by the client ParserPack runtime; approval, exact bundle hashes, acknowledgement, replay and rollback remain governed.
+NFI provides a dedicated **NLI FieldSense Studio** workspace (`field-mapping`) and the shared mapping controls embedded in Quarantine Resolution Wizard Steps 3–4. An operator can inspect source token and character positions, rename fields/labels, select ranges, split compound tokens, extract quoted or escaped key-value data, read structured paths, combine fields, and apply ordered literal or bounded-regex operations before typed validation. The same declarative mapping plan is validated by the controller and used by the client ParserPack runtime; approval, exact bundle hashes, acknowledgement, replay and rollback remain governed.
 
 The mapping guide documents supported methods, presence/null policies, bounds, and known limitations. It does not claim universal interpretation of unknown logs or change existing input framing and destination contracts. See [R7 field mapping guide](docs/V21_R7_FIELD_MAPPING_GUIDE.md) and [audit/design](docs/V21_R7_MAPPING_DESIGN.md).
 

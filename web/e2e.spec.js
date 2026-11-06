@@ -12,7 +12,7 @@ const liveWorkspaceContracts = {
   upes: { paths: ['/api/v1/quarantine/records'], text: 'Unstoppable Parsing Engine Support' },
   'parser-workspace': { paths: ['/api/v1/assurance/parsers'], text: 'Complete parser artifact editor' },
   nupire: { paths: ['/api/v1/nupire/snapshot'], text: 'NUPIRE / EGPE workspace' },
-  'field-mapping': { paths: ['/api/v1/field-mapping','/api/v1/assurance/parsers'], text: 'NFI · Native Field Intelligence' },
+  'field-mapping': { paths: ['/api/v1/field-mapping','/api/v1/assurance/parsers'], text: 'NLI FieldSense Studio' },
   notifications: { paths: ['/api/v1/notifications'], text: 'Notification center' },
   communications: { paths: ['/api/v1/communications/status'], text: 'End-to-end communication status' },
   streams: { paths: [], text: 'Streams' },
@@ -195,7 +195,33 @@ test('R7 NFI maps compound tokens and colon pairs through the real controller an
   const saved = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/assurance/parsers' && response.request().method() === 'POST');
   await page.getByRole('button', { name:'Validate and save review-gated draft', exact:true }).click();
   expect((await saved).status()).toBe(201);
-  await expect(page.locator('#page-title')).toHaveText('NFI · Native Field Intelligence');
+  await expect(page.locator('#page-title')).toHaveText('NLI FieldSense Studio');
+});
+
+test('FieldSense manual controls keep live output and native controller evidence aligned', async ({ page }) => {
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  await expect(page.locator('#nfi-guide-steps li')).toHaveCount(16);
+  await page.getByRole('button',{name:'Manual Sense Mode',exact:true}).click();
+  await page.locator('#nfi-raw').fill('mailnode smtp 007');
+  await page.getByRole('button',{name:'Add Custom Field',exact:true}).click();
+  const row=page.locator('[data-qrw-row]').first();
+  await row.locator('[data-qrw-key=name]').fill('mail_service');
+  await row.locator('[data-qrw-key=method]').selectOption('word');
+  await row.locator('[data-qrw-key=source]').fill('2');
+  await row.locator('[data-qrw-key=policy]').selectOption('required');
+  await expect(page.locator('#nfi-live-json')).toContainText('smtp');
+  await row.locator('[data-qrw-key=source] + .nfi-info').click();
+  await expect(page.locator('#nfi-help-content')).toContainText('1-based');
+  await page.getByRole('button',{name:'Close help',exact:true}).click();
+  const verified=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/assurance/mapping-preview'&&response.request().method()==='POST');
+  await page.getByRole('button',{name:'Verify on controller',exact:true}).click();
+  const response=await verified;
+  expect(response.status()).toBe(200);
+  const result=await response.json();
+  expect(result).toMatchObject({passed:true,actual:{mail_service:'smtp'},persisted:false,activated:false});
+  expect(result.trace.mail_service.length).toBeGreaterThan(0);
+  expect(JSON.parse(await page.locator('#nfi-parser-json').inputValue()).mapping_plan.fields[0]).toMatchObject({name:'mail_service',method:'word',source:'2'});
 });
 
 test('legacy Assurance regressions: complete valid JSON, traversal, manual retention, exact log download and purge', async ({ page }) => {

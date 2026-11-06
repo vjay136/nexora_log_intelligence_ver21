@@ -7,6 +7,7 @@ import (
 	"log"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,7 +122,11 @@ func (adapter *ParserPackAdapter) tryParseV5Production(input string, source engi
 	hasReviewedMapping := false
 	for index := range candidates {
 		if reviewedMappingProfile(candidates[index].profile) {
-			candidates[index].specificity = -1
+			priority, err := strconv.Atoi(candidates[index].profile.Pack.Metadata["mapping_priority"])
+			if err != nil || priority < 0 || priority > 1000 {
+				priority = 0
+			}
+			candidates[index].specificity = -1 - priority
 			hasReviewedMapping = true
 		}
 	}

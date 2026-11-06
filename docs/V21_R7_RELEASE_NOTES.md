@@ -2,13 +2,17 @@
 
 Release `21.0.0-7` uses verified R6 `v21.0.0-6` at `905ce45bca9d54d2fd8fcf4505ba21e3e274a611` as its source, upgrade and rollback baseline. R6 remains available as the previous release.
 
-## NFI — Native Field Intelligence
+## NLI FieldSense Studio — powered by NFI
 
-NFI is the native, bounded field mapping subsystem. Its dedicated **Field Mapping** workspace (`field-mapping`) shares mapping definitions with Quarantine Resolution Wizard Steps 3–4, Assurance previews and the parser candidate lifecycle. The mapping plan follows the artifact through review, publication and client execution; preview-only behavior must never be silently substituted in production.
+NFI is the native, bounded field mapping subsystem. Its dedicated **NLI FieldSense Studio** workspace (`field-mapping`) shares mapping definitions with Quarantine Resolution Wizard Steps 3–4, Assurance previews and the parser candidate lifecycle. The mapping plan follows the artifact through review, publication and client execution; preview-only behavior must never be silently substituted in production.
 
 Operators can identify numbered source tokens and character positions, assign custom field names and labels, split compound values, extract key-value data, select token/character/byte/line ranges or structured paths, combine fields, and compose ordered transformations. Presence, null/default, data-type, duplicate-key and validation rules are explicit. Unsupported or ambiguous definitions fail with field-level errors rather than fabricated values. See `V21_R7_FIELD_MAPPING_GUIDE.md` for the supported operations and exact sample.
 
 Suggestions use observed structure rather than exact full-line examples. A corpus analysis or “training” action means deterministic structural discovery, field-frequency evidence and reviewable mapping proposals. It does not train external model weights, reinterpret opaque values automatically or publish a parser without review. Supplied corpus bodies are not added to public release artifacts; regression cases use synthetic or explicitly authorized examples.
+
+The workspace provides Suggest & Sense and Manual Sense modes, a 16-step Guided Builder, expert controls, independent suggestion review, hover/focus information and detailed examples. Boundary/occurrence selectors, mixed tokenization, complete key-value objects and aliases, masking, hashing, redaction, conditional merges and explicit intermediate/omitted fields use the native plan. Interactive analysis has bounded concurrency and deadlines, cancellation and diagnostic traces; normal ingestion does not collect those traces.
+
+Published native mappings can be cloned into isolated repair drafts. The original remains active until a correction is validated, approved and published. Reviewed mapping priority selects the correction within its service scope; rollback reveals the unchanged original parser. Exact bundle acknowledgement remains a separate, visible step.
 
 ## Compatibility and governance
 

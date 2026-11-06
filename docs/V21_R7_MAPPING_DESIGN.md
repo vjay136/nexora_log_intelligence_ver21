@@ -23,6 +23,48 @@ Existing approval, disposition, streaming, framing, fleet identity and native pa
 | Quoted/multiword/empty values are ambiguous with simple splitting | Synthetic `agent="Example Client/1.0" session=""` | Quoting/escaping and missing-versus-empty behavior are explicit | Preserves user-agent and empty evidence; required policy still enforces schema | Quoted delimiters, escapes, empty/null/default tests |
 | Arbitrary normalization can hide evidence | Removal/replacement/merge requested by operator | Original raw evidence is retained according to policy; ordered transformations and derived provenance are explicit | Reversible draft editing; no mutation of original raw record | Plan round trip, output comparison and provenance tests |
 
+## FieldSense directive: pre-expansion four-status audit
+
+Operator-facing name: **NLI FieldSense Studio**, powered by the existing bounded NFI engine. The canonical route remains `field-mapping`, the 45th workspace; this is an extension of the shared parser model rather than a parallel parser store.
+
+The following audit records the implementation immediately before the expanded FieldSense directive. Statuses describe observed executable behavior, not a visual control or a claim that every future format is supported. Final acceptance must be tied to the operation, controller and client tests below.
+
+| Directive area / inspected implementation | Four-status finding at audit | Gap requiring executable closure |
+| --- | --- | --- |
+| Structural suggestions, corpus frequency, optionality (`field_mapping_suggest.go`) | Implemented and verified | Extend independently reviewable suggestion controls; never approve uncertain meanings |
+| Custom field names, duplication/reorder, mapping presence/null policies (`model.go`, QRW editor) | Implemented and verified | Retain 128-field/name/reserved-metadata limits rather than advertise literal unlimited allocation |
+| Positional, character, byte, line, delimiter, KV, regex, JSON extraction (`internal/fieldmapping`) | Implemented and verified | Preserve original-source Unicode/byte semantics and production parity |
+| First/last/Nth/all occurrence, before/after/between, counts, reverse splits | Not implemented | Add bounded native operations plus controls and negative cases |
+| Ordered split/replace/remove/trim/case/prefix/suffix/nested KV/join/merge | Implemented and verified | Extend conditional merge and explicit source omission without erasing original evidence |
+| KV quote/escape protection, duplicate policy and selected keys | Implemented and verified | Add explicit aliases, all-key extraction and include/exclude lists |
+| Mask/hash/redact in a mapping chain | Not implemented | Native data-only operations and exact preview/runtime tests |
+| Integer/number/bool/timestamp/IP/port/object/array conversions | Implemented and verified | Extend date/email/URL/UUID/custom validator choices; invalid values remain errors |
+| Shared field editor controls for native plans | Implemented and verified | Do not confuse locally rendered options with controller verification |
+| Visual source selection with back-highlighting and automatic extraction trace | Implemented but incomplete | Token/character inspector exists; complete direct selection/actions and reverse evidence highlighting |
+| Independent suggestion accept/edit/reject/regenerate and accept high-confidence | Implemented but incomplete | Existing corpus/profile import is coarse; per-field action history and review required |
+| Contextual help for every advanced control | Implemented but incomplete | General hints exist; add hover and expanded examples with boundary/error explanations |
+| Sixteen-step Guided Builder and Expert mode | Not implemented | Real state/errors/next-action progression plus shared expert plan editor |
+| Native preview→candidate→approval→sealed pack→production adapter | Implemented and verified | Re-run the exact chain with expanded operations; generation alone is insufficient |
+| Published valid parser→repair clone while prior active remains | Not implemented | Existing compatibility-repair endpoint handles blocked packs only; add canonical governed clone workflow |
+| Catalog/priority, rollout/fleet, artifacts and replay integration | Implemented and verified for existing lifecycle fixtures | Verify expanded plan travels the same canonical bundle; browser handoffs are drafts, not deployment acknowledgements |
+| Dedicated resource/cancellation/concurrency isolation for interactive analysis | Implemented but incomplete | Existing size/operation/time bounds remain; verify request cancellation, saturation and configurable limits |
+
+No operation was classified as **UI present but backend functionality missing** merely because its label appeared: native plans were exercised through authoritative preview or rejected as unsupported. Any newly displayed operation without a passing controller/runtime test must receive that status until wired.
+
+### Acceptance evidence map
+
+| Requirement | Executable source / contract |
+| --- | --- |
+| Suggest & Sense proposals and evidence, quoted/compound/nested formats | `internal/controlplane/field_mapping_suggest.go`, `field_mapping_suggest_test.go`; private 51-record corpus test remains untracked/private |
+| Native schema, extraction, transformations, presence and conversion | `internal/fieldmapping`, its unit/fuzz/benchmark tests; `parser-policy` mapping stage tests |
+| Exact source positions in agent and scoped JSON override | `internal/adapter/nfi_source_parity_test.go`, `internal/engine/nfi_source_parity_test.go` |
+| Scoped authority, canonical service inference and invalid guard rejection | `internal/controlplane/field_mapping_scope_test.go` |
+| Exact preview, persistence, administrator review and publication | `internal/controlplane/field_mapping_api_test.go`; expanded `fieldsense_contract_test.go` acceptance supplements this baseline |
+| Canonical bundle installation/hash acknowledgement and client adapter | `internal/controlclient/nfi_mapping_test.go`; existing synchronized-asset contracts |
+| NFI JSONB, scope, nullable/object/array values and revision preservation | `tests/supabase/schema-contract.sh`, generated bootstrap test, genuine R6 SQL→R7 separate-database qualification |
+| Raw selection, help, modes, guided progression and draft handoffs | Browser UI tests must execute the implemented controls; source-marker checks alone do not establish usability |
+| Production parser protected during repair and rollback | Expanded FieldSense lifecycle acceptance must compare prior active bundle before publication and restore it after rollback |
+
 ## Shared architecture
 
 `raw record → bounded NFI plan → extraction → ordered operations → presence/null/type/validation → typed values and evidence`.
@@ -83,3 +125,51 @@ These references explain interoperability and standard-library behavior; they ar
 ## Limitations
 
 NFI does not infer a uniquely correct meaning for every arbitrary log. Suggestions need review, new mapping stages require compatible clients, and malformed quoting, missing required evidence, invalid types, unsupported expressions and exceeded bounds remain failures. Current corpus evidence does not prove universal protocol coverage, zero legal risk or global performance superiority. Validation, fuzz, benchmark, browser, packaging and lifecycle results are recorded only after execution in `V21_R7_TEST_RESULTS.md` and final release evidence.
+
+
+## Canonical integration boundaries
+
+| NLI workspace / route | Shared model or behavior | Acceptance boundary |
+| --- | --- | --- |
+| FieldSense Studio (`field-mapping`) | `mapping_plan` and source cases, same native engine as embedded editor | Draft edits invalidate preview; controller verification is authoritative |
+| Parser Creation (`parser-workspace`) | Handoff of the same parser definition and exact cases | Handoff populates a draft rather than creating a second parser identity |
+| Catalog & Priority (`parsers`) | Revisioned `parser-packs` metadata and sealed runtime pack | Persistence makes draft visible; priority and service scope apply only through governed publication |
+| Assurance (`assurance`) | Mapping preview, complete candidate preview, exact structural output comparison | Generated configuration alone is not a pass |
+| Quarantine Resolution (`quarantine-wizard`) | Selected retained source/evidence ID and shared Steps 3–4 editor | Exact source link, compatible-client acknowledgement and replay remain required |
+| UPES (`upes`) | Existing quarantine/recovery state and persisted candidates | Recovery views do not bypass validation or replace active parser state |
+| Approvals & Rollouts (`rollouts`) | Exact submitted/approved checksum and bundle proposal | Authorized review/publication plus separate rollout approval gates |
+| Parser Fleet Sync (`parser-sync`) | Canonical payload bytes, SHA-256 and desired/applied bundle hash | A successful controller save is not a client acknowledgement |
+| Signed Artifacts & Upgrades (`artifacts`) | Existing signed RPM/config distribution and compatible client release | Mapping definitions do not invent a new signing or installation channel |
+| Field Integrity & Corpus Proof (`field-integrity`) | Existing evidence/corpus checks over actual typed output | Validate generated field coverage rather than counting editor rows |
+| Monitoring/Live Streams (`monitoring`, `streams`) | Existing parser evidence, failure and runtime telemetry | Interactive errors are isolated; existing ingestion/runtime paths remain operational |
+| Output (`outputs`) | Existing destination draft maps generated field names | Output handoff does not silently publish destination or parser changes |
+
+FieldSense changes no existing service identity, primary workspace count or canonical artifact ownership. The dedicated Studio is an on-demand authoring client of bounded native preview APIs; record ingestion does not call the suggestion service. Saved repairs use a separate draft identity, leaving the prior active parser available until the replacement is validated, approved and deployed.
+
+
+### Expanded native toolbox test inventory
+
+`TestFieldSenseToolboxSelectors`, `TestFieldSenseOrderedToolbox`, `TestFieldSenseOutputPoliciesTypesTraceAndImmutability` and `TestFieldSenseEmptyAndBoundedSelections` exercise the expanded native selectors, operation ordering, visibility/type behavior, trace bounds and failed/empty selections. `TestFieldSenseAdvancedPlanLifecycleProductionParity` crosses the controller, storage, exact review/publication, canonical bundle and actual agent engine with email conversion, identifier hashing, filtered all-key extraction, Nth boundary extraction and an intermediate conditional merge. `TestFieldSenseRepairClonePreservesActiveUntilApprovedAndRollsBack` protects the original published parser/hash/bundle, rejects overwrite or unvalidated submission, selects only the approved higher-priority repair and restores the prior exact bundle on rollback. Results are recorded only after these tests execute.
+
+
+## Expanded FieldSense implementation ledger
+
+This ledger follows the pre-expansion audit above. “Implemented and verified” applies to the named fixture/tests, not a guarantee for every unfamiliar format or deployment. Broad capacity and universal-format statements remain outside qualification.
+
+| Capability / four-status result | Executable evidence |
+| --- | --- |
+| Expanded character/word/token, occurrence/boundary/count and delimiter toolbox — Implemented and verified | Native `TestFieldSenseToolboxSelectors` and `TestFieldSenseEmptyAndBoundedSelections`; same engine in preview and production |
+| KV aliases/assignment variants/filtered all-key extraction, quoted/escaped/empty handling — Implemented and verified | Native toolbox tests and advanced controller→actual-agent filtered-object acceptance |
+| Regex groups/all matches and production-compatible syntax — Implemented and verified | Native selector tests; Go RE2 compilation rejects unsupported syntax |
+| Ordered splitting/join/conditional merge/copy/normalize/hash/mask/redact/omit — Implemented and verified | `TestFieldSenseOrderedToolbox`, type/visibility tests and advanced publication acceptance |
+| Custom names/metadata/type/empty/null/intermediate policies — Implemented and verified | Native output-policy/type/immutability tests; email/hash/intermediate exact JSON acceptance |
+| Published mapping repair clone and rollback — Implemented and verified | New distinct identity and reset validation; unchanged original revision/hash/bundle; approved higher-priority repair selected; exact prior bundle restored on rollback |
+| Preview resource isolation — Implemented and verified | Admission concurrency/deadline/cancellation tests; no queued saturation; production execution does not generate authoring traces |
+| Suggest & Sense / Manual Sense, guided/expert controls, help and live source interactions — Implemented and verified in browser fixtures | Expanded browser suite and contracts; advanced-only operations require controller verification |
+| Exact source highlighting — Implemented and verified for authoritative evidence | Native UTF-8 byte spans drive original-source highlights; absent/derived source has no highlight. Local repeated-value search is explicitly a hint until controller verification |
+| Literal unlimited fields, every arbitrary format and every unbounded regex dialect — Not implemented | Intentionally excluded: 128 fields/16 operations and documented bounds; Go RE2 only; ambiguous/malformed inputs remain errors |
+
+No advertised advanced operation should remain **UI present but backend functionality missing**: native-only local previews are explicitly unverified and must cross the authoritative controller gate. A fresh failure or unsupported option must be recorded against this ledger rather than described as validated merely because its control renders.
+
+
+Canonical published parser repair dispatch preserves the original identity: native mapping clones open FieldSense Studio; canonical regex clones open Parser Creation Workspace. Repair metadata and scope remain in the existing parser document. Mapping-only reviewed priority is intentionally separate from legacy parser priority; legacy repair must use the existing Parser Creation/Catalog priority controls and production tests for its chosen selector.
