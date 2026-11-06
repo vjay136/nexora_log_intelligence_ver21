@@ -32,7 +32,7 @@ func TestRequiredTabsAndAPIBackings(t *testing.T) {
 		"/migration/reports", "/config/kv", "/config/static-patterns", "/config/projections", "/config/templates",
 		"/metadata", "/rollouts", "/artifacts", "/rbac/roles", "/audit", "/system",
 		"/assurance/ai-proposal", "/assurance/ai-proposals", "AI remediation review",
-		"Approve as second reviewer", "Create validated parser draft", "ai_proposal_changed",
+		"Approve proposal", "ai-proposal-approve", "Create validated parser draft", "ai_proposal_changed",
 		"Read / processed total", "Parsed / quarantine total", "Cumulative counts use the same authoritative source snapshot",
 	} {
 		if !strings.Contains(app, marker) {
