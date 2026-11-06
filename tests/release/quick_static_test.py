@@ -134,8 +134,10 @@ if "REQUIRE_PREVIOUS=0" in workflow:
 
 rocky_validation = (root / "tests/rocky/validate.sh").read_text(encoding="utf-8")
 for marker in (
-    "previous client must be the genuine Ver21 R7 RPM",
-    "previous controller must be the genuine Ver21 R7 RPM",
+    "previous client must be the genuine Ver21 R8 RPM",
+    "previous controller must be the genuine Ver21 R8 RPM",
+    "${previous_client_release%%.*} == 8 && ${current_client_release%%.*} == 9",
+    "${previous_controller_release%%.*} == 8 && ${current_controller_release%%.*} == 9",
 ):
     if marker not in rocky_validation:
         fail(f"Rocky lifecycle validation is missing previous-release gate {marker!r}")
