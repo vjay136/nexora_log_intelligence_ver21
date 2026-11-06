@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,13 @@ import (
 // shapes are rejected before publication instead of becoming an "active" pack
 // that can never be synchronized.
 func runtimeParserPackForDocument(doc metastore.Document) (*parserpolicy.ParserPack, json.RawMessage, error) {
+	return runtimeParserPackForDocumentContext(context.Background(), doc)
+}
+
+func runtimeParserPackForDocumentContext(ctx context.Context, doc metastore.Document) (*parserpolicy.ParserPack, json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(doc.Payload, &envelope); err != nil {
 		return nil, nil, fmt.Errorf("parser payload is not a JSON object")
@@ -32,7 +40,7 @@ func runtimeParserPackForDocument(doc metastore.Document) (*parserpolicy.ParserP
 		}
 		packDoc := doc
 		packDoc.ID = pack.ID
-		return normalizeRuntimeParserPack(packDoc, pack)
+		return normalizeRuntimeParserPackContext(ctx, packDoc, pack)
 	}
 
 	// Older Assurance releases persisted the declarative parser and its held-
@@ -66,11 +74,14 @@ func runtimeParserPackForDocument(doc metastore.Document) (*parserpolicy.ParserP
 		if approvedChecksum != "" && approvedChecksum != actualChecksum {
 			return nil, nil, fmt.Errorf("approved parser checksum does not match the validated candidate")
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		pack, err := assuranceRuntimePack(doc.ID, version, doc.CreatedBy, definition, cases)
 		if err != nil {
 			return nil, nil, fmt.Errorf("validated legacy Assurance parser is runtime-incompatible: %w", err)
 		}
-		return normalizeRuntimeParserPack(doc, pack)
+		return normalizeRuntimeParserPackContext(ctx, doc, pack)
 	}
 
 	// Imported NLI packs are stored directly as the document payload. Accept an
@@ -87,7 +98,7 @@ func runtimeParserPackForDocument(doc metastore.Document) (*parserpolicy.ParserP
 		// contents and rules are still verified below.
 		packDoc := doc
 		packDoc.ID = direct.ID
-		return normalizeRuntimeParserPack(packDoc, direct)
+		return normalizeRuntimeParserPackContext(ctx, packDoc, direct)
 	}
 
 	// The original Parser Catalog editor stored a small envelope containing
@@ -147,7 +158,7 @@ func runtimeParserPackForDocument(doc metastore.Document) (*parserpolicy.ParserP
 	}
 	packDoc := doc
 	packDoc.ID = id
-	return normalizeRuntimeParserPack(packDoc, pack)
+	return normalizeRuntimeParserPackContext(ctx, packDoc, pack)
 }
 
 // Legacy catalog records may use a human-facing catalog ID and a distinct
@@ -161,6 +172,13 @@ func legacyRuntimeIdentityMatches(envelope map[string]json.RawMessage, catalogID
 }
 
 func normalizeRuntimeParserPack(doc metastore.Document, pack *parserpolicy.ParserPack) (*parserpolicy.ParserPack, json.RawMessage, error) {
+	return normalizeRuntimeParserPackContext(context.Background(), doc, pack)
+}
+
+func normalizeRuntimeParserPackContext(ctx context.Context, doc metastore.Document, pack *parserpolicy.ParserPack) (*parserpolicy.ParserPack, json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if pack == nil {
 		return nil, nil, fmt.Errorf("runtime parser pack is missing")
 	}
@@ -210,7 +228,7 @@ func normalizeRuntimeParserPack(doc metastore.Document, pack *parserpolicy.Parse
 	if verified.ReviewState != parserpolicy.ReviewStateApproved && verified.ReviewState != parserpolicy.ReviewStateActivated {
 		return nil, nil, fmt.Errorf("runtime parser must be approved or activated")
 	}
-	validated, err := familyprofile.ValidateManagedPackBytes(doc.ID, encoded)
+	validated, err := familyprofile.ValidateManagedPackBytesContext(ctx, doc.ID, encoded)
 	if err != nil {
 		return nil, nil, fmt.Errorf("runtime parser failed production validation: %w", err)
 	}

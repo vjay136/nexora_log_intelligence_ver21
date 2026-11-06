@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -360,10 +361,12 @@ func loadLegacyParsers(reg *registry.Registry, directory string) error {
 }
 
 type cursor struct {
-	Offset int64  `json:"offset"`
-	Line   int64  `json:"line"`
-	Device uint64 `json:"device"`
-	Inode  uint64 `json:"inode"`
+	Generation int64  `json:"generation,omitempty"`
+	Events     int64  `json:"events,omitempty"`
+	Offset     int64  `json:"offset"`
+	Line       int64  `json:"line"`
+	Device     uint64 `json:"device"`
+	Inode      uint64 `json:"inode"`
 }
 
 type tail struct {
@@ -631,6 +634,9 @@ func inputIntegrityErrors(value string) []string {
 
 // Run starts the agent loop with the full v4 pipeline.
 func Run(ctx context.Context, c Config, once bool) (runErr error) {
+	if err := validateDistinctInputs(c.Inputs); err != nil {
+		return err
+	}
 	geo, err := enrichment.Open(c.Enrichment)
 	if err != nil {
 		return fmt.Errorf("GeoIP initialization: %w", err)
@@ -641,6 +647,11 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 	if err := os.MkdirAll(c.StateDir, 0700); err != nil {
 		return err
 	}
+	unlockState, err := lockAgentState(c.StateDir)
+	if err != nil {
+		return fmt.Errorf("agent state already in use or cannot be locked: %w", err)
+	}
+	defer func() { runErr = errors.Join(runErr, unlockState()) }()
 	runtimeParserDir := parserPackDirectory(c)
 	for _, dir := range []string{runtimeParserDir, filepath.Join(runtimeParserDir, "quarantine")} {
 		if err := os.MkdirAll(dir, 0750); err != nil {
@@ -679,6 +690,11 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		}
 	}
 	ensureLocalQuarantineOutput(&c)
+	for i := range c.Outputs {
+		if c.Outputs[i].Type == "file" {
+			c.Outputs[i].DeliveryStatePath = output.DeliveryJournalPath(c.StateDir, c.Outputs[i].Path, c.Outputs[i].PathTemplate)
+		}
+	}
 
 	// Initialize v5 parser - now default unless explicitly disabled
 	var v5Adapter *adapter.ParserPackAdapter
@@ -765,8 +781,26 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		return err
 	}
 
+	hostname, _ := os.Hostname()
+	nodeID := hostname
+	if data, readErr := os.ReadFile("/var/lib/nli-control-client/install.id"); readErr == nil && strings.TrimSpace(string(data)) != "" {
+		nodeID = strings.TrimSpace(string(data))
+	}
+	acknowledgeSource := func(path string, state cursor) error {
+		source := deliverySourceIdentity(nodeID, path, state)
+		if v5Router != nil {
+			return v5Router.AcknowledgeSource(source, uint64(state.Events))
+		}
+		return legacyRouter.AcknowledgeSource(source, uint64(state.Events))
+	}
+	for path, state := range states {
+		if state.Generation != 0 {
+			if err := acknowledgeSource(path, state); err != nil {
+				return fmt.Errorf("recover local delivery receipts: %w", err)
+			}
+		}
+	}
 	var runtimeMu sync.Mutex
-	var quarantineMu sync.Mutex
 	// Persist only acknowledged events. Buffered multiline input stays replayable
 	// from the previous durable offset if the process stops before emission.
 	// A completed event may precede a new, still-pending multiline record in the
@@ -787,6 +821,12 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		runtimeMu.Unlock()
 		if checkpointErr != nil {
 			return checkpointErr
+		}
+		receiptErr := acknowledgeSource(t.input.Path, state)
+		// The input is already durable. Receipt cleanup is safe to retry and
+		// cannot turn an acknowledged input into another customer event.
+		if receiptErr != nil {
+			fmt.Fprintf(os.Stderr, "nli: local delivery receipt cleanup pending: %v\n", receiptErr)
 		}
 		if v5Router != nil {
 			// Parser telemetry is an independent observability channel. A temporary
@@ -823,11 +863,6 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		return 0, 0
 	}
 
-	hostname, _ := os.Hostname()
-	nodeID := hostname
-	if data, readErr := os.ReadFile("/var/lib/nli-control-client/install.id"); readErr == nil && strings.TrimSpace(string(data)) != "" {
-		nodeID = strings.TrimSpace(string(data))
-	}
 	metrics := &counters{}
 	batchSize := sourceBatchLineLimit(c)
 	sourceWorkers := sourceWorkerLimit(c)
@@ -844,6 +879,19 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 			service = parserService
 		}
 		started := time.Now()
+		deliveryID := fmt.Sprintf("%s%016x", deliverySourceIdentity(nodeID, t.input.Path, t.state), uint64(t.state.Events))
+		quarantineID := fmt.Sprintf("%x", sha256.Sum256([]byte(deliveryID)))
+		retainRaw := func(record quarantine.Record) error {
+			record.ID = "q-" + quarantineID[:32]
+			payload, err := json.Marshal(record)
+			if err != nil {
+				return err
+			}
+			if v5Router != nil {
+				return v5Router.RetainLocalQuarantine(payload, t.input.Service, deliveryID)
+			}
+			return legacyRouter.RetainLocalQuarantine(payload, t.input.Service, deliveryID)
+		}
 		source := engine.Source{Hostname: hostname, Service: service, File: t.input.Path, LineNumber: t.state.Line + 1}
 		quarantinePaths := quarantinePathsForFamily(c.Outputs, t.input.Service)
 		integrityErrors := inputIntegrityErrors(line)
@@ -868,14 +916,10 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 				if v5Result.Quarantined && len(quarantinePaths) > 0 {
 					metadata := v5Result.ParseTelemetry
 					record := quarantine.New(nodeID, t.input.Service, t.input.Path, uint64(t.state.Line+1), line, metadata.PolicyHash, metadata.AttemptCount, metadata.ErrorCodes, time.Now().UTC())
+					record.ID = "q-" + quarantineID[:32]
 					metadata.QuarantineID, metadata.QuarantineStatus, metadata.QuarantineAttempt = record.ID, record.Status, record.AttemptCount
-					for _, quarantinePath := range quarantinePaths {
-						quarantineMu.Lock()
-						err := quarantine.Append(quarantinePath, record)
-						quarantineMu.Unlock()
-						if err != nil {
-							return fmt.Errorf("persist raw quarantine record to %s: %w", quarantinePath, err)
-						}
+					if err := retainRaw(record); err != nil {
+						return fmt.Errorf("queue raw quarantine retention: %w", err)
 					}
 				}
 				routingResult := &routing.V5ParseResult{
@@ -884,7 +928,7 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 				}
 				persister.Mark()
 				outputStarted := time.Now()
-				if err := writeOutput(func() error { return v5Router.RouteV5ForFamily(routingResult, t.input.Service) }); err != nil {
+				if err := writeOutput(func() error { return v5Router.RouteV5Identified(routingResult, t.input.Service, deliveryID) }); err != nil {
 					t.stream.addOutput(time.Since(outputStarted))
 					journal.outputFailure(t.input.Path, err.Error())
 					return err
@@ -957,14 +1001,10 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		var quarantineRecord *quarantine.Record
 		if (envelope.Meta.Route == "quarantine" || envelope.Meta.Route == "unknown") && len(quarantinePaths) > 0 {
 			record := quarantine.New(nodeID, t.input.Service, t.input.Path, uint64(t.state.Line+1), line, "", 1, envelope.Meta.Errors, time.Now().UTC())
+			record.ID = "q-" + quarantineID[:32]
 			quarantineRecord = &record
-			for _, quarantinePath := range quarantinePaths {
-				quarantineMu.Lock()
-				err := quarantine.Append(quarantinePath, record)
-				quarantineMu.Unlock()
-				if err != nil {
-					return fmt.Errorf("persist raw quarantine record to %s: %w", quarantinePath, err)
-				}
+			if err := retainRaw(record); err != nil {
+				return fmt.Errorf("queue raw quarantine retention: %w", err)
 			}
 		}
 
@@ -990,7 +1030,7 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 
 			outputStarted := time.Now()
 			if err := writeOutput(func() error {
-				return v5Router.RouteLegacyForFamily(sanitizedData, telemetryMeta, envelope.Meta.Route, t.input.Service)
+				return v5Router.RouteLegacyIdentified(sanitizedData, telemetryMeta, envelope.Meta.Route, t.input.Service, deliveryID)
 			}); err != nil {
 				t.stream.addOutput(time.Since(outputStarted))
 				journal.outputFailure(t.input.Path, err.Error())
@@ -1004,7 +1044,12 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 				return err
 			}
 			outputStarted := time.Now()
-			if err := writeOutput(func() error { return legacyRouter.WriteForFamily(encoded, envelope.Meta.Route, t.input.Service) }); err != nil {
+			if err := writeOutput(func() error {
+				if envelope.Meta.Route == "unknown" || envelope.Meta.Route == "quarantine" {
+					return nil
+				}
+				return legacyRouter.WriteIdentified(encoded, envelope.Meta.Route, t.input.Service, deliveryID)
+			}); err != nil {
 				t.stream.addOutput(time.Since(outputStarted))
 				journal.outputFailure(t.input.Path, err.Error())
 				return err
@@ -1035,6 +1080,7 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		return nil
 	}
 	emitSelected := func(t *tail, line string, truncated, oversized bool) error {
+		t.state.Events++
 		keep, parserService := selectionMatches(t.input.Selection, line)
 		if !keep {
 			atomic.AddUint64(&metrics.filtered, 1)
@@ -1196,6 +1242,16 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 				t.hasCheckpoint = true
 			}
 			t.file = f
+			if t.state.Generation == 0 {
+				t.state.Generation = time.Now().UnixNano()
+				runtimeMu.Lock()
+				states[t.input.Path] = t.state
+				e = checkpoint(statePath, states)
+				runtimeMu.Unlock()
+				if e != nil {
+					return e
+				}
+			}
 			journal.event("source_opened", t.input.Path, "")
 			warned.Delete(t.input.Path)
 		}
@@ -1207,6 +1263,15 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		if info.Size() < t.state.Offset {
 			t.state.Offset = 0
 			t.state.Line = 0
+			t.state.Events = 0
+			t.state.Generation = time.Now().UnixNano()
+			runtimeMu.Lock()
+			states[t.input.Path] = t.state
+			e = checkpoint(statePath, states)
+			runtimeMu.Unlock()
+			if e != nil {
+				return e
+			}
 		}
 		if _, e = t.file.Seek(t.state.Offset, io.SeekStart); e != nil {
 			return e
@@ -1379,9 +1444,9 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		case <-persistTick.C:
 			persister.SaveIfDue()
 		case <-aiTick.C:
-			if err := discoverer.RunBatch(ctx, clusterSizes(deps.Miner)); err != nil {
-				fmt.Fprintf(os.Stderr, "nli: AI discovery: %v\n", err)
-			}
+			// Optional provider latency must not stop reading existing sources.
+			// The discoverer admits one bounded worker and uses this run context.
+			discoverer.StartBatch(ctx, clusterSizes(deps.Miner))
 		case <-watcherWake:
 		case <-reconcileTick.C:
 		}

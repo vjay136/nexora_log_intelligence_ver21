@@ -2,11 +2,15 @@
 
 ## Source and release boundary
 
-- Authoritative R7 source baseline: verified Ver21 R6 (`v21.0.0-6`) at commit `905ce45bca9d54d2fd8fcf4505ba21e3e274a611`.
-- Ver20 R6 remains historical migration evidence only and is not the R7 implementation base.
-- Working release: Ver21 `21.0.0-7` in the dedicated Ver21 repository.
+- Authoritative R8 source baseline: verified Ver21 R7 (`v21.0.0-7`) at commit `bc6b17a20e1a7b2c11903df440a14ad9134697d8`.
+- Ver20 R6 remains historical migration evidence only and is not the R8 implementation base.
+- Working release: Ver21 `21.0.0-8` in the dedicated Ver21 repository.
 - Compatibility boundary: retain RPM package identities, systemd units, and state/configuration paths so an in-place upgrade does not fork production state. Published artifacts use Ver21-only filenames.
 - No feature is permitted to fabricate parser readiness, telemetry, client acknowledgements, or AI results.
+
+## R8: adaptive application design
+
+Extend the existing vanilla JavaScript/Vite application with a central eight-style registry, shared design tokens and an Appearance Design Studio. Apply presentation changes globally without replacing routes, business logic, permissions or canonical parser state. Preserve the full R7 FieldSense baseline. See [R8 design audit](V21_R8_DESIGN_ENGINE_DESIGN.md) and [operator guide](V21_R8_DESIGN_ENGINE_GUIDE.md). Qualification is pending until source/browser/package/Rocky gates execute.
 
 ## R7: NFI — Native Field Intelligence
 

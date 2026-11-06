@@ -224,6 +224,44 @@ test('FieldSense manual controls keep live output and native controller evidence
   expect(JSON.parse(await page.locator('#nfi-parser-json').inputValue()).mapping_plan.fields[0]).toMatchObject({name:'mail_service',method:'word',source:'2'});
 });
 
+test('R8 packaged Design Studio switches all eight styles without reposting or replacing a mapping draft', async ({ page }) => {
+  test.setTimeout(90_000);
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  await page.getByRole('button',{name:'Manual Sense Mode',exact:true}).click();
+  await page.locator('#nfi-raw').fill('mailnode smtp 007');
+  await page.locator('#nfi-raw').evaluate(node=>node.dataset.designProof='preserved');
+  await page.getByRole('button',{name:'Add Custom Field',exact:true}).click();
+  const row=page.locator('[data-qrw-row]').first();
+  await row.locator('[data-qrw-key=name]').fill('mail_service');
+  await row.locator('[data-qrw-key=method]').selectOption('word');
+  await row.locator('[data-qrw-key=source]').fill('2');
+  await row.locator('[data-qrw-key=policy]').selectOption('required');
+  const writes=[];
+  page.on('request',request=>{if(['POST','PUT','PATCH','DELETE'].includes(request.method())&&new URL(request.url()).pathname.startsWith('/api/v1/'))writes.push(new URL(request.url()).pathname);});
+  const styles=['skeuomorphism','minimalism','glassmorphism','neumorphism','claymorphism','bento-grid','retro-y2k','liquid-glass'];
+  for(const style of styles){
+    await page.getByRole('button',{name:'Appearance',exact:true}).click();
+    const studio=page.locator('#design-studio');
+    for(const mode of ['dark','light']){
+      await studio.locator('#design-mode').selectOption(mode);
+      await studio.locator(`[data-design-action=apply][data-style="${style}"]`).click();
+      await expect(page.locator('html')).toHaveAttribute('data-design',style);
+      await expect(page.locator('html')).toHaveAttribute('data-color-mode',mode);
+    }
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#nfi-raw')).toHaveValue('mailnode smtp 007');
+    await expect(page.locator('#nfi-raw')).toHaveAttribute('data-design-proof','preserved');
+    await expect(row.locator('[data-qrw-key=name]')).toHaveValue('mail_service');
+  }
+  expect(writes.filter(path=>path!=='/api/v1/communications/browser-heartbeat')).toEqual([]);
+  const responsePromise=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/assurance/mapping-preview'&&response.request().method()==='POST');
+  await page.getByRole('button',{name:'Verify on controller',exact:true}).click();
+  const response=await responsePromise;
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toMatchObject({passed:true,actual:{mail_service:'smtp'}});
+});
+
 test('legacy Assurance regressions: complete valid JSON, traversal, manual retention, exact log download and purge', async ({ page }) => {
   test.setTimeout(90_000);
   await login(page);

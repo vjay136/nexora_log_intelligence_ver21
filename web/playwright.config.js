@@ -8,6 +8,7 @@ export default defineConfig({
   retries: 0,
   reporter: [['line']],
   use: {
+    browserName: process.env.NLI_BROWSER_NAME || 'chromium',
     baseURL: process.env.NLI_BASE_URL || 'http://127.0.0.1:12382',
     // The Rocky two-node gate proves the generated private CA separately with
     // curl --cacert before Chromium runs. New Chromium builds use their own

@@ -44,10 +44,13 @@ func (router *V5Router) RouteV5(result *V5ParseResult) error {
 // RouteV5ForFamily preserves per-input output isolation for enterprise
 // deployments while telemetry continues to use its independent channel.
 func (router *V5Router) RouteV5ForFamily(result *V5ParseResult, family string) error {
+	return router.RouteV5Identified(result, family, "")
+}
+func (router *V5Router) RouteV5Identified(result *V5ParseResult, family, id string) error {
 	if result == nil || result.ParseTelemetry == nil {
 		return fmt.Errorf("v5 routing requires ParseTelemetry")
 	}
-	return errors.Join(router.RouteV5CustomerForFamily(result, family), router.RouteV5Telemetry(result))
+	return errors.Join(router.routeV5CustomerIdentified(result, family, id), router.RouteV5Telemetry(result))
 }
 
 // RouteV5Customer sends only a parsed customer payload. Quarantine records are
@@ -57,6 +60,12 @@ func (router *V5Router) RouteV5Customer(result *V5ParseResult) error {
 }
 
 func (router *V5Router) RouteV5CustomerForFamily(result *V5ParseResult, family string) error {
+	return router.routeV5CustomerIdentified(result, family, "")
+}
+func (router *V5Router) RouteV5CustomerIdentified(result *V5ParseResult, family, id string) error {
+	return router.routeV5CustomerIdentified(result, family, id)
+}
+func (router *V5Router) routeV5CustomerIdentified(result *V5ParseResult, family, id string) error {
 	if result == nil || result.ParseTelemetry == nil {
 		return fmt.Errorf("v5 routing requires ParseTelemetry")
 	}
@@ -73,7 +82,7 @@ func (router *V5Router) RouteV5CustomerForFamily(result *V5ParseResult, family s
 		if err != nil {
 			return err
 		}
-		customerErr = router.customerRouter.WriteForFamily(payload, "normal", family)
+		customerErr = router.customerRouter.WriteIdentified(payload, "normal", family, id)
 		// WriteForFamily admits the record to bounded destination queues. The
 		// subsequent Flush is the durable delivery barrier, so do not represent
 		// queue admission as a destination acknowledgement.
@@ -96,13 +105,16 @@ func (router *V5Router) RouteLegacy(eventData map[string]interface{}, telemetryM
 }
 
 func (router *V5Router) RouteLegacyForFamily(eventData map[string]interface{}, telemetryMetadata map[string]interface{}, route, family string) error {
+	return router.RouteLegacyIdentified(eventData, telemetryMetadata, route, family, "")
+}
+func (router *V5Router) RouteLegacyIdentified(eventData map[string]interface{}, telemetryMetadata map[string]interface{}, route, family, id string) error {
 	var customerErr error
 	if (route == "normal" || route == "warning") && len(eventData) > 0 {
 		payload, err := json.Marshal(telemetry.EventPayload{Fields: eventData})
 		if err != nil {
 			return err
 		}
-		customerErr = router.customerRouter.WriteForFamily(payload, route, family)
+		customerErr = router.customerRouter.WriteIdentified(payload, route, family, id)
 	}
 	var telemetryErr error
 	if len(telemetryMetadata) > 0 {
@@ -128,7 +140,16 @@ func (router *V5Router) RouteV5Telemetry(result *V5ParseResult) error {
 	return router.telemetryRouter.Write(metadata, "telemetry")
 }
 
-func (router *V5Router) FlushCustomer() error  { return router.customerRouter.Flush() }
+func (router *V5Router) FlushCustomer() error { return router.customerRouter.Flush() }
+func (router *V5Router) AcknowledgeDeliveries(ids []string) error {
+	return router.customerRouter.AcknowledgeDeliveries(ids)
+}
+func (router *V5Router) AcknowledgeSource(source string, ordinal uint64) error {
+	return router.customerRouter.AcknowledgeSource(source, ordinal)
+}
+func (router *V5Router) RetainLocalQuarantine(payload []byte, family, id string) error {
+	return router.customerRouter.RetainLocalQuarantine(payload, family, id)
+}
 func (router *V5Router) FlushTelemetry() error { return router.telemetryRouter.Flush() }
 
 // QueueStats aggregates the independent customer and metadata destination
@@ -148,6 +169,18 @@ func (router *V5Router) Close() error {
 		telemetryErr = router.telemetryRouter.Close()
 	}
 	return errors.Join(customerErr, telemetryErr)
+}
+func (router *V5Router) CloseCustomer() error {
+	if router.customerRouter == nil {
+		return nil
+	}
+	return router.customerRouter.Close()
+}
+func (router *V5Router) CloseTelemetry() error {
+	if router.telemetryRouter == nil {
+		return nil
+	}
+	return router.telemetryRouter.Close()
 }
 
 func (router *V5Router) Flush() error {

@@ -52,6 +52,7 @@ func (s *Server) handleFieldMappingSuggest(w http.ResponseWriter, r *http.Reques
 	var request struct {
 		Samples   []string `json:"samples"`
 		Separator string   `json:"separator"`
+		Service   string   `json:"service,omitempty"`
 	}
 	if err := decodeJSON(r, &request, 2<<20); err != nil || len(request.Samples) == 0 || len(request.Samples) > 100 {
 		jsonError(w, "NFI learning requires 1..100 sample records within a 2 MiB request", http.StatusBadRequest)
@@ -70,7 +71,12 @@ func (s *Server) handleFieldMappingSuggest(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	if len(request.Service) > 256 {
+		jsonError(w, "runtime service scope exceeds bounds", http.StatusBadRequest)
+		return
+	}
 	profiles, diagnostics := nfiSuggestCorpus(ctx, request.Samples, request.Separator)
+	runtimeInfo, runtimeFields := s.automaticSuggestionEvidence(ctx, request.Samples, request.Service)
 	if fieldSenseContextError(w, ctx) {
 		return
 	}
@@ -78,7 +84,7 @@ func (s *Server) handleFieldMappingSuggest(w http.ResponseWriter, r *http.Reques
 	if len(profiles) > 0 {
 		fields = profiles[0].Fields
 	}
-	jsonOK(w, map[string]any{"engine": "nfi-v1", "sample_count": len(request.Samples), "fields": fields, "profiles": profiles, "diagnostics": diagnostics, "plan": fieldmapping.Plan{Version: 1, Fields: fields}, "persisted": false, "activated": false, "learning": "Deterministic structural suggestions; review field labels, optionality and ambiguity before validation or publication."})
+	jsonOK(w, map[string]any{"engine": "nfi-v1", "sample_count": len(request.Samples), "fields": fields, "profiles": profiles, "runtime": runtimeInfo, "runtime_field_suggestions": runtimeFields, "diagnostics": diagnostics, "plan": fieldmapping.Plan{Version: 1, Fields: fields}, "persisted": false, "activated": false, "learning": "Deterministic structural suggestions; review field labels, optionality and ambiguity before validation or publication."})
 }
 
 func nfiSuggestCorpus(ctx context.Context, samples []string, separator string) ([]nfiSuggestionProfile, []string) {

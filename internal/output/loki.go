@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,14 +15,16 @@ import (
 
 // LokiWriter batches log entries and pushes to a Loki endpoint.
 type LokiWriter struct {
-	cfg       Config
-	batch     []lokiEntry
-	mu        sync.Mutex
-	flushMu   sync.Mutex
-	client    *http.Client
-	ticker    *time.Ticker
-	done      chan struct{}
-	closeOnce sync.Once
+	now           func() time.Time
+	lastTimestamp int64
+	cfg           Config
+	batch         []lokiEntry
+	mu            sync.Mutex
+	flushMu       sync.Mutex
+	client        *http.Client
+	ticker        *time.Ticker
+	done          chan struct{}
+	closeOnce     sync.Once
 }
 
 type lokiEntry struct {
@@ -40,6 +43,7 @@ type lokiPush struct {
 
 // NewLokiWriter creates a Loki writer and starts the flush goroutine.
 func NewLokiWriter(cfg Config) (*LokiWriter, error) {
+	cfg.Type = "loki"
 	client, err := newHTTPClient(cfg)
 	if err != nil {
 		return nil, err
@@ -52,6 +56,7 @@ func NewLokiWriter(cfg Config) (*LokiWriter, error) {
 		flushSec = 5
 	}
 	w := &LokiWriter{
+		now:    time.Now,
 		cfg:    cfg,
 		client: client,
 		ticker: time.NewTicker(time.Duration(flushSec) * time.Second),
@@ -67,8 +72,16 @@ func (w *LokiWriter) Write(envelope []byte, route string) error {
 	if !acceptsRemoteRoute(route) || !acceptsRoutes(w.cfg.Routes, route) {
 		return nil
 	}
-	ts := time.Now().UnixNano()
 	w.mu.Lock()
+	ts := w.now().UnixNano()
+	if ts <= w.lastTimestamp {
+		if w.lastTimestamp == math.MaxInt64 {
+			w.mu.Unlock()
+			return fmt.Errorf("Loki timestamp sequence exhausted")
+		}
+		ts = w.lastTimestamp + 1
+	}
+	w.lastTimestamp = ts
 	w.batch = append(w.batch, lokiEntry{ts: ts, message: string(envelope)})
 	full := len(w.batch) >= w.cfg.BatchSize
 	w.mu.Unlock()

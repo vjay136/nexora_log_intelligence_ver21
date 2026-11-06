@@ -6,7 +6,13 @@ import vm from 'node:vm';
 const app=fs.readFileSync(new URL('../web/app.js',import.meta.url),'utf8');
 const helpers=app.slice(app.indexOf('  const QRW_RESERVED='),app.indexOf('  function setupQRWStepPanels('));
 const extraction=app.slice(app.indexOf('  function qrwSlice('),app.indexOf('  async function qrwValidateCandidate('));
-function engine(){return vm.runInNewContext(`${helpers}\n${extraction}\n({field:qrwField,suggest:qrwSuggestedFields,extract:qrwExtract,tokens:qrwTokens,pairs:qrwPairs,plan:fields=>{state.qrwFields=fields;return qrwPlan();}})`,{TextEncoder,TextDecoder,state:{qrwFields:[]}});}
+function engine(){return vm.runInNewContext(`${helpers}\n${extraction}\n({field:qrwField,suggest:qrwSuggestedFields,merge:qrwMergeControllerSuggestions,extract:qrwExtract,tokens:qrwTokens,pairs:qrwPairs,plan:fields=>{state.qrwFields=fields;return qrwPlan();}})`,{TextEncoder,TextDecoder,state:{qrwFields:[]}});}
+
+test('Controller suggestions retain operator labels, ordered transformations and extra manual fields',()=>{
+ const e=engine(),existing=[e.field({name:'my_service',label:'My service',method:'position',source:'2',operations:[{op:'prefix',value:'prod-'}]}),e.field({name:'audit_tag',method:'constant',default_value:'manual'})];
+ const fields=e.merge([{name:'service',method:'position',source:'2',type:'string'},{name:'host',method:'position',source:'1',type:'string'}],existing);
+ assert.equal(fields.length,3);assert.equal(fields[0].name,'my_service');assert.equal(fields[0].label,'My service');assert.equal(fields[0].operations[0].value,'prod-');assert.ok(fields.some(field=>field.name==='audit_tag'));
+});
 
 test('NFI suggests compound labels and every colon-separated key without a raw-line special case',()=>{
   const e=engine(),raw='20261201 102030123+0530 mailnode smtp 42 0 140026854221568 Note;DeliveryEvent status=failed:reason=notneeded:server=cloud';

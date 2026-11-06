@@ -79,7 +79,7 @@ func TestAgentExactSMTPProductionRoute(t *testing.T) {
 	}
 	if metadata.ParserID != "nli_reviewed_smtp_out/reviewed_smtp_out" || metadata.PolicyHash == "" ||
 		metadata.InputFieldCount != 14 || metadata.OutputFieldCount != 14 || metadata.SourceFieldCount != 14 ||
-		metadata.EvidenceCoverage != 1 || metadata.AttemptCount != 2 || metadata.StageCount != 3 ||
+		metadata.EvidenceCoverage != 1 || metadata.AttemptCount != 3 || len(metadata.OrderedAttempts) != 3 || metadata.StageCount != 3 || len(metadata.ErrorCodes) != 0 ||
 		metadata.Route != "normal" || metadata.Result != "success" || len(metadata.DeliveryAcks) != 1 {
 		t.Fatalf("incomplete production telemetry: %+v", metadata)
 	}

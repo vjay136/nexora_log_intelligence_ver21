@@ -108,15 +108,15 @@ build_rpm_fixture() {
     -e NLI_VERSION_OVERRIDE="$version" -e NLI_RELEASE_OVERRIDE="$release" \
     "$RPM_BUILD_IMAGE" bash -lc "$rpm_command"
 }
-# Synthetic Ver21 R6 payload for local package lifecycle mechanics only;
-# tag CI downloads the genuine published v21.0.0-6 RPMs.
-build_rpm_fixture "$work/previous" "$work/previous-work" 21.0.0 6
+# Synthetic Ver21 R7 payload for local package lifecycle mechanics only;
+# tag CI downloads the genuine published v21.0.0-7 RPMs.
+build_rpm_fixture "$work/previous" "$work/previous-work" 21.0.0 7
 build_rpm_fixture "$work/pass1" "$work/pass1-work" "$NLI_VERSION" "$NLI_RELEASE"
 build_rpm_fixture "$work/pass2" "$work/pass2-work" "$NLI_VERSION" "$NLI_RELEASE"
 for name in nli_client_ver21.rpm nli_controller_agent_ver21.rpm webview_ver21.zip webapp_ver21.zip install-controller-ver21.sh install-client-ver21.sh install-controller-aws-ver21.sh install-client-aws-ver21.sh install-controller-aws-cloudflare-ver21.sh aws-rhel-preflight-ver21.sh aws-security-group-plan-ver21.sh setup-cloudflare-tunnel-v21.sh verify-cloudflare-tunnel-v21.sh uninstall-cloudflare-tunnel-v21.sh cloudflare-quick-diagnosis-v21.sh vercel-preflight.mjs uninstall-controller-ver21.sh uninstall-client-ver21.sh INSTALLATION_AND_CONFIGURATION.md VERCEL_DEPLOYMENT.md CLOUDFLARE_PAGES_DEPLOYMENT.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS RELEASE_ID; do
   cmp -s "$work/pass1/$name" "$work/pass2/$name" || { echo "fixture output is non-deterministic: $name" >&2; exit 1; }
 done
-for name in All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md VER21_IMPLEMENTATION_PLAN.md; do
+for name in All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md; do
   cmp -s "$work/pass1/$name" "$work/pass2/$name" || { echo "fixture output is non-deterministic: $name" >&2; exit 1; }
 done
 cp -a "$work/pass1/." "$work/final/"

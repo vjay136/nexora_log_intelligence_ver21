@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that the current Ver21 R7 release documents ship everywhere."""
+"""Verify that the current Ver21 R8 release documents ship everywhere."""
 
 from __future__ import annotations
 
@@ -26,12 +26,19 @@ DOCUMENTS = {
     "V21_R7_TEST_RESULTS.md": "docs/V21_R7_TEST_RESULTS.md",
     "V21_R7_MAPPING_DESIGN.md": "docs/V21_R7_MAPPING_DESIGN.md",
     "V21_R7_FIELD_MAPPING_GUIDE.md": "docs/V21_R7_FIELD_MAPPING_GUIDE.md",
+    "V21_R8_RELEASE_NOTES.md": "docs/V21_R8_RELEASE_NOTES.md",
+    "V21_R8_TEST_RESULTS.md": "docs/V21_R8_TEST_RESULTS.md",
+    "V21_R8_DESIGN_ENGINE_DESIGN.md": "docs/V21_R8_DESIGN_ENGINE_DESIGN.md",
+    "V21_R8_DESIGN_ENGINE_GUIDE.md": "docs/V21_R8_DESIGN_ENGINE_GUIDE.md",
+    "V21_R8_OUTPUT_ACCOUNTING_GUIDE.md": "docs/V21_R8_OUTPUT_ACCOUNTING_GUIDE.md",
+    "V21_R8_AI_PROVIDER_GUIDE.md": "docs/V21_R8_AI_PROVIDER_GUIDE.md",
+    "nli-output-audit.py": "scripts/nli-output-audit.py",
     "VER21_IMPLEMENTATION_PLAN.md": "docs/VER21_IMPLEMENTATION_PLAN.md",
 }
 
 
 def fail(message: str) -> None:
-    raise SystemExit(f"Ver21 R7 release-doc packaging: FAIL: {message}")
+    raise SystemExit(f"Ver21 R8 release-doc packaging: FAIL: {message}")
 
 
 def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
@@ -45,6 +52,12 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
                 fail(f"{name} is missing or differs in {target_dir}")
 
     expected_claims = {
+        "V21_R8_AI_PROVIDER_GUIDE.md": ("encrypted_inline", "env_ref", "file_ref", "SSE", "not verified"),
+        "V21_R8_OUTPUT_ACCOUNTING_GUIDE.md": ("49", "--baseline", "at-least-once", "source"),
+        "V21_R8_RELEASE_NOTES.md": ("21.0.0-8", "v21.0.0-7", "eight", "bounded"),
+        "V21_R8_TEST_RESULTS.md": ("21.0.0-8", "v21.0.0-7", "SOURCE_REVISION", "SHA256SUMS"),
+        "V21_R8_DESIGN_ENGINE_DESIGN.md": ("R7 audit", "Issue-to-improvement", "Original implementation", "Limits"),
+        "V21_R8_DESIGN_ENGINE_GUIDE.md": ("Appearance", "eight", "preferences", "rollback"),
         "V21_R7_RELEASE_NOTES.md": ("21.0.0-7", "v21.0.0-6", "mapping", "bounded"),
         "V21_R7_TEST_RESULTS.md": ("21.0.0-7", "v21.0.0-6", "SOURCE_REVISION", "SHA256SUMS"),
         "V21_R7_MAPPING_DESIGN.md": ("R6 audit", "Issue-to-improvement", "Original implementation", "Limitations"),
@@ -69,7 +82,7 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
             "reproducibility", "PENDING FINAL GATE", "No production capacity",
         ),
         "VER21_IMPLEMENTATION_PLAN.md": (
-            "Ver21 implementation plan", "21.0.0-7", "Verification and release gates",
+            "Ver21 implementation plan", "21.0.0-8", "Verification and release gates",
         ),
     }
     for name, claims in expected_claims.items():
@@ -95,19 +108,19 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
                 fail(f"{relative} does not reference packaged artifact {name}")
 
     workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    for claim in ("NLI V21 R7 release", "nli-v21-r7-unsigned-release", "docs/V21_R7_RELEASE_NOTES.md", "v21.0.0-6"):
+    for claim in ("NLI V21 R8 release", "nli-v21-r8-unsigned-release", "docs/V21_R8_RELEASE_NOTES.md", "v21.0.0-7"):
         if claim not in workflow:
-            fail(f"release workflow does not identify the R7 workflow/R6 baseline: {claim!r}")
+            fail(f"release workflow does not identify the R8 workflow/R7 baseline: {claim!r}")
 
     release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-    if "NLI_VERSION=21.0.0" not in release_env or "NLI_RELEASE=7" not in release_env:
-        fail("packaging release identity is not 21.0.0-7")
+    if "NLI_VERSION=21.0.0" not in release_env or "NLI_RELEASE=8" not in release_env:
+        fail("packaging release identity is not 21.0.0-8")
 
     for relative in (
-        "README.md", "CHANGELOG.md", "docs/V21_R7_RELEASE_NOTES.md",
+        "README.md", "CHANGELOG.md", "docs/V21_R8_RELEASE_NOTES.md",
         "packaging/rpm/nli-client.spec", "packaging/rpm/nli-controller-agent.spec",
     ):
-        if "21.0.0-7" not in (root / relative).read_text(encoding="utf-8"):
+        if "21.0.0-8" not in (root / relative).read_text(encoding="utf-8"):
             fail(f"{relative} does not identify the current release")
 
     # Historical source evidence remains available for compatibility and audit.
@@ -128,7 +141,7 @@ def main() -> None:
     parser.add_argument("--controller", required=True, type=Path)
     args = parser.parse_args()
     validate(args.root.resolve(), args.output.resolve(), args.client.resolve(), args.controller.resolve())
-    print("Ver21 R7 release-doc packaging: PASS")
+    print("Ver21 R8 release-doc packaging: PASS")
 
 
 if __name__ == "__main__":

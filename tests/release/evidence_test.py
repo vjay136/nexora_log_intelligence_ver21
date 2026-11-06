@@ -56,7 +56,7 @@ class EvidenceGeneratorTest(unittest.TestCase):
                 "V21_R7_RELEASE_NOTES.md",
                 "V21_R7_TEST_RESULTS.md",
                 "V21_R7_MAPPING_DESIGN.md",
-                "V21_R7_FIELD_MAPPING_GUIDE.md",
+                "V21_R7_FIELD_MAPPING_GUIDE.md", "V21_R8_RELEASE_NOTES.md", "V21_R8_TEST_RESULTS.md", "V21_R8_DESIGN_ENGINE_DESIGN.md", "V21_R8_DESIGN_ENGINE_GUIDE.md", "V21_R8_OUTPUT_ACCOUNTING_GUIDE.md", "V21_R8_AI_PROVIDER_GUIDE.md", "nli-output-audit.py",
                 "VER21_IMPLEMENTATION_PLAN.md",
                 "BENCHMARKS.txt",
                 "SAMPLE_FIELD_ACCOUNTING.json",

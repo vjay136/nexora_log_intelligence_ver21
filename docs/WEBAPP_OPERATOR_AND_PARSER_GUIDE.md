@@ -28,6 +28,12 @@ Operations and runtime views primarily show aggregated counters, hashes, service
 
 **API Monitor** makes authenticated live probes and displays route, purpose, HTTP result, latency, and last-check time. A permission response such as 401/403 proves reachability but does not grant access. The page records no request bodies, credentials, or log payloads.
 
+## Appearance and record-accounting guidance (R8)
+
+Open the shell **Appearance** control for the adaptive Design Studio; it is a dialog rather than another primary workspace. Preview or apply one of eight styles, select available mode/accent settings, revert or restore the R7 default. Preferences contain no account/operational data. Existing forms, navigation and permissions remain active while presentation changes. See `V21_R8_DESIGN_ENGINE_GUIDE.md`.
+
+Output file bytes and earlier hourly history are distinct from logical record counts. Use the shipped read-only before/after helper and stable EOF/drain procedure in `V21_R8_OUTPUT_ACCOUNTING_GUIDE.md`; do not delete history or content-deduplicate identical legitimate records. Runtime local receipts and remote acknowledgements have different delivery scopes.
+
 ## NLI FieldSense Studio — powered by NFI
 
 Open **NLI FieldSense Studio** (`field-mapping`) to work on a representative raw record without leaving the mapping workspace. The same editor is embedded in Quarantine Resolution Wizard Steps 3–4 and Assurance repair. Inspect numbered tokens and Unicode character positions, choose the source range, name the output field, and add ordered split, substring, literal replacement/removal, case, prefix/suffix, or merge operations. Key-value extraction can use colon, semicolon, comma, or whitespace boundaries while retaining quoted and escaped content. Use the controller preview before saving a candidate; local hints do not establish production readiness.
@@ -216,3 +222,7 @@ Use a test controller and a redacted sample before production:
 7. Deactivate the temporary test account from Users, RBAC & Audit if it was created for the exercise; purge an encrypted retained test fixture when no longer needed.
 
 The provided corpus proves coverage only for its pinned samples and declared parser families. No finite parser library can promise 100% semantic accuracy for every future log format. Treat unmatched/ambiguous records as unknowns, add representative evidence, and promote a parser only after its expected-field contract passes.
+
+### R8 explicit AI mapping and removal controls
+
+Use **Suggest with AI** beside native/manual mapping for a new or quarantined exact raw sample. Its separate ephemeral proposal must pass the controller's native schema/compile/execution checks; a desired mismatch remains a reviewable diff. Confirm import, inspect names/selectors and confirm delimiters yourself, then follow deterministic validation, draft approval/publication and client ACK. Reject/remove advisory proposals separately from Catalog offboard/rollback of a saved or published parser. Administrator credential-clear/delete targets one exact profile and purges stored history; it does not revoke an external provider key. See `V21_R8_AI_PROVIDER_GUIDE.md` for bounds, permissions, protected key sources and removal limits.

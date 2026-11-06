@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,6 +21,7 @@ import (
 	"nexora.local/nli-v20/internal/engine"
 	"nexora.local/nli-v20/internal/geoipdb"
 	"nexora.local/nli-v20/internal/multiline"
+	"nexora.local/nli-v20/internal/output"
 	"nexora.local/nli-v20/internal/quarantine"
 	"nexora.local/nli-v20/internal/routing"
 	metastore "nexora.local/nli-v20/internal/store"
@@ -407,6 +410,7 @@ func replayCmd(path string, out io.Writer) error {
 }
 
 type quarantineHistoryEntry struct {
+	DeliveryID      string    `json:"delivery_id,omitempty"`
 	ID              string    `json:"id"`
 	NodeID          string    `json:"node_id"`
 	Service         string    `json:"service"`
@@ -438,6 +442,17 @@ func replayQueue(path, configPath, parserPackDir string, selectedIDs []string, o
 	if err != nil {
 		return fmt.Errorf("load agent config: %w", err)
 	}
+	releaseReplay, err := output.LockReplayOperation(path)
+	if err != nil {
+		return err
+	}
+	defer releaseReplay()
+	for i := range cfg.Outputs {
+		if cfg.Outputs[i].Type == "file" {
+			cfg.Outputs[i].DeliveryStatePath = output.DeliveryJournalPath(cfg.StateDir, cfg.Outputs[i].Path, cfg.Outputs[i].PathTemplate)
+		}
+	}
+	queueConfig := replayQueueConfig(cfg, path)
 	if parserPackDir == "" {
 		parserPackDir = cfg.ParserPackDir
 		if parserPackDir == "" {
@@ -453,12 +468,31 @@ func replayQueue(path, configPath, parserPackDir string, selectedIDs []string, o
 		return fmt.Errorf("initialize configured outputs: %w", err)
 	}
 	defer router.Close()
-	file, err := os.Open(path)
+	releaseSnapshot, err := output.LockLocalDelivery(queueConfig, path)
 	if err != nil {
 		return err
 	}
+	if err = output.RecoverLocalDeliveryLocked(queueConfig, path); err != nil {
+		_ = releaseSnapshot()
+		return err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		_ = releaseSnapshot()
+		return err
+	}
+	snapshotInfo, err := file.Stat()
+	if err != nil {
+		file.Close()
+		_ = releaseSnapshot()
+		return err
+	}
+	if err = releaseSnapshot(); err != nil {
+		file.Close()
+		return err
+	}
 	defer file.Close()
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(io.NewSectionReader(file, 0, snapshotInfo.Size()))
 	scanner.Buffer(make([]byte, 64*1024), 4<<20)
 	var unresolved []quarantine.Record
 	var history []quarantineHistoryEntry
@@ -523,9 +557,13 @@ func replayQueue(path, configPath, parserPackDir string, selectedIDs []string, o
 		metadata.QuarantineStatus = "waiting"
 		telemetryStatus := "sent"
 		if parsed.Success && !parsed.Quarantined && parsed.EventPayload != nil {
+			if record.ReplayAttempt == 0 || record.ReplayRevision != metadata.PolicyHash {
+				record.ReplayAttempt++
+				record.ReplayRevision = metadata.PolicyHash
+			}
 			metadata.QuarantineStatus = "resolved"
 			result := &routing.V5ParseResult{EventPayload: parsed.EventPayload, ParseTelemetry: metadata, Success: true}
-			if err := router.RouteV5Customer(result); err == nil {
+			if err := router.RouteV5CustomerIdentified(result, record.Service, replayDeliveryIdentity(record)); err == nil {
 				record.Status = "resolved"
 				record.ParserRevision = metadata.PolicyHash
 				provisional = append(provisional, record)
@@ -555,6 +593,9 @@ func replayQueue(path, configPath, parserPackDir string, selectedIDs []string, o
 			AttemptedAt: attemptedAt, AttemptCount: record.AttemptCount, Status: record.Status,
 			ErrorCodes: append([]string(nil), record.ErrorCodes...), ParserRevision: record.ParserRevision, RawRetained: false, TelemetryStatus: telemetryStatus,
 		})
+		if record.ReplayAttempt > 0 {
+			history[len(history)-1].DeliveryID = replayDeliveryIdentity(record)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return err
@@ -613,14 +654,53 @@ func replayQueue(path, configPath, parserPackDir string, selectedIDs []string, o
 	// active quarantine queue. Linux permits renaming an open file, while
 	// Windows correctly rejects it; closing here keeps replay portable and also
 	// guarantees all destination buffers are durable before queue compaction.
-	if err := router.Close(); err != nil {
-		return fmt.Errorf("close replay outputs: %w", err)
+	customerCloseErr := router.CloseCustomer()
+	if telemetryCloseErr := router.CloseTelemetry(); telemetryCloseErr != nil {
+		for _, id := range attemptedIDs {
+			if !containsString(summary.TelemetryFailedIDs, id) {
+				summary.TelemetryFailedIDs = append(summary.TelemetryFailedIDs, id)
+			}
+		}
+		for i := range history {
+			history[i].TelemetryStatus = "failed"
+		}
+	}
+	if customerCloseErr != nil {
+		waiting := map[string]bool{}
+		for _, record := range unresolved {
+			waiting[record.ID] = true
+		}
+		for index, record := range provisional {
+			if waiting[record.ID] {
+				continue
+			}
+			record.Status = "waiting"
+			record.ErrorCodes = append(record.ErrorCodes, "replay_output_close_failed")
+			unresolved = append(unresolved, record)
+			waiting[record.ID] = true
+			history[provisionalHistory[index]].Status = "waiting"
+			history[provisionalHistory[index]].ErrorCodes = append(history[provisionalHistory[index]].ErrorCodes, "replay_output_close_failed")
+		}
+		summary.ResolvedIDs = nil
+		summary.Resolved = 0
+		summary.WaitingIDs = nil
+		for _, record := range unresolved {
+			summary.WaitingIDs = append(summary.WaitingIDs, record.ID)
+		}
+		summary.Waiting = len(summary.WaitingIDs)
 	}
 	if err := appendQuarantineHistory(path+".history.jsonl", history); err != nil {
 		return err
 	}
-	if err := rewriteUnresolved(path, unresolved); err != nil {
+	activeIDs, err := mergeReplayQueue(path, queueConfig, queueSeen, unresolved)
+	if err != nil {
 		return err
+	}
+	if err = retireReplayDeliveries(path, cfg.Outputs, activeIDs); err != nil {
+		fmt.Fprintf(os.Stderr, "nli: replay delivery receipt cleanup pending: %v\n", err)
+	}
+	if customerCloseErr != nil {
+		return fmt.Errorf("close replay outputs: %w", customerCloseErr)
 	}
 	encoded, err := json.Marshal(summary)
 	if err != nil {
@@ -628,6 +708,135 @@ func replayQueue(path, configPath, parserPackDir string, selectedIDs []string, o
 	}
 	_, err = fmt.Fprintln(out, string(encoded))
 	return err
+}
+
+func replayDeliveryIdentity(record quarantine.Record) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("nli-replay-v1\x00%s\x00%s\x00%d", record.ID, record.ReplayRevision, record.ReplayAttempt))))
+}
+func replayQueueConfig(cfg agent.Config, path string) output.Config {
+	for _, destination := range cfg.Outputs {
+		if destination.Type != "file" {
+			continue
+		}
+		target, err := output.ResolveFilePath(destination, time.Now().UTC())
+		if err == nil && filepath.Clean(target) == filepath.Clean(path) {
+			return destination
+		}
+		if destination.PathTemplate != "" {
+			parts := strings.Split(destination.PathTemplate, "{hour_utc}")
+			if len(parts) == 2 && strings.HasPrefix(path, parts[0]) && strings.HasSuffix(path, parts[1]) {
+				return destination
+			}
+		}
+	}
+	return output.Config{Type: "file", Path: path, DeliveryStatePath: output.DeliveryJournalPath(cfg.StateDir, path, "")}
+}
+
+// Merge against the current active queue while holding only the short append
+// lock. Records appended by a live agent during parsing/network delivery remain
+// present; only IDs from the immutable replay snapshot may be removed/updated.
+func mergeReplayQueue(path string, cfg output.Config, snapshot map[string]bool, unresolved []quarantine.Record) (map[string]bool, error) {
+	unlock, err := output.LockLocalDelivery(cfg, path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err = output.RecoverLocalDeliveryLocked(cfg, path); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 4<<20)
+	updates := map[string]quarantine.Record{}
+	for _, record := range unresolved {
+		updates[record.ID] = record
+	}
+	merged := []quarantine.Record{}
+	active := map[string]bool{}
+	for scanner.Scan() {
+		var current quarantine.Record
+		if err = json.Unmarshal(scanner.Bytes(), &current); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("invalid active quarantine record during replay merge: %w", err)
+		}
+		if current.ID == "" {
+			f.Close()
+			return nil, fmt.Errorf("active quarantine record has no ID")
+		}
+		if active[current.ID] {
+			continue
+		}
+		if snapshot[current.ID] {
+			replacement, keep := updates[current.ID]
+			if !keep {
+				continue
+			}
+			current = replacement
+		}
+		merged = append(merged, current)
+		active[current.ID] = true
+	}
+	err = errors.Join(scanner.Err(), f.Close())
+	if err != nil {
+		return nil, err
+	}
+	for _, record := range unresolved {
+		if !active[record.ID] {
+			merged = append(merged, record)
+			active[record.ID] = true
+		}
+	}
+	if err = rewriteUnresolved(path, merged); err != nil {
+		return nil, err
+	}
+	return active, nil
+}
+
+func retireReplayDeliveries(path string, outputs []output.Config, active map[string]bool) error {
+	f, err := os.Open(path + ".history.jsonl")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 4<<20)
+	ids := []string{}
+	seen := map[string]bool{}
+	for scanner.Scan() {
+		var entry quarantineHistoryEntry
+		if err = json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			return err
+		}
+		if entry.DeliveryID != "" && !active[entry.ID] && !seen[entry.DeliveryID] {
+			seen[entry.DeliveryID] = true
+			ids = append(ids, entry.DeliveryID)
+		}
+	}
+	if err = scanner.Err(); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var failures []error
+	for _, cfg := range outputs {
+		if cfg.Type != "file" {
+			continue
+		}
+		w, err := output.NewFileWriter(cfg)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		failures = append(failures, w.AcknowledgeDeliveries(ids), w.Close())
+	}
+	return errors.Join(failures...)
 }
 
 func containsString(values []string, target string) bool {
@@ -651,6 +860,11 @@ func appendQuarantineHistory(path string, entries []quarantineHistoryEntry) erro
 		return err
 	}
 	defer file.Close()
+	if strings.HasSuffix(path, ".history.jsonl") {
+		if err = output.PreserveFileAccess(strings.TrimSuffix(path, ".history.jsonl"), path); err != nil {
+			return err
+		}
+	}
 	encoder := json.NewEncoder(file)
 	for _, entry := range entries {
 		if err := encoder.Encode(entry); err != nil {
@@ -664,6 +878,10 @@ func rewriteUnresolved(path string, records []quarantine.Record) error {
 	temporary := path + ".replay.tmp"
 	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0640)
 	if err != nil {
+		return err
+	}
+	if err = output.PreserveFileAccess(path, temporary); err != nil {
+		file.Close()
 		return err
 	}
 	encoder := json.NewEncoder(file)

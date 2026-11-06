@@ -230,6 +230,14 @@ func TestAgentStartupLoadsApprovedManagedGenerationAndRejectsTamper(t *testing.T
 		telemetryPath := filepath.Join(root, "telemetry.jsonl")
 		config := configFor(root, telemetryPath)
 		pack := findBuiltin(t)
+		originalID := pack.ID
+		pack.ID = "managed_smtp_out"
+		for i := range pack.Rules {
+			pack.Rules[i].Priority = 1
+		}
+		for i := range pack.RegressionCases {
+			pack.RegressionCases[i].ExpectedParser = strings.ReplaceAll(pack.RegressionCases[i].ExpectedParser, originalID, pack.ID)
+		}
 		pack.ReviewState = parserpolicy.ReviewStateApproved
 		pack.ActivatedAt = nil
 		pack.Revision = 2

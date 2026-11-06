@@ -7,13 +7,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"nexora.local/nli-v20/internal/output"
 )
 
 type Record struct {
+	ReplayRevision string    `json:"replay_revision,omitempty"`
+	ReplayAttempt  int       `json:"replay_attempt,omitempty"`
 	ID             string    `json:"id"`
 	NodeID         string    `json:"node_id"`
 	Service        string    `json:"service"`
@@ -56,10 +61,15 @@ func New(nodeID, service, sourcePath string, sourceLine uint64, raw, parserRevis
 
 // Append writes one complete JSON object and synchronizes it before returning,
 // allowing the caller to advance its input cursor only after durable retention.
-func Append(path string, record Record) error {
+func Append(path string, record Record) (resultErr error) {
 	if path == "" {
 		return fmt.Errorf("quarantine path is empty")
 	}
+	unlock, err := output.LockLocalFile(path)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, unlock()) }()
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return err
 	}

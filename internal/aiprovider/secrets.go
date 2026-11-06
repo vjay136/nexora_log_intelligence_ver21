@@ -133,6 +133,12 @@ func credentialAAD(providerID string) []byte {
 }
 
 func validatePlainSecret(secret string) error {
+	value := strings.TrimSpace(secret)
+	upper := strings.ToUpper(value)
+	if strings.HasPrefix(upper, "BEARER ") || upper == "YOUR_API_KEY" || upper == "YOUR_KEY_HERE" || upper == "API_KEY_HERE" || upper == "<API_KEY>" || strings.HasPrefix(value, "$") && envPattern.MatchString(strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(value, "$"), "{"), "}")) {
+		return errors.New("enter an actual key without a Bearer prefix, or select env_ref with the variable name")
+	}
+
 	if len(secret) < 8 {
 		return errors.New("credential must contain at least 8 bytes")
 	}

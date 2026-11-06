@@ -138,6 +138,14 @@ func Normalize(p Profile) Profile {
 
 func Validate(p Profile, policy ValidationPolicy) error {
 	p = Normalize(p)
+	if err := ValidateMetadata(p, policy); err != nil {
+		return err
+	}
+	return validateCredential(p.Kind, p.Credential, policy)
+}
+
+func ValidateMetadata(p Profile, policy ValidationPolicy) error {
+	p = Normalize(p)
 	if !idPattern.MatchString(p.ID) {
 		return errors.New("provider id must start with a letter and contain only lowercase letters, digits, underscore or hyphen")
 	}
@@ -166,9 +174,6 @@ func Validate(p Profile, policy ValidationPolicy) error {
 		return err
 	}
 	if err := validateHeaders(p.Headers); err != nil {
-		return err
-	}
-	if err := validateCredential(p.Kind, p.Credential, policy); err != nil {
 		return err
 	}
 	return nil
@@ -285,8 +290,8 @@ func Redacted(p Profile) View {
 		ref = "managed secret file"
 	}
 	headers := make(map[string]string, len(p.Headers))
-	for k, v := range p.Headers {
-		headers[k] = v
+	for k := range p.Headers {
+		headers[k] = "[configured]"
 	}
 	return View{
 		ID: p.ID, Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Model: p.Model,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"regexp"
 	"sort"
@@ -74,6 +75,56 @@ func NewParserPackAdapterFromDirectory(directory string) (*ParserPackAdapter, er
 
 type configurationError struct{ message string }
 
+// NewParserPackAdapterWithManagedPayloads compiles one canonical controller
+// generation with the same approved regression gates used by enrolled clients.
+// Embedded parsers remain present; add-ons cannot reuse their identities.
+func NewParserPackAdapterWithManagedPayloads(payloads map[string][]byte) (*ParserPackAdapter, error) {
+	return NewParserPackAdapterWithManagedPayloadsContext(context.Background(), payloads)
+}
+
+func NewParserPackAdapterWithManagedPayloadsContext(ctx context.Context, payloads map[string][]byte) (*ParserPackAdapter, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(payloads) > familyprofile.MaxManagedPacks {
+		return nil, fmt.Errorf("managed parser generation exceeds %d packs", familyprofile.MaxManagedPacks)
+	}
+	base, err := NewParserPackAdapter()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(payloads))
+	total := 0
+	for name, data := range payloads {
+		names = append(names, name)
+		total += len(data)
+	}
+	if total > familyprofile.MaxManagedBytes {
+		return nil, fmt.Errorf("managed parser generation exceeds byte limit")
+	}
+	sort.Strings(names)
+	seen := map[string]bool{}
+	for _, name := range names {
+		profile, err := familyprofile.CompileManagedPayloadContext(ctx, name, payloads[name])
+		if err != nil {
+			return nil, err
+		}
+		if seen[profile.Pack.ID] {
+			return nil, fmt.Errorf("managed parser generation repeats pack id %q", profile.Pack.ID)
+		}
+		seen[profile.Pack.ID] = true
+		base.profiles = append(base.profiles, profile)
+	}
+	sort.SliceStable(base.profiles, func(i, j int) bool {
+		if base.profiles[i].Order != base.profiles[j].Order {
+			return base.profiles[i].Order < base.profiles[j].Order
+		}
+		return base.profiles[i].Pack.ID < base.profiles[j].Pack.ID
+	})
+	base.policyHash = aggregatePolicyHash(append(append([]familyprofile.Profile(nil), base.profiles...), base.smtpCompatibility))
+	return base, nil
+}
+
 func (err *configurationError) Error() string { return err.message }
 
 type V5ParseResult struct {
@@ -96,10 +147,13 @@ type profileExecution struct {
 }
 
 func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engine.Source) *V5ParseResult {
-	return adapter.tryParseV5Production(input, source, false)
+	return adapter.TryParseV5ProductionContext(context.Background(), input, source)
 }
 
-func (adapter *ParserPackAdapter) tryParseV5Production(input string, source engine.Source, reviewedOnly bool) *V5ParseResult {
+func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Context, input string, source engine.Source) *V5ParseResult {
+	if parent == nil {
+		parent = context.Background()
+	}
 	started := time.Now()
 	trimmed := strings.TrimSpace(input)
 	service := runtimeService(source.Service, trimmed)
@@ -107,49 +161,35 @@ func (adapter *ParserPackAdapter) tryParseV5Production(input string, source engi
 		return &V5ParseResult{Success: false}
 	}
 	candidates := adapter.candidates(service)
-	if reviewedOnly {
-		filtered := candidates[:0]
-		for _, candidate := range candidates {
-			if reviewedMappingProfile(candidate.profile) {
-				filtered = append(filtered, candidate)
-			}
-		}
-		candidates = filtered
-	}
-	if !reviewedOnly && (service == "smtp" || service == "smtp-in" || service == "smtp-out") {
+	if service == "smtp" || service == "smtp-in" || service == "smtp-out" {
 		candidates = append([]profileCandidate{{profile: adapter.smtpCompatibility, specificity: 0}}, candidates...)
 	}
-	hasReviewedMapping := false
-	for index := range candidates {
-		if reviewedMappingProfile(candidates[index].profile) {
-			priority, err := strconv.Atoi(candidates[index].profile.Pack.Metadata["mapping_priority"])
-			if err != nil || priority < 0 || priority > 1000 {
-				priority = 0
-			}
-			candidates[index].specificity = -1 - priority
-			hasReviewedMapping = true
+	// Add-ons never remove older candidates from automatic evaluation. Run the
+	// embedded baseline first so an expensive add-on cannot starve its result;
+	// reviewed selection priorities are applied only after candidate execution.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].profile.Managed != candidates[j].profile.Managed {
+			return !candidates[i].profile.Managed
 		}
-	}
-	if hasReviewedMapping {
-		sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].specificity < candidates[j].specificity })
-	}
+		return candidates[i].specificity < candidates[j].specificity
+	})
 	if len(candidates) == 0 {
 		return &V5ParseResult{Success: false}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	limitExceeded := len(candidates) > maxProfileExecutions
 	if len(candidates) > maxProfileExecutions {
 		candidates = candidates[:maxProfileExecutions]
 	}
 
-	// Execute candidates in selector tiers: exact, compatible family, then
-	// wildcard recovery. Parser executors are intentionally evaluated in stable
+	// Execute every approved eligible candidate, including wildcard add-ons.
+	// Parser executors are intentionally evaluated in stable
 	// order because some reviewed parsing stages reuse mutable scratch objects;
 	// concurrent evaluation made a selected parser's field types nondeterministic.
-	// Once a more-specific tier succeeds, less-specific tiers are never evaluated,
-	// preserving both the fast path and exact-parser authority.
+	// Selection still preserves scope specificity and reviewed exact-revision
+	// priorities, but a successful new parser never short-circuits older ones.
 	executions := make([]profileExecution, 0, len(candidates))
 	execute := func(candidate profileCandidate) profileExecution {
 		executionService := service
@@ -170,21 +210,13 @@ func (adapter *ParserPackAdapter) tryParseV5Production(input string, source engi
 		})
 		return profileExecution{candidate: candidate, result: result, err: err}
 	}
-	currentSpecificity := candidates[0].specificity
-	tierSucceeded := false
+	hasEmbeddedCandidate := false
 	for _, candidate := range candidates {
-		if candidate.specificity != currentSpecificity {
-			if tierSucceeded {
-				break
-			}
-			currentSpecificity = candidate.specificity
-			tierSucceeded = false
+		if !candidate.profile.Managed {
+			hasEmbeddedCandidate = true
 		}
 		execution := execute(candidate)
 		executions = append(executions, execution)
-		if successfulExecution(execution.result, execution.err) {
-			tierSucceeded = true
-		}
 	}
 	selectedIndex := -1
 	for index := range executions {
@@ -202,7 +234,9 @@ func (adapter *ParserPackAdapter) tryParseV5Production(input string, source engi
 		metadata.Result = "quarantined"
 		metadata.Confidence = 0
 		metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "all_packs_failed")
-		return &V5ParseResult{ParseTelemetry: metadata, Success: false, Quarantined: true}
+		// A failing add-on alone must not disable an existing JSON/text parser.
+		// Reviewed embedded-family validation failures retain quarantine policy.
+		return &V5ParseResult{ParseTelemetry: metadata, Success: false, Quarantined: hasEmbeddedCandidate}
 	}
 
 	selected := executions[selectedIndex].result
@@ -263,6 +297,18 @@ func betterExecution(candidate, current profileExecution) bool {
 	// established specificity and evidence ordering below.
 	if reviewedMappingProfile(candidate.candidate.profile) != reviewedMappingProfile(current.candidate.profile) {
 		return reviewedMappingProfile(candidate.candidate.profile)
+	}
+	if reviewedMappingProfile(candidate.candidate.profile) {
+		priority := func(profile familyprofile.Profile) int {
+			value, err := strconv.Atoi(profile.Pack.Metadata["mapping_priority"])
+			if err != nil || value < 0 || value > 1000 {
+				return 0
+			}
+			return value
+		}
+		if left, right := priority(candidate.candidate.profile), priority(current.candidate.profile); left != right {
+			return left > right
+		}
 	}
 	// A successful exact or family parser must remain authoritative over a
 	// successful wildcard recovery parser. Field count only breaks ties inside
@@ -332,11 +378,13 @@ func (adapter *ParserPackAdapter) aggregateTelemetry(input, nodeID string, execu
 		metadata.AttemptCount += len(attempts)
 		if execution.result != nil && execution.result.ParseTelemetry != nil {
 			metadata.StageCount += execution.result.ParseTelemetry.StageCount
-			for _, code := range execution.result.ParseTelemetry.ErrorCodes {
-				metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, code)
+			if selectedIndex < 0 || index == selectedIndex {
+				for _, code := range execution.result.ParseTelemetry.ErrorCodes {
+					metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, code)
+				}
 			}
 		}
-		if execution.err != nil {
+		if execution.err != nil && (selectedIndex < 0 || index == selectedIndex) {
 			metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "parser_execution_failed")
 		}
 	}
@@ -467,9 +515,18 @@ func (adapter *ParserPackAdapter) TryParseV5Raw(input string, source engine.Sour
 	return adapter.TryParseV5(input, source)
 }
 
-// Only reviewed managed mappings may precede the existing JSON fast path.
+// Keep the older interface as an alias; automatic selection considers the
+// complete approved pool, rather than only newly introduced mappings.
 func (adapter *ParserPackAdapter) TryParseReviewedV5Raw(input string, source engine.Source) *engine.V5ParseResult {
-	result := adapter.tryParseV5Production(input, source, true)
+	return adapter.TryParseAutomaticV5Raw(input, source)
+}
+
+func (adapter *ParserPackAdapter) TryParseAutomaticV5Raw(input string, source engine.Source) *engine.V5ParseResult {
+	return adapter.TryParseV5Context(context.Background(), input, source)
+}
+
+func (adapter *ParserPackAdapter) TryParseV5Context(ctx context.Context, input string, source engine.Source) *engine.V5ParseResult {
+	result := adapter.TryParseV5ProductionContext(ctx, input, source)
 	return adapter.engineResult(result)
 }
 

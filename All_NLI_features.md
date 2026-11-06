@@ -1,13 +1,29 @@
 # Nexora Log Intelligence Ver21 — Implemented Feature Inventory
 
-Release identity: `21.0.0-7`
+Release identity: `21.0.0-8`
 Document scope: behavior implemented in this repository; this is not a performance guarantee or a substitute for deployment qualification.
+
+## Adaptive application appearance (R8)
+
+The Appearance Design Studio adds eight centrally managed design languages to the existing 45-workspace application: Skeuomorphism, Minimalism, Glassmorphism, Neumorphism, Claymorphism, Bento Grid, Retro Y2K and Liquid Glass. Shared tokens adapt shell/components, with preview/apply/revert/default, light/dark modes, accents and nonsensitive local preferences. Existing routes and permission-dependent actions retain their business APIs. See [R8 design guide](docs/V21_R8_DESIGN_ENGINE_GUIDE.md) and [qualification results](docs/V21_R8_TEST_RESULTS.md).
+
+## Output retry and read-only accounting (R8)
+
+Source-generation/logical-ordinal durable receipts protect an exclusively owned local file queue from repeat append when required remote delivery retries; canonical quarantine uses its dedicated raw writer. Repeated equal text at distinct source positions remains valid. Remote destinations retain at-least-once ambiguity. A shipped read-only count/baseline helper preserves earlier hourly history and distinguishes byte size from logical record counts. See [R8 output accounting guide](docs/V21_R8_OUTPUT_ACCOUNTING_GUIDE.md) for state preservation, scope and measured durability tradeoffs.
 
 ## NLI FieldSense Studio — powered by NFI (R7)
 
 NFI provides a dedicated **NLI FieldSense Studio** workspace (`field-mapping`) and the shared mapping controls embedded in Quarantine Resolution Wizard Steps 3–4. An operator can inspect source token and character positions, rename fields/labels, select ranges, split compound tokens, extract quoted or escaped key-value data, read structured paths, combine fields, and apply ordered literal or bounded-regex operations before typed validation. The same declarative mapping plan is validated by the controller and used by the client ParserPack runtime; approval, exact bundle hashes, acknowledgement, replay and rollback remain governed.
 
 The mapping guide documents supported methods, presence/null policies, bounds, and known limitations. It does not claim universal interpretation of unknown logs or change existing input framing and destination contracts. See [R7 field mapping guide](docs/V21_R7_FIELD_MAPPING_GUIDE.md) and [audit/design](docs/V21_R7_MAPPING_DESIGN.md).
+
+## Additive approved parser pool (R8)
+
+Embedded and approved compatible managed packs remain available together within a bounded eligible pool. A successful embedded match no longer skips other approved matching candidates; failed additions do not suppress a valid generic fallback. Selection emits one governed customer output using reviewed mapping scope/priority and established evidence rules. Parser attempts are distinct from record counts. Ordinary regex additions cannot silently replace structurally valid JSON output without explicit reviewed native mapping authority.
+
+## Optional AI provider assistance (R8)
+
+Eight configured provider kinds support protected server-resolved credentials, capability readiness, bounded connection tests and same-group fallback. FieldSense supports an explicit schema-aware Suggest with AI action for new/quarantined samples, with a separate ephemeral native-plan proposal, strict compile/exact-source execution, manual-preserving confirmed import and human delimiter review. Native failures can also request the existing diagnostic/review workflow; neither path publishes directly. Credential clear/delete and proposal reject/remove are distinct from published parser offboarding/rollback. JSON/SSE transport checks, optional public HTTPS image probes, exact tested-configuration metadata and distinct incomplete/error results make configuration status observable. Agent-local optional AI remains separate. See [R8 AI provider guide](docs/V21_R8_AI_PROVIDER_GUIDE.md); no live cloud-model or semantic vision availability is certified by fake-service tests.
 
 ## Product boundary and compatibility
 

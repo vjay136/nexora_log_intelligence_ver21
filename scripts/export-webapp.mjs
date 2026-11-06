@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const target = resolve(root, 'build/web-only');
-const required = ['web/index.html', 'web/app.js', 'web/styles.css', 'web/nexora-logo-v21.png', 'web/login-banner-v21.png', 'web/nexora-poster-v21.png', 'web/vite.config.js', 'web/package.json', 'api/v1/[...path].js', 'vercel.json'];
+const required = ['web/index.html', 'web/app.js', 'web/styles.css', 'web/design-engine.js', 'web/design-engine.css', 'web/nexora-logo-v21.png', 'web/login-banner-v21.png', 'web/nexora-poster-v21.png', 'web/vite.config.js', 'web/package.json', 'api/v1/[...path].js', 'vercel.json'];
 for (const name of required) {
   try {
     await stat(resolve(root, name));
@@ -14,7 +14,7 @@ for (const name of required) {
 await rm(target, { recursive: true, force: true });
 await mkdir(target, { recursive: true });
 await mkdir(resolve(target, 'web'), { recursive: true });
-for (const name of ['index.html', 'app.js', 'styles.css', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png', 'nli-mark.svg', '_headers', 'vite.config.js', 'package.json', 'package-lock.json', 'README.txt']) {
+for (const name of ['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png', 'nli-mark.svg', '_headers', 'vite.config.js', 'package.json', 'package-lock.json', 'README.txt']) {
   await cp(resolve(root, 'web', name), resolve(target, 'web', name));
 }
 for (const name of ['api', 'functions']) await cp(resolve(root, name), resolve(target, name), { recursive: true });

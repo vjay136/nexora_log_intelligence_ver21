@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -16,38 +17,39 @@ import (
 
 // Config defines one output destination.
 type Config struct {
-	Synchronous     bool              `json:"-"`                  // Router flushes before checkpointing
-	Type            string            `json:"type"`               // file, loki, clickhouse, controller, stdout
-	Routes          []string          `json:"routes,omitempty"`   // nil = all routes
-	Families        []string          `json:"families,omitempty"` // optional input/parser families routed here
-	Path            string            `json:"path,omitempty"`
-	PathTemplate    string            `json:"path_template,omitempty"` // file: absolute path containing exactly one {hour_utc} token
-	MaxMB           int64             `json:"max_mb,omitempty"`
-	MaxBackups      int               `json:"max_backups,omitempty"`
-	URL             string            `json:"url,omitempty"`
-	Labels          map[string]string `json:"labels,omitempty"`
-	BatchSize       int               `json:"batch_size,omitempty"`
-	FlushSec        int               `json:"flush_sec,omitempty"`
-	DSN             string            `json:"dsn,omitempty"`
-	Database        string            `json:"database,omitempty"`
-	Table           string            `json:"table,omitempty"`
-	FieldColumns    map[string]string `json:"field_columns,omitempty"` // source field -> ClickHouse column; unmapped safe fields retain their name
-	MaxFieldColumns int               `json:"max_field_columns,omitempty"`
-	Username        string            `json:"username,omitempty"`
-	PasswordEnv     string            `json:"password_env,omitempty"`
-	BearerTokenEnv  string            `json:"bearer_token_env,omitempty"`
-	TenantID        string            `json:"tenant_id,omitempty"` // Loki multi-tenancy
-	CAFile          string            `json:"ca_file,omitempty"`   // Additional trusted PEM CA
-	TokenFile       string            `json:"token_file,omitempty"`
-	Writer          Writer            `json:"-"` // For test injection only
-	NodeID          string            `json:"node_id,omitempty"`
-	NodeIDFile      string            `json:"node_id_file,omitempty"`
-	FallbackPath    string            `json:"fallback_path,omitempty"`
-	Required        bool              `json:"required,omitempty"`
-	RetryMax        int               `json:"retry_max,omitempty"`
-	RetryBackoffMS  int               `json:"retry_backoff_ms,omitempty"`
-	QueueCapacity   int               `json:"queue_capacity,omitempty"` // per-destination pending writes; defaults to 256
-	Format          string            `json:"format,omitempty"`         // stdout: json|pretty
+	DeliveryStatePath string            `json:"-"`                  // Agent-owned local delivery journal, independent of customer JSON.
+	Synchronous       bool              `json:"-"`                  // Router flushes before checkpointing
+	Type              string            `json:"type"`               // file, loki, clickhouse, controller, stdout
+	Routes            []string          `json:"routes,omitempty"`   // nil = all routes
+	Families          []string          `json:"families,omitempty"` // optional input/parser families routed here
+	Path              string            `json:"path,omitempty"`
+	PathTemplate      string            `json:"path_template,omitempty"` // file: absolute path containing exactly one {hour_utc} token
+	MaxMB             int64             `json:"max_mb,omitempty"`
+	MaxBackups        int               `json:"max_backups,omitempty"`
+	URL               string            `json:"url,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	BatchSize         int               `json:"batch_size,omitempty"`
+	FlushSec          int               `json:"flush_sec,omitempty"`
+	DSN               string            `json:"dsn,omitempty"`
+	Database          string            `json:"database,omitempty"`
+	Table             string            `json:"table,omitempty"`
+	FieldColumns      map[string]string `json:"field_columns,omitempty"` // source field -> ClickHouse column; unmapped safe fields retain their name
+	MaxFieldColumns   int               `json:"max_field_columns,omitempty"`
+	Username          string            `json:"username,omitempty"`
+	PasswordEnv       string            `json:"password_env,omitempty"`
+	BearerTokenEnv    string            `json:"bearer_token_env,omitempty"`
+	TenantID          string            `json:"tenant_id,omitempty"` // Loki multi-tenancy
+	CAFile            string            `json:"ca_file,omitempty"`   // Additional trusted PEM CA
+	TokenFile         string            `json:"token_file,omitempty"`
+	Writer            Writer            `json:"-"` // For test injection only
+	NodeID            string            `json:"node_id,omitempty"`
+	NodeIDFile        string            `json:"node_id_file,omitempty"`
+	FallbackPath      string            `json:"fallback_path,omitempty"`
+	Required          bool              `json:"required,omitempty"`
+	RetryMax          int               `json:"retry_max,omitempty"`
+	RetryBackoffMS    int               `json:"retry_backoff_ms,omitempty"`
+	QueueCapacity     int               `json:"queue_capacity,omitempty"` // per-destination pending writes; defaults to 256
+	Format            string            `json:"format,omitempty"`         // stdout: json|pretty
 }
 
 // Writer sends a parsed envelope to a destination.
@@ -97,6 +99,7 @@ func NewWriter(cfg Config) (Writer, error) {
 
 // FileWriter writes JSONL to a file with size cap.
 type FileWriter struct {
+	delivery    *deliveryJournal
 	cfg         Config
 	file        *os.File
 	buffer      *bufio.Writer
@@ -121,12 +124,21 @@ func NewFileWriter(cfg Config) (*FileWriter, error) {
 	return w, nil
 }
 
-func (w *FileWriter) Write(envelope []byte, route string) error {
+func (w *FileWriter) Write(envelope []byte, route string) (resultErr error) {
 	if !w.acceptsRoute(route) {
 		return nil
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	target, err := resolveFilePath(w.cfg, w.now().UTC())
+	if err != nil {
+		return err
+	}
+	unlock, err := lockLocalPaths(w.currentPath, target)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, unlock()) }()
 	path, err := w.ensureCurrentFile()
 	if err != nil {
 		return err
@@ -149,19 +161,28 @@ func (w *FileWriter) Write(envelope []byte, route string) error {
 	return nil
 }
 
-func (w *FileWriter) Close() error {
+func (w *FileWriter) Close() (resultErr error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.file == nil {
-		return nil
+	var journalErr error
+	if w.delivery != nil {
+		journalErr = w.delivery.close()
 	}
+	if w.file == nil {
+		return journalErr
+	}
+	unlock, lockErr := lockLocalPaths(w.currentPath)
+	if lockErr != nil {
+		return errors.Join(journalErr, lockErr)
+	}
+	defer func() { resultErr = errors.Join(resultErr, unlock()) }()
 	err := w.flushAndSyncLocked()
 	if closeErr := w.file.Close(); err == nil {
 		err = closeErr
 	}
 	w.file = nil
 	w.buffer = nil
-	return err
+	return errors.Join(err, journalErr)
 }
 
 func (w *FileWriter) acceptsRoute(route string) bool {
@@ -225,6 +246,10 @@ type Router struct {
 }
 
 type outputRequest struct {
+	source   string
+	ordinal  uint64
+	id       string
+	ack      []string
 	envelope []byte
 	route    string
 	barrier  chan error
@@ -252,6 +277,22 @@ func (w *destinationWorker) run() {
 	var failures []error
 	for request := range w.queue {
 		if request.barrier != nil {
+			if request.source != "" {
+				var err error
+				if ack, ok := w.writer.(interface{ AcknowledgeSource(string, uint64) error }); ok {
+					err = ack.AcknowledgeSource(request.source, request.ordinal)
+				}
+				request.barrier <- err
+				continue
+			}
+			if request.ack != nil {
+				var err error
+				if acknowledger, ok := w.writer.(interface{ AcknowledgeDeliveries([]string) error }); ok {
+					err = acknowledger.AcknowledgeDeliveries(request.ack)
+				}
+				request.barrier <- err
+				continue
+			}
 			if flusher, ok := w.writer.(interface{ Flush() error }); ok {
 				failures = append(failures, w.deliveryResult(flusher.Flush()))
 			}
@@ -259,13 +300,46 @@ func (w *destinationWorker) run() {
 			failures = nil
 			continue
 		}
-		failures = append(failures, w.deliveryResult(w.writer.Write(request.envelope, request.route)))
+		var err error
+		if identified, ok := w.writer.(interface {
+			WriteIdentified([]byte, string, string) error
+		}); ok && request.id != "" {
+			err = identified.WriteIdentified(request.envelope, request.route, request.id)
+		} else {
+			err = w.writer.Write(request.envelope, request.route)
+		}
+		failures = append(failures, w.deliveryResult(err))
 	}
 	w.done <- errors.Join(errors.Join(failures...), w.deliveryResult(w.writer.Close()))
 }
 
 // NewRouter creates a router from a list of output configs.
 func NewRouter(configs []Config) (*Router, error) {
+	var filePaths []string
+	for _, cfg := range configs {
+		if cfg.Type != "file" {
+			continue
+		}
+		path, err := resolveFilePath(cfg, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, prior := range filePaths {
+			if absolute == prior || runtime.GOOS == "windows" && strings.EqualFold(absolute, prior) {
+				return nil, fmt.Errorf("duplicate local output destination: %s", path)
+			}
+			a, aErr := os.Stat(absolute)
+			b, bErr := os.Stat(prior)
+			if aErr == nil && bErr == nil && os.SameFile(a, b) {
+				return nil, fmt.Errorf("local output aliases refer to the same file: %s", path)
+			}
+		}
+		filePaths = append(filePaths, absolute)
+	}
 	router := &Router{}
 	for _, cfg := range configs {
 		if cfg.QueueCapacity < 0 || cfg.QueueCapacity > 65536 {
@@ -345,9 +419,17 @@ func (r *Router) Flush() error {
 }
 
 // Flush makes the file durable before the input offset advances.
-func (w *FileWriter) Flush() error {
+func (w *FileWriter) Flush() (resultErr error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.file == nil {
+		return nil
+	}
+	unlock, err := lockLocalPaths(w.currentPath)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, unlock()) }()
 	// A flush is a durability barrier for records already written. It must not
 	// create an otherwise unused destination (or create the next hourly file
 	// merely because a different family's router was flushed).
@@ -374,14 +456,34 @@ func (r *Router) Write(envelope []byte, route string) error {
 // WriteForFamily sends an envelope only to destinations for the selected
 // input/parser family. Destinations without a families filter remain global.
 func (r *Router) WriteForFamily(envelope []byte, route, family string) error {
+	return r.WriteIdentified(envelope, route, family, "")
+}
+
+// WriteIdentified retains a source-occurrence identity outside the customer
+// payload. Only local file destinations use it to suppress acknowledged retries.
+func (r *Router) WriteIdentified(envelope []byte, route, family, id string) error {
+	return r.writeIdentified(envelope, route, family, id, false)
+}
+
+// RetainLocalQuarantine sends raw retry evidence only to configured local file
+// queues, sharing their ordering and delivery journal with normal records.
+func (r *Router) RetainLocalQuarantine(envelope []byte, family, id string) error {
+	return r.writeIdentified(envelope, "quarantine", family, id, true)
+}
+func (r *Router) writeIdentified(envelope []byte, route, family, id string, localOnly bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
 		return errors.New("output router closed")
 	}
-	request := outputRequest{envelope: append([]byte(nil), envelope...), route: route}
+	request := outputRequest{envelope: append([]byte(nil), envelope...), route: route, id: id}
 	var pending []*destinationWorker
 	for index, worker := range r.workers {
+		if localOnly {
+			if _, ok := worker.writer.(*FileWriter); !ok {
+				continue
+			}
+		}
 		if index < len(r.families) && !acceptsFamily(r.families[index], family) {
 			continue
 		}
@@ -395,6 +497,51 @@ func (r *Router) WriteForFamily(envelope []byte, route, family string) error {
 		worker.queue <- request
 	}
 	return nil
+}
+
+// AcknowledgeDeliveries retires local retry receipts only after the caller has
+// durably checkpointed the corresponding input cursor.
+func (r *Router) AcknowledgeDeliveries(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errors.New("output router closed")
+	}
+	var barriers []chan error
+	for _, worker := range r.workers {
+		barrier := make(chan error, 1)
+		worker.queue <- outputRequest{barrier: barrier, ack: ids}
+		barriers = append(barriers, barrier)
+	}
+	var failures []error
+	for _, barrier := range barriers {
+		failures = append(failures, <-barrier)
+	}
+	return errors.Join(failures...)
+}
+
+// AcknowledgeSource supports startup after a durable input checkpoint followed
+// by interruption before receipt cleanup.
+func (r *Router) AcknowledgeSource(source string, ordinal uint64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errors.New("output router closed")
+	}
+	var barriers []chan error
+	for _, worker := range r.workers {
+		barrier := make(chan error, 1)
+		worker.queue <- outputRequest{barrier: barrier, source: source, ordinal: ordinal}
+		barriers = append(barriers, barrier)
+	}
+	var failures []error
+	for _, barrier := range barriers {
+		failures = append(failures, <-barrier)
+	}
+	return errors.Join(failures...)
 }
 
 // QueueStats returns the current bounded backlog across all destinations.
@@ -530,6 +677,10 @@ func (w *FileWriter) rotate(path string) error {
 	if err != nil {
 		return err
 	}
+	if err = PreserveFileOwner(filepath.Dir(path), path); err != nil {
+		file.Close()
+		return err
+	}
 	w.file = file
 	w.buffer = bufio.NewWriterSize(file, fileWriterBufferSize)
 	w.currentSize = 0
@@ -542,17 +693,50 @@ func (w *FileWriter) ensureCurrentFile() (string, error) {
 		return "", err
 	}
 	if w.file != nil && path == w.currentPath {
-		return path, nil
+		opened, openedErr := w.file.Stat()
+		current, currentErr := os.Stat(path)
+		if openedErr != nil {
+			return "", openedErr
+		}
+		if currentErr == nil && os.SameFile(opened, current) {
+			w.currentSize = opened.Size() + int64(w.buffer.Buffered())
+			return path, nil
+		}
+		if currentErr != nil && !os.IsNotExist(currentErr) {
+			return "", currentErr
+		}
+		// Replay compacts the active raw queue by atomic replacement. A live
+		// identified writer must follow the replacement, never append to the
+		// unlinked old inode. Buffered callers fail safely instead of hiding data.
+		if w.buffer.Buffered() > 0 {
+			return "", fmt.Errorf("output was replaced while unsynchronized records were buffered")
+		}
+		if err := w.file.Close(); err != nil {
+			return "", err
+		}
+		w.file = nil
+		w.buffer = nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+	if err := makeOwnedDirectory(filepath.Dir(path), 0750); err != nil {
 		return "", err
 	}
+	_, priorErr := os.Stat(path)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
 	if err != nil {
 		return "", err
 	}
+	if os.IsNotExist(priorErr) {
+		if err = PreserveFileOwner(filepath.Dir(path), path); err != nil {
+			file.Close()
+			return "", err
+		}
+	}
 	info, err := file.Stat()
 	if err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	if err = syncDeliveryParents(filepath.Dir(path)); err != nil {
 		_ = file.Close()
 		return "", err
 	}

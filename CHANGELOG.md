@@ -1,5 +1,14 @@
 # Changelog
 
+## [21.0.0-8] - 2026-11-06
+
+- Add a central adaptive UI design registry, eight visual systems and an Appearance Design Studio with persistent nonsensitive preferences.
+- Package the design engine across WebApp, WebView, RPM and provenance manifests.
+- Prevent repeated local appends on required-remote retry using durable source-occurrence receipts; remove the legacy double-write path into canonical quarantine output.
+- Ship a read-only record-count/baseline audit that preserves existing hourly history.
+- Identify generated Supabase bootstrap as R8 while preserving compatible RPC schema version 1 and R7 metadata.
+- Bind upgrade/rollback qualification to genuine Ver21 R7 and the frozen-source release gates.
+
 ## [21.0.0-7] - 2026-11-06
 - Introduce NLI FieldSense Studio, powered by NFI (Native Field Intelligence), with a shared bounded mapping plan for preview and parser execution.
 - Support custom token/range, Unicode character, byte, line, delimiter, key-value, JSON-path, regex, constant and derived-field mappings with ordered operations.

@@ -71,13 +71,14 @@ type assuranceSecret struct {
 	FieldMapping map[string]string `json:"field_mapping,omitempty"`
 }
 type assuranceRequest struct {
-	Raw          string            `json:"raw"`
-	Desired      map[string]any    `json:"desired,omitempty"`
-	Service      string            `json:"service"`
-	Source       string            `json:"source,omitempty"`
-	ParserID     string            `json:"parser_id,omitempty"`
-	FieldMapping map[string]string `json:"field_mapping,omitempty"`
-	Template     map[string]any    `json:"template,omitempty"`
+	Raw            string            `json:"raw"`
+	Desired        map[string]any    `json:"desired,omitempty"`
+	Service        string            `json:"service"`
+	Source         string            `json:"source,omitempty"`
+	ParserID       string            `json:"parser_id,omitempty"`
+	PreserveSource bool              `json:"preserve_source,omitempty"`
+	FieldMapping   map[string]string `json:"field_mapping,omitempty"`
+	Template       map[string]any    `json:"template,omitempty"`
 }
 
 func (s *Server) storeAssuranceCiphertext(ctx context.Context, ciphertext []byte) (string, string, error) {
@@ -133,12 +134,14 @@ func (s *Server) handleAssuranceRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lineEndings := assuranceLineEndingCounts(request.Raw)
-	request.Raw = normalizeAssuranceRaw(request.Raw)
-	if request.Raw == "" {
+	if !request.PreserveSource {
+		request.Raw = normalizeAssuranceRaw(request.Raw)
+	}
+	if strings.TrimSpace(request.Raw) == "" || (request.PreserveSource && len(request.Raw) > engine.MaxLine) {
 		jsonError(w, "raw input is required", http.StatusBadRequest)
 		return
 	}
-	result := s.runAssurance(request)
+	result := s.runAssuranceContext(r.Context(), request)
 	result["line_endings"] = lineEndings
 	actor := "anonymous"
 	if principal := middleware.GetSecurityContext(r); principal != nil {
@@ -160,20 +163,45 @@ func (s *Server) handleParserCreationHelper(w http.ResponseWriter, r *http.Reque
 		jsonError(w, "raw input is required", http.StatusBadRequest)
 		return
 	}
-	request.Raw = normalizeAssuranceRaw(request.Raw)
-	result := s.runAssurance(request)
+	if !request.PreserveSource {
+		request.Raw = normalizeAssuranceRaw(request.Raw)
+	}
+	if request.PreserveSource && len(request.Raw) > engine.MaxLine {
+		jsonError(w, "raw source exceeds 1 MiB", http.StatusBadRequest)
+		return
+	}
+	result := s.runAssuranceContext(r.Context(), request)
 	helper, _ := result["parser_creation_helper"].(map[string]any)
 	jsonOK(w, map[string]any{"raw": result["raw"], "raw_sha256": result["raw_sha256"], "parsed_json": result["actual"], "family_decision": helper["family_decision"], "parser_creation_helper": helper, "validation": helper["validation_accounting"], "categorized_results": helper["categorized_results"], "requires_human_approval": true})
 }
 
 func (s *Server) runAssurance(request assuranceRequest) map[string]any {
-	request.Raw = normalizeAssuranceRaw(request.Raw)
+	return s.runAssuranceContext(context.Background(), request)
+}
+
+func (s *Server) runAssuranceContext(parent context.Context, request assuranceRequest) map[string]any {
+	isAutomatic := strings.TrimSpace(request.ParserID) == ""
+	ctx := parent
+	cancel := func() {}
+	if isAutomatic {
+		ctx, cancel = context.WithTimeout(parent, s.fieldSenseAnalysis().timeout)
+	}
+	defer cancel()
+	if !request.PreserveSource {
+		request.Raw = normalizeAssuranceRaw(request.Raw)
+	}
 	if request.Service == "" {
 		request.Service = "auto"
 	}
 	start := time.Now()
 	source := engine.Source{Hostname: "assurance-lab", Service: request.Service, File: request.Source}
-	envelope, selectedParserError := engine.ParseWithSelectedParser(request.Raw, source, s.assuranceDeps, request.ParserID)
+	deps := s.assuranceDeps
+	var runtimeSnapshot *automaticRuntimeSnapshot
+	var runtimeErr error
+	if isAutomatic {
+		deps, runtimeSnapshot, runtimeErr = s.automaticAssuranceDeps(ctx)
+	}
+	envelope, selectedParserError := engine.ParseWithSelectedParser(request.Raw, source, deps, request.ParserID)
 	if selectedParserError != nil {
 		result := map[string]any{
 			"raw": request.Raw, "raw_sha256": hex.EncodeToString(hashBytes([]byte(request.Raw))), "desired": request.Desired,
@@ -253,6 +281,13 @@ func (s *Server) runAssurance(request assuranceRequest) map[string]any {
 		candidate = map[string]any{"name": "candidate-" + hex.EncodeToString(hashBytes([]byte(request.Raw))[:4]), "source_parser": envelope.NLI.Parser, "detected_format": envelope.Meta.Format, "fields": sortedMapKeys(actual), "sample_values": actual, "suggested_strategy": "key_value_or_format_specific", "review_state": "draft", "requires_human_approval": true}
 	}
 	result := map[string]any{"raw": request.Raw, "raw_sha256": hex.EncodeToString(hashBytes([]byte(request.Raw))), "desired": request.Desired, "actual": actual, "diff": differences, "matches": matches, "passed": passed, "comparison_enabled": comparisonEnabled, "counts": map[string]int{"desired": len(request.Desired), "actual": len(actual), "matches": matches, "differences": len(differences), "attempts": attempts, "fallbacks": fallbacks}, "evidence_spans": evidence, "trace": trace, "parser": map[string]any{"name": envelope.NLI.Parser, "version": envelope.NLI.ParserVersion, "confidence": envelope.NLI.Confidence, "strategy": envelope.Meta.Assurance.SelectedStrategy}, "requested_parser": request.ParserID, "requested_family": request.Service, "route": envelope.Meta.Route, "errors": envelope.Meta.Errors, "latency_us": time.Since(start).Microseconds(), "retained": false, "score": score, "coverage": map[string]any{"expected": len(expected), "found": found, "percent": coverage, "missing": missing}, "parser_creation_helper": buildParserCreationHelper(request.Raw, request.Service, envelope, actual)}
+	if isAutomatic {
+		result["runtime_pool"] = automaticRuntimeSummary(runtimeSnapshot, runtimeErr)
+	}
+	if ctx.Err() != nil {
+		result["passed"] = false
+		result["errors"] = append(envelope.Meta.Errors, "Automatic analysis deadline or cancellation reached")
+	}
 	if candidate != nil {
 		result["candidate_parser"] = candidate
 	}

@@ -62,6 +62,12 @@ type ReviewedV5RawParser interface {
 	TryParseReviewedV5Raw(input string, source Source) *V5ParseResult
 }
 
+// AutomaticV5RawParser considers all approved eligible pack generations before
+// the structural JSON fallback; failed add-ons cannot suppress that fallback.
+type AutomaticV5RawParser interface {
+	TryParseAutomaticV5Raw(input string, source Source) *V5ParseResult
+}
+
 type NLI struct {
 	Version       string  `json:"version"`
 	Parser        string  `json:"parser"`
@@ -303,8 +309,14 @@ func ParseWithTruncated(raw string, source Source, deps *Deps, multilineTruncate
 	// keeps the production JSONL path proportional to the record size while
 	// preserving masking, type inference, assurance metadata, and routing.
 	var reviewedResult *V5ParseResult
+	var automaticAttempts *V5ParseResult
 	if primaryFormat == detector.FormatJSON {
-		if reviewed, ok := deps.V5Parser.(ReviewedV5RawParser); ok {
+		if automatic, ok := deps.V5Parser.(AutomaticV5RawParser); ok {
+			automaticAttempts = automatic.TryParseAutomaticV5Raw(raw, source)
+			if automaticAttempts != nil && automaticAttempts.Success && automaticAttempts.ReviewedMapping && len(automaticAttempts.EventPayload) > 0 {
+				reviewedResult = automaticAttempts
+			}
+		} else if reviewed, ok := deps.V5Parser.(ReviewedV5RawParser); ok {
 			result := reviewed.TryParseReviewedV5Raw(raw, source)
 			if result != nil && result.Success && len(result.EventPayload) > 0 {
 				reviewedResult = result
@@ -316,6 +328,10 @@ func ParseWithTruncated(raw string, source Source, deps *Deps, multilineTruncate
 		parseJSON(text, &candidate)
 		if candidate.NLI.Parser != "unknown" && candidate.Meta.Extracted > 0 && len(candidate.Meta.Errors) == 0 {
 			candidate.Meta.Assurance.SelectedStrategy = detector.FormatJSON
+			if automaticAttempts != nil {
+				candidate.Meta.ParserTrace = automaticAttempts.Trace
+				candidate.Meta.ParserAttempts = automaticAttempts.AttemptCount
+			}
 			candidate.Meta.Assurance.EvidenceCoverage = 1
 			candidate.Meta.Assurance.Verified = true
 			candidate.Meta.Assurance.Candidates = []CandidateEvidence{{

@@ -15,11 +15,12 @@ import (
 )
 
 type ConnectionResult struct {
-	OK         bool          `json:"ok"`
-	StatusCode int           `json:"status_code,omitempty"`
-	ErrorCode  string        `json:"error_code,omitempty"`
-	Latency    time.Duration `json:"latency"`
-	TestedAt   time.Time     `json:"tested_at"`
+	OK           bool          `json:"ok"`
+	StatusCode   int           `json:"status_code,omitempty"`
+	ErrorCode    string        `json:"error_code,omitempty"`
+	Latency      time.Duration `json:"latency"`
+	Acknowledged bool          `json:"acknowledged,omitempty"`
+	TestedAt     time.Time     `json:"tested_at"`
 }
 
 type Tester struct {
@@ -37,6 +38,8 @@ func BuildRequest(ctx context.Context, profile Profile, credential, prompt strin
 type RequestOptions struct {
 	SystemPrompt string
 	MaxTokens    int
+	Stream       bool
+	ImageURL     string
 }
 
 func BuildRequestWithOptions(ctx context.Context, profile Profile, credential, prompt string, options RequestOptions) (*http.Request, error) {
@@ -50,6 +53,9 @@ func BuildRequestWithOptions(ctx context.Context, profile Profile, credential, p
 	}
 	if maxTokens < 1 || maxTokens > 8192 {
 		return nil, errors.New("max tokens must be between 1 and 8192")
+	}
+	if (options.Stream || options.ImageURL != "") && (profile.Kind == KindAnthropic || profile.Kind == KindGemini || profile.Kind == KindOllama) {
+		return nil, errors.New("streaming/vision probe is supported only by OpenAI-compatible adapters")
 	}
 	var endpoint string
 	var body any
@@ -85,6 +91,15 @@ func BuildRequestWithOptions(ctx context.Context, profile Profile, credential, p
 		}
 		messages = append(messages, map[string]string{"role": "user", "content": prompt})
 		body = map[string]any{"model": profile.Model, "max_tokens": maxTokens, "messages": messages}
+		if options.Stream {
+			body.(map[string]any)["stream"] = true
+		}
+		if options.ImageURL != "" {
+			if err := ValidateImageProbeURL(options.ImageURL); err != nil {
+				return nil, err
+			}
+			body.(map[string]any)["messages"] = []map[string]any{{"role": "user", "content": []map[string]any{{"type": "text", "text": prompt}, {"type": "image_url", "image_url": map[string]string{"url": options.ImageURL}}}}}
+		}
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -96,6 +111,9 @@ func BuildRequestWithOptions(ctx context.Context, profile Profile, credential, p
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if options.Stream {
+		req.Header.Set("Accept", "text/event-stream")
+	}
 	switch profile.Kind {
 	case KindAnthropic:
 		req.Header.Set("x-api-key", credential)
@@ -103,7 +121,10 @@ func BuildRequestWithOptions(ctx context.Context, profile Profile, credential, p
 	case KindGemini:
 		req.Header.Set("x-goog-api-key", credential)
 	case KindOllama:
-		// Local Ollama may be credential-free.
+		// Local Ollama may be credential-free; authenticated proxies still use the supplied protected credential.
+		if credential != "" {
+			req.Header.Set("Authorization", "Bearer "+credential)
+		}
 	default:
 		req.Header.Set("Authorization", "Bearer "+credential)
 	}
@@ -114,6 +135,9 @@ func BuildRequestWithOptions(ctx context.Context, profile Profile, credential, p
 }
 
 func (t Tester) Test(ctx context.Context, profile Profile) ConnectionResult {
+	return t.TestWithOptions(ctx, profile, RequestOptions{MaxTokens: 64})
+}
+func (t Tester) TestWithOptions(ctx context.Context, profile Profile, options RequestOptions) ConnectionResult {
 	started := time.Now()
 	result := ConnectionResult{TestedAt: started.UTC()}
 	profile = Normalize(profile)
@@ -135,7 +159,14 @@ func (t Tester) Test(ctx context.Context, profile Profile) ConnectionResult {
 	timeout := time.Duration(profile.TimeoutSeconds) * time.Second
 	testCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req, err := BuildRequest(testCtx, profile, credential, "Reply with OK.")
+	if options.MaxTokens == 0 {
+		options.MaxTokens = 64
+	}
+	if options.MaxTokens < 16 || options.MaxTokens > 1024 {
+		result.ErrorCode = "invalid_probe_budget"
+		return result
+	}
+	req, err := BuildRequestWithOptions(testCtx, profile, credential, "Reply with OK. If an image is supplied, describe it briefly.", options)
 	if err != nil {
 		result.ErrorCode = "request_invalid"
 		return result
@@ -152,18 +183,27 @@ func (t Tester) Test(ctx context.Context, profile Profile) ConnectionResult {
 		return result
 	}
 	defer resp.Body.Close()
-	read, copyErr := io.Copy(io.Discard, io.LimitReader(resp.Body, profile.MaxResponseBytes+1))
+	data, copyErr := io.ReadAll(io.LimitReader(resp.Body, profile.MaxResponseBytes+1))
 	if copyErr != nil {
 		result.ErrorCode = "response_read_error"
 		return result
 	}
-	if read > profile.MaxResponseBytes {
+	if int64(len(data)) > profile.MaxResponseBytes {
 		result.ErrorCode = "response_too_large"
 		return result
 	}
 	result.StatusCode = resp.StatusCode
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		result.ErrorCode = "http_" + strconv.Itoa(resp.StatusCode)
+		return result
+	}
+	var usable bool
+	if options.Stream {
+		usable, result.Acknowledged, result.ErrorCode = InspectStreamProbe(data)
+	} else {
+		usable, result.Acknowledged, result.ErrorCode = InspectJSONProbe(profile.Kind, data)
+	}
+	if !usable {
 		return result
 	}
 	result.OK = true

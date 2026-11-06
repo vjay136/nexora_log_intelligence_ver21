@@ -27,25 +27,25 @@ docker exec "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres -c 'cr
 # Optional genuine prior-release SQL qualification; never connect to live DBs.
 if [[ -n ${NLI_PREVIOUS_SUPABASE_SCHEMA:-} ]]; then
   [[ -f $NLI_PREVIOUS_SUPABASE_SCHEMA ]] || { echo 'Previous Supabase schema file is missing' >&2; exit 1; }
-  docker exec "$container" createdb -h 127.0.0.1 -U postgres nli_r6_upgrade
-  docker exec "$container" psql -d nli_r6_upgrade -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres -c 'create schema storage; create table storage.buckets (id text primary key, name text not null, public boolean not null, file_size_limit bigint, allowed_mime_types text[]);' >/dev/null
+  docker exec "$container" createdb -h 127.0.0.1 -U postgres nli_r7_upgrade
+  docker exec "$container" psql -d nli_r7_upgrade -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres -c 'create schema storage; create table storage.buckets (id text primary key, name text not null, public boolean not null, file_size_limit bigint, allowed_mime_types text[]);' >/dev/null
   sed "s/__NLI_CONTROLLER_SECRET_SHA256__/$digest/" "$NLI_PREVIOUS_SUPABASE_SCHEMA" >"$scratch/previous-schema.sql"
-  docker exec -i "$container" psql -d nli_r6_upgrade -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres <"$scratch/previous-schema.sql" >/dev/null
-  docker exec -i "$container" psql -d nli_r6_upgrade -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres <<SQL >"$scratch/r6-before"
+  docker exec -i "$container" psql -d nli_r7_upgrade -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres <"$scratch/previous-schema.sql" >/dev/null
+  docker exec -i "$container" psql -d nli_r7_upgrade -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres <<SQL >"$scratch/r7-before-upgrade"
 set role anon;
 set request.headers = '{"x-nli-controller-secret":"$secret"}';
-select public.nli_put_document('parser-packs','r6-preserved','published','{"parser":{"pattern_type":"regex","pattern":"(?P<message>.+)"},"baseline":"21.0.0-6"}'::jsonb,'$payload_digest','r6-admin',false);
+select public.nli_put_document('parser-packs','r7-preserved','published','{"parser":{"pattern_type":"regex","pattern":"(?P<message>.+)"},"baseline":"21.0.0-7"}'::jsonb,'$payload_digest','r8-admin',false);
 reset role;
-select md5(row_to_json(d)::text) from public.nli_documents d where collection='parser-packs' and document_id='r6-preserved' and revision=1;
+select md5(row_to_json(d)::text) from public.nli_documents d where collection='parser-packs' and document_id='r7-preserved' and revision=1;
 SQL
-  docker exec -i "$container" psql -d nli_r6_upgrade -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres <"$scratch/schema.sql" >/dev/null
-  docker exec -i "$container" psql -d nli_r6_upgrade -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres <<SQL >"$scratch/r6-after"
-select md5(row_to_json(d)::text) from public.nli_documents d where collection='parser-packs' and document_id='r6-preserved' and revision=1;
+  docker exec -i "$container" psql -d nli_r7_upgrade -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres <"$scratch/schema.sql" >/dev/null
+  docker exec -i "$container" psql -d nli_r7_upgrade -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres <<SQL >"$scratch/r7-after-upgrade"
+select md5(row_to_json(d)::text) from public.nli_documents d where collection='parser-packs' and document_id='r7-preserved' and revision=1;
 set role anon;
 set request.headers = '{"x-nli-controller-secret":"$secret"}';
-select public.nli_health()->>'bootstrap_release' = '21.0.0-7' and public.nli_get_document('parser-packs','r6-preserved',1)->'payload'->>'baseline' = '21.0.0-6';
+select public.nli_health()->>'bootstrap_release' = '21.0.0-8' and public.nli_get_document('parser-packs','r7-preserved',1)->'payload'->>'baseline' = '21.0.0-7';
 SQL
-  [[ $(tail -n1 "$scratch/r6-before") == $(head -n1 "$scratch/r6-after") && $(tail -n1 "$scratch/r6-after") == 't' ]] || { echo 'Genuine R6 to R7 SQL upgrade changed existing metadata' >&2; exit 1; }
+  [[ $(tail -n1 "$scratch/r7-before-upgrade") == $(head -n1 "$scratch/r7-after-upgrade") && $(tail -n1 "$scratch/r7-after-upgrade") == 't' ]] || { echo 'Genuine R7 to R8 SQL upgrade changed existing metadata' >&2; exit 1; }
 fi
 
 docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres <"$scratch/schema.sql" >/dev/null
@@ -76,32 +76,32 @@ if docker exec "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -At -U postgres
   echo 'Supabase anon role bypassed direct-table denial' >&2
   exit 1
 fi
-# R7 is a persistence-compatible RPC v1 extension, not a new document schema.
-# Preserve a pre-existing R6-shaped parser document and the exact NFI JSONB
+# R8 is a persistence-compatible RPC v1 extension, not a new document schema.
+# Preserve a pre-existing R7-shaped parser document and the exact NFI JSONB
 # plan (including null/array/object values) across a complete bootstrap rerun.
-docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres <<SQL >"$scratch/r7-before"
+docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres <<SQL >"$scratch/r8-before"
 set role anon;
 set request.headers = '{"x-nli-controller-secret":"$secret"}';
-select public.nli_put_document('parser-packs','r6-preserved','published','{"parser":{"pattern_type":"regex","pattern":"(?P<message>.+)"},"baseline":"21.0.0-6"}'::jsonb,'$payload_digest','r6-admin',false)->>'revision';
-select public.nli_put_document('parser-packs','nfi-r7','draft','{"parser":{"pattern_type":"mapping","mapping_plan":{"version":1,"fields":[{"name":"event","method":"position","source":"8","operations":[{"op":"split","delimiter":";","part":2}]},{"name":"optional_value","method":"json_path","source":"value","policy":"nullable","null_policy":"preserve_null"}]},"service_scope":["smtp-in"],"scope_pattern":"Note;","reviewed_global_scope":false},"typed":{"empty":"","null":null,"array":[1,null,"0042"],"object":{"ok":true}}}'::jsonb,'$payload_digest','r7-admin',false)->>'revision';
-select public.nli_put_document('parser-packs','nfi-r7','in_review',public.nli_get_document('parser-packs','nfi-r7',1)->'payload','$payload_digest','r7-admin',false)->>'revision';
+select public.nli_put_document('parser-packs','r7-preserved','published','{"parser":{"pattern_type":"regex","pattern":"(?P<message>.+)"},"baseline":"21.0.0-7"}'::jsonb,'$payload_digest','r8-admin',false)->>'revision';
+select public.nli_put_document('parser-packs','nfi-r8','draft','{"parser":{"pattern_type":"mapping","mapping_plan":{"version":1,"fields":[{"name":"event","method":"position","source":"8","operations":[{"op":"split","delimiter":";","part":2}]},{"name":"optional_value","method":"json_path","source":"value","policy":"nullable","null_policy":"preserve_null"}]},"service_scope":["smtp-in"],"scope_pattern":"Note;","reviewed_global_scope":false},"typed":{"empty":"","null":null,"array":[1,null,"0042"],"object":{"ok":true}}}'::jsonb,'$payload_digest','r8-admin',false)->>'revision';
+select public.nli_put_document('parser-packs','nfi-r8','in_review',public.nli_get_document('parser-packs','nfi-r8',1)->'payload','$payload_digest','r8-admin',false)->>'revision';
 reset role;
 select md5(string_agg(row_to_json(d)::text, '|' order by collection,document_id,revision)) from public.nli_documents d;
 SQL
 # Direct table access for the checksum requires the test's postgres owner role.
 docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres <"$scratch/schema.sql" >/dev/null
-docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres <<SQL >"$scratch/r7-after"
+docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres <<SQL >"$scratch/r8-after"
 select md5(string_agg(row_to_json(d)::text, '|' order by collection,document_id,revision)) from public.nli_documents d;
 set role anon;
 set request.headers = '{"x-nli-controller-secret":"$secret"}';
-select public.nli_health()->>'bootstrap_release' = '21.0.0-7' and public.nli_health()->>'schema_version' = '1' and public.nli_health()->'persistence_capabilities' ? 'nfi_mapping_plan_metadata';
-select public.nli_get_document('parser-packs','r6-preserved',1)->'payload'->>'baseline' = '21.0.0-6';
-select public.nli_get_document('parser-packs','nfi-r7',0)->>'state' = 'in_review' and public.nli_get_document('parser-packs','nfi-r7',0)->>'revision' = '2';
-select public.nli_get_document('parser-packs','nfi-r7',1)->'payload' = public.nli_get_document('parser-packs','nfi-r7',2)->'payload';
-select public.nli_get_document('parser-packs','nfi-r7',2)->'payload'->'typed' = '{"empty":"","null":null,"array":[1,null,"0042"],"object":{"ok":true}}'::jsonb;
-select public.nli_get_document('parser-packs','nfi-r7',2)->'payload'->'parser'->'mapping_plan'->'fields'->0->'operations'->0->>'delimiter' = ';';
+select public.nli_health()->>'bootstrap_release' = '21.0.0-8' and public.nli_health()->>'schema_version' = '1' and public.nli_health()->'persistence_capabilities' ? 'nfi_mapping_plan_metadata';
+select public.nli_get_document('parser-packs','r7-preserved',1)->'payload'->>'baseline' = '21.0.0-7';
+select public.nli_get_document('parser-packs','nfi-r8',0)->>'state' = 'in_review' and public.nli_get_document('parser-packs','nfi-r8',0)->>'revision' = '2';
+select public.nli_get_document('parser-packs','nfi-r8',1)->'payload' = public.nli_get_document('parser-packs','nfi-r8',2)->'payload';
+select public.nli_get_document('parser-packs','nfi-r8',2)->'payload'->'typed' = '{"empty":"","null":null,"array":[1,null,"0042"],"object":{"ok":true}}'::jsonb;
+select public.nli_get_document('parser-packs','nfi-r8',2)->'payload'->'parser'->'mapping_plan'->'fields'->0->'operations'->0->>'delimiter' = ';';
 SQL
-[[ $(tail -n1 "$scratch/r7-before") == $(head -n1 "$scratch/r7-after") ]] || { echo 'Bootstrap rerun changed existing document revisions' >&2; exit 1; }
-[[ $(tail -n +2 "$scratch/r7-after" | tr '\n' ' ') == 't t t t t t ' ]] || { echo 'R7 NFI JSONB/review/R6 persistence contract failed' >&2; exit 1; }
+[[ $(tail -n1 "$scratch/r8-before") == $(head -n1 "$scratch/r8-after") ]] || { echo 'Bootstrap rerun changed existing document revisions' >&2; exit 1; }
+[[ $(tail -n +2 "$scratch/r8-after" | tr '\n' ' ') == 't t t t t t ' ]] || { echo 'R8 NFI JSONB/review/R7 persistence contract failed' >&2; exit 1; }
 
 echo 'Supabase schema/RLS/RPC contract: PASS'

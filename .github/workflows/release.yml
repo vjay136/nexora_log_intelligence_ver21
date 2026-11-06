@@ -1,4 +1,4 @@
-name: NLI V21 R7 release
+name: NLI V21 R8 release
 
 on:
   push:
@@ -28,6 +28,19 @@ on:
       - 'docs/V21_R7_TEST_RESULTS.md'
       - 'docs/V21_R7_MAPPING_DESIGN.md'
       - 'docs/V21_R7_FIELD_MAPPING_GUIDE.md'
+      - 'docs/V21_R8_RELEASE_NOTES.md'
+      - 'docs/V21_R8_TEST_RESULTS.md'
+      - 'docs/V21_R8_DESIGN_ENGINE_DESIGN.md'
+      - 'docs/V21_R8_DESIGN_ENGINE_GUIDE.md'
+      - 'docs/V21_R8_OUTPUT_ACCOUNTING_GUIDE.md'
+      - 'docs/V21_R8_AI_PROVIDER_GUIDE.md'
+      - 'web/design-engine.js'
+      - 'web/design-engine.css'
+      - 'web/index.html'
+      - 'scripts/build-webapp.mjs'
+      - 'scripts/export-webapp.mjs'
+      - 'scripts/nli-output-audit.py'
+      - 'tests/design-engine-contract.test.js'
       - 'docs/VER21_IMPLEMENTATION_PLAN.md'
       - 'README.md'
       - 'CHANGELOG.md'
@@ -36,7 +49,7 @@ on:
   workflow_dispatch:
     inputs:
       previous_release_tag:
-        description: 'Previous production tag used for upgrade/rollback qualification; defaults to Ver21 R6'
+        description: 'Previous production tag used for upgrade/rollback qualification; defaults to Ver21 R7'
         required: false
         type: string
 
@@ -54,8 +67,8 @@ jobs:
         env:
           NLI_BUILD_SCRATCH: ${{ runner.temp }}
         run: |
-          git show v21.0.0-6:supabase/nli_schema.sql > '${{ runner.temp }}/nli-r6-schema.sql'
-          NLI_PREVIOUS_SUPABASE_SCHEMA='${{ runner.temp }}/nli-r6-schema.sql' make release-static
+          git show v21.0.0-7:supabase/nli_schema.sql > '${{ runner.temp }}/nli-r7-schema.sql'
+          NLI_PREVIOUS_SUPABASE_SCHEMA='${{ runner.temp }}/nli-r7-schema.sql' make release-static
       - name: Test Go and Web contracts
         run: |
           go test ./...
@@ -93,7 +106,7 @@ jobs:
       - name: Download genuine previous release RPMs
         env:
           GH_TOKEN: ${{ github.token }}
-          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-6' }}
+          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-7' }}
           PREVIOUS_RELEASE_REPO: ${{ github.repository }}
         run: |
           mkdir -p '${{ runner.temp }}/previous'
@@ -124,7 +137,7 @@ jobs:
         run: make release-rocky OUTPUT_DIR='${{ runner.temp }}/nli-release' PREVIOUS_DIR='${{ runner.temp }}/previous'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2; Node.js 24
         with:
-          name: nli-v21-r7-unsigned-release
+          name: nli-v21-r8-unsigned-release
           path: ${{ runner.temp }}/nli-release/
           if-no-files-found: error
           retention-days: 14
@@ -142,6 +155,6 @@ jobs:
             gh release create "$GITHUB_REF_NAME" "${release_assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Nexora Log Intelligence Ver21 — $GITHUB_REF_NAME" \
-              --notes-file docs/V21_R7_RELEASE_NOTES.md \
+              --notes-file docs/V21_R8_RELEASE_NOTES.md \
               --latest
           fi

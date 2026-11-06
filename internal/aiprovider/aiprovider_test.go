@@ -209,7 +209,16 @@ func TestProviderSpecificConnectionRequests(t *testing.T) {
 					requestError = "request body is not JSON"
 				}
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"ok":true}`))
+				payload := `{"choices":[{"message":{"content":"OK"}}]}`
+				switch test.kind {
+				case KindAnthropic:
+					payload = `{"content":[{"type":"text","text":"OK"}]}`
+				case KindGemini:
+					payload = `{"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}`
+				case KindOllama:
+					payload = `{"message":{"content":"OK"}}`
+				}
+				_, _ = w.Write([]byte(payload))
 			}))
 			defer server.Close()
 			id := strings.ReplaceAll(string(test.kind), "_", "-")

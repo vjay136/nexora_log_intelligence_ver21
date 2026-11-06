@@ -816,7 +816,7 @@ func (s *Server) handleAIProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := safeID(parts[0])
-	if id == "" {
+	if id == "" || id != parts[0] {
 		jsonError(w, "invalid AI proposal id", http.StatusBadRequest)
 		return
 	}
@@ -824,13 +824,15 @@ func (s *Server) handleAIProposal(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 {
 		action = parts[1]
 	}
-	if action != "" && action != "approve" {
+	if action != "" && action != "approve" && action != "reject" {
 		jsonError(w, "unknown AI proposal action", http.StatusNotFound)
 		return
 	}
 	permission := middleware.PermissionReadParsers
-	if action == "approve" {
+	if action == "approve" || action == "reject" {
 		permission = middleware.PermissionReviewParsers
+	} else if r.Method == http.MethodDelete && action == "" {
+		permission = middleware.PermissionManageParsers
 	}
 	principal := s.authorize(w, r, permission)
 	if principal == nil {
@@ -842,8 +844,19 @@ func (s *Server) handleAIProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if action == "" {
+		if r.Method == http.MethodDelete {
+			if err := s.metadata.Delete(r.Context(), "ai-proposals", id, false, principal.Username); err != nil {
+				jsonError(w, "AI proposal removal failed", http.StatusInternalServerError)
+				return
+			}
+			s.auditAction(principal, "ai-proposal.delete", "ai-proposals/"+id, "success", nil)
+			event, _ := json.Marshal(map[string]any{"type": "ai_proposal_changed", "id": id, "status": "deleted", "updated_at": time.Now().UTC()})
+			s.hub.Publish(event)
+			jsonOK(w, map[string]any{"id": id, "status": "deleted", "parser_pack_changed": false, "note": "Proposal removed from the review queue; derived parsers are unchanged. Use parser offboard or rollback and the fleet approval/acknowledgement flow to revoke an active pack."})
+			return
+		}
 		if r.Method != http.MethodGet {
-			jsonError(w, "GET required", http.StatusMethodNotAllowed)
+			jsonError(w, "GET or DELETE required", http.StatusMethodNotAllowed)
 			return
 		}
 		jsonOK(w, documentView(doc))
@@ -855,6 +868,32 @@ func (s *Server) handleAIProposal(w http.ResponseWriter, r *http.Request) {
 	}
 	if doc.State != "draft" {
 		jsonError(w, "AI proposal is not awaiting review", http.StatusConflict)
+		return
+	}
+	if action == "reject" {
+		var input struct {
+			Reason string `json:"reason"`
+		}
+		if decodeJSON(r, &input, 4<<10) != nil || strings.TrimSpace(input.Reason) == "" || len(strings.TrimSpace(input.Reason)) > 512 {
+			jsonError(w, "Rejection reason must contain 1..512 characters", http.StatusBadRequest)
+			return
+		}
+		var payload map[string]any
+		if json.Unmarshal(doc.Payload, &payload) != nil {
+			jsonError(w, "Stored AI proposal is invalid", http.StatusInternalServerError)
+			return
+		}
+		payload["review_state"], payload["reviewed_by"], payload["rejection_reason"] = "rejected", principal.Username, strings.TrimSpace(input.Reason)
+		encoded, _ := json.Marshal(payload)
+		saved, err := s.metadata.Put(r.Context(), metastore.Document{Collection: "ai-proposals", ID: id, State: "rejected", Payload: encoded, CreatedBy: doc.CreatedBy})
+		if err != nil {
+			jsonError(w, "AI proposal rejection failed", http.StatusInternalServerError)
+			return
+		}
+		s.auditAction(principal, "ai-proposal.reject", "ai-proposals/"+id, "success", nil)
+		event, _ := json.Marshal(map[string]any{"type": "ai_proposal_changed", "id": id, "status": "rejected", "updated_at": time.Now().UTC()})
+		s.hub.Publish(event)
+		jsonOK(w, map[string]any{"proposal": documentView(saved), "parser_pack_changed": false})
 		return
 	}
 	if !principalCanReviewChange(principal, doc.CreatedBy) {

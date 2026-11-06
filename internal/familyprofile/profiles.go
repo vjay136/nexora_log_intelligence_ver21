@@ -92,6 +92,14 @@ func resolve(directory string, isolateInvalid bool) ([]Profile, []ManagedPackDia
 	}
 	managedIDs := make(map[string]struct{}, len(managed))
 	for _, profile := range managed {
+		if _, builtin := expectedBuiltinIDs[profile.Pack.ID]; builtin || profile.Pack.ID == "smtp_native_v5" {
+			reason := fmt.Sprintf("managed add-on identity %q conflicts with a protected built-in parser", profile.Pack.ID)
+			if !isolateInvalid {
+				return nil, diagnostics, fmt.Errorf("%s", reason)
+			}
+			diagnostics = append(diagnostics, ManagedPackDiagnostic{Name: profile.Name, Reason: reason})
+			continue
+		}
 		if _, duplicate := managedIDs[profile.Pack.ID]; duplicate {
 			return nil, diagnostics, fmt.Errorf("managed parser generation repeats pack ID %q", profile.Pack.ID)
 		}
@@ -261,6 +269,13 @@ func LooksLikePackDocument(data []byte) bool {
 }
 
 func compile(name string, data []byte, managed, builtin bool) (Profile, error) {
+	return compileContext(context.Background(), name, data, managed, builtin)
+}
+
+func compileContext(ctx context.Context, name string, data []byte, managed, builtin bool) (Profile, error) {
+	if err := ctx.Err(); err != nil {
+		return Profile{}, err
+	}
 	pack, err := parserpolicy.LoadParserPackBytes(data)
 	if err != nil {
 		return Profile{}, err
@@ -293,7 +308,7 @@ func compile(name string, data []byte, managed, builtin bool) (Profile, error) {
 		return Profile{}, err
 	}
 	if pack.ReviewState == parserpolicy.ReviewStateApproved {
-		if err := runApprovedRegressions(pack, executor); err != nil {
+		if err := runApprovedRegressionsContext(ctx, pack, executor); err != nil {
 			return Profile{}, fmt.Errorf("approved pack regression failed: %w", err)
 		}
 	}
@@ -305,18 +320,54 @@ func compile(name string, data []byte, managed, builtin bool) (Profile, error) {
 // published fleet bundle, preventing an unreviewed pack from ever reaching a
 // client generation.
 func ValidateManagedPackBytes(name string, data []byte) (*parserpolicy.ParserPack, error) {
-	profile, err := compile(name, data, true, false)
+	return ValidateManagedPackBytesContext(context.Background(), name, data)
+}
+
+func ValidateManagedPackBytesContext(ctx context.Context, name string, data []byte) (*parserpolicy.ParserPack, error) {
+	profile, err := CompileManagedPayloadContext(ctx, name, data)
 	if err != nil {
 		return nil, err
 	}
 	return profile.Pack, nil
 }
 
+// CompileManagedPayload applies the same immutable approval/regression gate to
+// controller snapshots without constructing a temporary parser directory.
+func CompileManagedPayload(name string, data []byte) (Profile, error) {
+	return CompileManagedPayloadContext(context.Background(), name, data)
+}
+
+func CompileManagedPayloadContext(ctx context.Context, name string, data []byte) (Profile, error) {
+	if len(data) == 0 || len(data) > parserpolicy.MaxPackSize {
+		return Profile{}, fmt.Errorf("managed parser payload exceeds bounds")
+	}
+	profile, err := compileContext(ctx, name, data, true, false)
+	if err != nil {
+		return Profile{}, err
+	}
+	if IsBuiltinPackID(profile.Pack.ID) {
+		return Profile{}, fmt.Errorf("managed add-on identity conflicts with protected built-in parser %q", profile.Pack.ID)
+	}
+	return profile, nil
+}
+
+func IsBuiltinPackID(id string) bool {
+	_, ok := expectedBuiltinIDs[id]
+	return ok || id == "smtp_native_v5"
+}
+
 func runApprovedRegressions(pack *parserpolicy.ParserPack, executor *parserpolicy.ParserPackExecutor) error {
+	return runApprovedRegressionsContext(context.Background(), pack, executor)
+}
+
+func runApprovedRegressionsContext(ctx context.Context, pack *parserpolicy.ParserPack, executor *parserpolicy.ParserPackExecutor) error {
 	for _, regression := range pack.RegressionCases {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		result, err := executor.Execute(&parserpolicy.ExecutionRequest{
 			Input: regression.Input, Service: regression.Service, SourceType: regression.SourceType,
-			NodeID: "profile-validation", Context: context.Background(),
+			NodeID: "profile-validation", Context: ctx,
 		})
 		if err != nil {
 			return fmt.Errorf("%s: %w", regression.Name, err)

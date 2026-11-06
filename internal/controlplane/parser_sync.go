@@ -286,7 +286,10 @@ func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle
 				// Reconcile both current Assurance envelopes and valid parser packs
 				// imported from older NLI releases. Invalid stale records are isolated
 				// and exposed as blocked by the catalog API instead of breaking sync.
-				pack, encoded, compatibilityErr := runtimeParserPackForDocument(doc)
+				pack, encoded, compatibilityErr := runtimeParserPackForDocumentContext(ctx, doc)
+				if ctx.Err() != nil {
+					return bundle, ctx.Err()
+				}
 				if compatibilityErr != nil {
 					continue
 				}

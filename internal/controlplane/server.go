@@ -132,6 +132,8 @@ type Server struct {
 	fieldSenseOnce           sync.Once
 	fieldSense               *fieldSenseAdmission
 	parserMutationMu         sync.Mutex
+	automaticRuntimeMu       sync.Mutex
+	automaticRuntime         *automaticRuntimeSnapshot
 }
 
 func New(cfg Config) (*Server, error) {
@@ -556,6 +558,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/assurance/mapping-preview", guard(middleware.PermissionParsePreview, s.handleMappingPreview))
 	s.mux.HandleFunc("/api/v1/field-mapping", guard(middleware.PermissionReadParsers, s.handleFieldMappingStatus))
 	s.mux.HandleFunc("/api/v1/field-mapping/suggest", guard(middleware.PermissionParsePreview, s.handleFieldMappingSuggest))
+	s.mux.HandleFunc("/api/v1/field-mapping/ai-suggest", guard(middleware.PermissionParsePreview, s.handleFieldMappingAISuggest))
 	s.mux.HandleFunc("/api/v1/assurance/cases", s.handleAssuranceCases)
 	s.mux.HandleFunc("/api/v1/assurance/cases/", s.handleAssuranceCase)
 	s.mux.HandleFunc("/api/v1/assurance/parsers", s.handleAssuranceParsers)
@@ -571,6 +574,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/admin/ai-provider", s.handleAIProvider)
 	s.mux.HandleFunc("/api/v1/admin/ai-provider/test", s.handleAIProviderTest)
 	s.mux.HandleFunc("/api/v1/admin/ai-usage", guard(middleware.PermissionReadTelemetry, s.handleAIUsage))
+	s.mux.HandleFunc("/api/v1/ai/capabilities", guard(middleware.PermissionReadTelemetry, s.handleAICapabilities))
 	s.mux.HandleFunc("/api/v1/migration/import", guard(middleware.PermissionMigration, s.handleMigrationImport))
 	s.mux.HandleFunc("/api/v1/migration/reports", guard(middleware.PermissionReadParsers, s.handleMigrationReports))
 	s.mux.HandleFunc("/api/v1/migration/reports/", guard(middleware.PermissionReadParsers, s.handleMigrationReport))

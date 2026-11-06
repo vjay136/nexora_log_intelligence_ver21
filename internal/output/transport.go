@@ -78,11 +78,18 @@ func post(client *http.Client, cfg Config, request func() (*http.Request, error)
 		if err == nil {
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 65536))
 			_ = resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			accepted := resp.StatusCode >= 200 && resp.StatusCode < 300
+			// Loki uses its nonstandard HTTP260 response when ingestion is
+			// blocked. It is not an acknowledgement, despite being in the2xx
+			// range. Preserve200 reverse-proxy compatibility; native push is204.
+			if cfg.Type == "loki" {
+				accepted = resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK
+			}
+			if accepted {
 				return nil
 			}
 			err = fmt.Errorf("HTTP %d", resp.StatusCode)
-			if resp.StatusCode != 408 && resp.StatusCode != 429 && resp.StatusCode < 500 {
+			if resp.StatusCode != 408 && resp.StatusCode != 429 && !(cfg.Type == "loki" && resp.StatusCode == 260) && resp.StatusCode < 500 {
 				return err
 			}
 		}

@@ -597,7 +597,7 @@ func TestAIFailureProposalIsDiagnosticReviewOnlyAndDoesNotRetainRaw(t *testing.T
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": `{"name":"SMTP status extractor","description":"Add a bounded status capture and validate it against the failed sample.","parser":{"pattern_type":"regex","pattern":"status=(?P<status>\\w+)","fields":[{"name":"status","source":"group:status","type":"string"}]},"regex":{"pattern":"status=(?P<status>\\w+)","fields":[{"name":"status","source":"group:status","type":"string"}]},"template":{"pattern_type":"regex","pattern":"status=(?P<status>\\w+)"},"kv":{"delimiter":"="},"field_mapping":{"status":"group:status"},"projection":{"fields":["status"]}}`}}}})
 	}))
 	defer provider.Close()
-	if err := f.server.storeAIProvider(context.Background(), aiProviderConfig{Provider: "openai", BaseURL: provider.URL, Model: "test-model", APIKey: "test-api-key"}, "admin"); err != nil {
+	if err := f.server.storeAIProvider(context.Background(), aiProviderConfig{Enabled: true, Provider: "openai", BaseURL: provider.URL, Model: "test-model", APIKey: "test-api-key"}, "admin"); err != nil {
 		t.Fatal(err)
 	}
 	raw := "user=private@example.com status=FAILED"

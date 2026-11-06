@@ -1077,9 +1077,9 @@ rendered = source.replace(placeholder, digest)
 rendered = rendered.replace(
     "-- Do not run this template directly. `sudo nli-controller-setup` renders an\n"
     "-- installation-specific copy at /root/nli-supabase-bootstrap.sql.",
-    "-- Generated installation-specific bootstrap for Ver21 R7 (21.0.0-7).\n"
+    "-- Generated installation-specific bootstrap for Ver21 R8 (21.0.0-8).\n"
     "-- Run this COMPLETE generated file in this project's Supabase SQL Editor.\n"
-    "-- RPC schema version 1 remains compatible with existing R6 metadata."
+    "-- RPC schema version 1 remains compatible with existing R7 metadata."
 )
 if placeholder in rendered:
     raise SystemExit("Supabase bootstrap contains an unresolved placeholder")

@@ -134,7 +134,15 @@ func TestManagedGenerationReplacementAndRollbackAreDeterministic(t *testing.T) {
 	builtin := findProfile(t, builtins, "nli_reviewed_pop").Pack
 	directory := t.TempDir()
 
-	updated := clonePack(t, builtin)
+	prior := clonePack(t, builtin)
+	prior.ID = "managed_pop_extension"
+	for index := range prior.RegressionCases {
+		prior.RegressionCases[index].ExpectedParser = strings.Replace(prior.RegressionCases[index].ExpectedParser, builtin.ID, prior.ID, 1)
+	}
+	if err := parserpolicy.SealParserPack(prior); err != nil {
+		t.Fatal(err)
+	}
+	updated := clonePack(t, prior)
 	updated.ReviewState = parserpolicy.ReviewStateApproved
 	updated.ActivatedAt = nil
 	updated.Revision = 2
@@ -144,21 +152,24 @@ func TestManagedGenerationReplacementAndRollbackAreDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	active := findProfile(t, resolved, builtin.ID)
+	active := findProfile(t, resolved, prior.ID)
 	if !active.Managed || active.Pack.Revision != 2 || active.Pack.ReviewState != parserpolicy.ReviewStateApproved {
 		t.Fatalf("managed active generation was not selected: %+v", active)
 	}
 
 	// The controller rollback is an atomic directory-generation swap. Loading
 	// the restored prior bytes must therefore restore the prior immutable pack.
-	writePack(t, directory, builtin)
+	writePack(t, directory, prior)
 	resolved, err = Resolve(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rolledBack := findProfile(t, resolved, builtin.ID)
-	if !rolledBack.Managed || rolledBack.Pack.Revision != 1 || rolledBack.Pack.SHA256 != builtin.SHA256 {
+	rolledBack := findProfile(t, resolved, prior.ID)
+	if !rolledBack.Managed || rolledBack.Pack.Revision != 1 || rolledBack.Pack.SHA256 != prior.SHA256 {
 		t.Fatalf("rollback generation was not selected: %+v", rolledBack)
+	}
+	if findProfile(t, resolved, builtin.ID).Managed || findProfile(t, resolved, builtin.ID).Pack.SHA256 != builtin.SHA256 {
+		t.Fatal("managed update/rollback displaced embedded parser")
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"nexora.local/nli-v20/internal/drain"
+	"nexora.local/nli-v20/internal/masker"
 	"nexora.local/nli-v20/internal/registry"
 )
 
@@ -52,6 +53,7 @@ type Discoverer struct {
 	pending          []PendingCluster
 	hourly           []time.Time // timestamps of recent calls for rate limiting
 	mu               sync.Mutex
+	batchMu          sync.Mutex
 	reg              *registry.Registry
 	miner            *drain.Miner
 	stateDir         string
@@ -144,7 +146,28 @@ func truncateUTF8(value string, maxBytes int) string {
 }
 
 // RunBatch processes pending clusters that have reached MinClusterSize.
+func (d *Discoverer) StartBatch(ctx context.Context, clusterSizes map[int]int) bool {
+	if !d.cfg.Enabled || ctx.Err() != nil || !d.batchMu.TryLock() {
+		return false
+	}
+	sizes := make(map[int]int, len(clusterSizes))
+	for id, size := range clusterSizes {
+		sizes[id] = size
+	}
+	go func() {
+		defer d.batchMu.Unlock()
+		if err := d.runBatch(ctx, sizes); err != nil {
+			fmt.Fprintln(os.Stderr, "ai: optional discovery batch failed; live parser unchanged")
+		}
+	}()
+	return true
+}
 func (d *Discoverer) RunBatch(ctx context.Context, clusterSizes map[int]int) error {
+	d.batchMu.Lock()
+	defer d.batchMu.Unlock()
+	return d.runBatch(ctx, clusterSizes)
+}
+func (d *Discoverer) runBatch(ctx context.Context, clusterSizes map[int]int) error {
 	if !d.cfg.Enabled {
 		return nil
 	}
@@ -167,17 +190,13 @@ func (d *Discoverer) RunBatch(ctx context.Context, clusterSizes map[int]int) err
 
 	for _, pending := range ready {
 		if !d.checkRateLimit() {
-			d.mu.Lock()
-			d.pending = append([]PendingCluster{pending}, d.pending...)
-			d.mu.Unlock()
+			d.requeue(pending)
 			continue
 		}
 		parserDef, err := d.discoverParser(ctx, pending)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ai: cluster %d discovery failed: %v\n", pending.ClusterID, err)
-			d.mu.Lock()
-			d.pending = append(d.pending, pending)
-			d.mu.Unlock()
+			d.requeue(pending)
 			continue
 		}
 		if err := registry.Validate(parserDef); err != nil {
@@ -204,7 +223,28 @@ func (d *Discoverer) RunBatch(ctx context.Context, clusterSizes map[int]int) err
 	return nil
 }
 
+func (d *Discoverer) requeue(pending PendingCluster) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for index := range d.pending {
+		if d.pending[index].ClusterID == pending.ClusterID {
+			for _, sample := range pending.Samples {
+				if len(d.pending[index].Samples) < 5 {
+					d.pending[index].Samples = append(d.pending[index].Samples, sample)
+				}
+			}
+			return
+		}
+	}
+	if len(d.pending) >= d.cfg.MaxPendingClusters {
+		d.droppedPending++
+		return
+	}
+	d.pending = append(d.pending, pending)
+}
 func (d *Discoverer) checkRateLimit() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	now := time.Now()
 	cutoff := now.Add(-time.Hour)
 	fresh := d.hourly[:0]
@@ -242,7 +282,7 @@ func buildPrompt(pc PendingCluster) string {
 	b.WriteString(`{"id":"service.event","version":1,"description":"...","format":"plain|json|kvpairs|syslog_rfc3164|clf","pattern_type":"grok|regex","pattern":"anchored full-record pattern with named fields","fields":[{"name":"fieldname","source":"group:fieldname or kv:key or json:key or token:N","type":"string|integer|float|boolean|ip|timestamp","required":false}],"tests":[{"input":"exact sample","expected":{"field":"value"}}]}`)
 	b.WriteString("\n\nLog samples:\n")
 	for i, s := range pc.Samples {
-		fmt.Fprintf(&b, "%d: %s\n", i+1, s)
+		fmt.Fprintf(&b, "%d: %s\n", i+1, masker.New(nil).MaskForTemplate(masker.MaskSecrets(s)))
 	}
 	b.WriteString("\nReturn ONLY the JSON object. No explanation, no code, no shell commands.")
 	return b.String()
