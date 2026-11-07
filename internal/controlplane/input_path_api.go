@@ -1,11 +1,11 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +13,23 @@ import (
 	"nexora.local/nli-v20/internal/middleware"
 	metastore "nexora.local/nli-v20/internal/store"
 )
+
+const maxInputPathRolloutTargets = 4096
+
+func inputPathRequiresV22(inputs []any) bool {
+	for _, value := range inputs {
+		if input, ok := value.(map[string]any); ok && input["disabled"] == true {
+			return true
+		}
+	}
+	return len(inputs) == 0
+}
+
+func inputPathClientSupportsV22(version string) bool {
+	major, _, _ := strings.Cut(strings.TrimPrefix(version, "v"), ".")
+	value, err := strconv.Atoi(major)
+	return err == nil && value >= 22
+}
 
 // handleInputPathProfileRollout proposes the published profile as a validated
 // client config patch for one or more selected clients, or every eligible
@@ -58,17 +75,18 @@ func (s *Server) handleInputPathProfileRollout(w http.ResponseWriter, r *http.Re
 	var request struct {
 		NodeIDs []string `json:"node_ids"`
 	}
-	if err := decodeJSON(r, &request, 64<<10); err != nil {
+	if err := decodeJSON(r, &request, 1<<20); err != nil || len(request.NodeIDs) > maxInputPathRolloutTargets {
 		jsonError(w, "invalid input path rollout request", http.StatusBadRequest)
 		return
 	}
 	mode := "all_eligible"
 	targets := []string{}
+	requiresV22 := inputPathRequiresV22(inputs)
 	if len(request.NodeIDs) > 0 {
 		mode = "selected"
-		known := map[string]bool{}
+		known := map[string]*fleet.Node{}
 		for _, node := range s.fleet.All() {
-			known[node.ID] = true
+			known[node.ID] = node
 		}
 		seen := map[string]bool{}
 		for _, nodeID := range request.NodeIDs {
@@ -76,8 +94,13 @@ func (s *Server) handleInputPathProfileRollout(w http.ResponseWriter, r *http.Re
 			if nodeID == "" || seen[nodeID] {
 				continue
 			}
-			if !known[nodeID] {
+			node, exists := known[nodeID]
+			if !exists {
 				jsonError(w, "selected node does not exist: "+nodeID, http.StatusBadRequest)
+				return
+			}
+			if requiresV22 && !inputPathClientSupportsV22(node.Version) {
+				jsonError(w, "disabled paths and empty profiles require a Ver22 client: "+nodeID, http.StatusConflict)
 				return
 			}
 			seen[nodeID] = true
@@ -85,13 +108,17 @@ func (s *Server) handleInputPathProfileRollout(w http.ResponseWriter, r *http.Re
 		}
 	} else {
 		for _, node := range s.fleet.All() {
-			if node.Status != fleet.StatusOffline {
+			if node.Status != fleet.StatusOffline && (!requiresV22 || inputPathClientSupportsV22(node.Version)) {
 				targets = append(targets, node.ID)
 			}
 		}
 	}
 	if len(targets) == 0 {
 		jsonError(w, "no target clients are available", http.StatusConflict)
+		return
+	}
+	if len(targets) > maxInputPathRolloutTargets {
+		jsonError(w, "input path rollout exceeds the 4096-client target limit", http.StatusConflict)
 		return
 	}
 	sort.Strings(targets)
@@ -101,7 +128,7 @@ func (s *Server) handleInputPathProfileRollout(w http.ResponseWriter, r *http.Re
 		"type":               rolloutTypeConfigPush,
 		"target_nodes":       targets,
 		"payload":            map[string]any{"config_patch": map[string]any{"inputs": inputs}, "input_path_profile": map[string]any{"id": id, "revision": doc.Revision, "profile_hash": profileHash}},
-		"input_path_profile": map[string]any{"id": id, "revision": doc.Revision, "name": profile["name"], "profile_hash": profileHash, "target_mode": mode},
+		"input_path_profile": map[string]any{"id": id, "revision": doc.Revision, "name": profile["name"], "profile_hash": profileHash, "target_mode": mode, "requires_ver22": requiresV22},
 		"approval_reason":    "Input path changes require independent rollout approval and client-side config validation.",
 	}
 	s.createRolloutProposal(w, r, principal, proposal)
@@ -119,6 +146,7 @@ func (s *Server) listInputPathRollouts(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 	history := []map[string]any{}
+	liveRollouts, inputStates := s.rollouts.inputPathSnapshot(true)
 	for _, doc := range docs {
 		var payload map[string]any
 		if json.Unmarshal(doc.Payload, &payload) != nil {
@@ -130,7 +158,7 @@ func (s *Server) listInputPathRollouts(w http.ResponseWriter, r *http.Request, p
 		}
 		item := map[string]any{"id": doc.ID, "state": doc.State, "created_by": doc.CreatedBy, "created_at": doc.CreatedAt, "target_nodes": payload["target_nodes"], "profile": pathProfile}
 		if liveID := strings.TrimSpace(fmt.Sprint(payload["live_rollout_id"])); liveID != "" && liveID != "<nil>" {
-			if live, ok := s.rollouts.Get(liveID); ok {
+			if live := liveRollouts[liveID]; live != nil {
 				item["rollout"] = live
 			}
 		}
@@ -141,23 +169,13 @@ func (s *Server) listInputPathRollouts(w http.ResponseWriter, r *http.Request, p
 	})
 	clients := []map[string]any{}
 	for _, node := range s.fleet.All() {
-		stateDoc, stateErr := s.metadata.Get(r.Context(), "fleet-sync", safeID(node.ID), 0)
 		state := map[string]any{"node_id": node.ID, "status": "not_targeted"}
-		if stateErr == nil {
-			var stored map[string]any
-			if json.Unmarshal(stateDoc.Payload, &stored) == nil {
-				for _, key := range []string{"desired_input_path_profile", "applied_input_path_profile"} {
-					if target, ok := stored[key].(map[string]any); ok && fmt.Sprint(target["id"]) == profileID {
-						state[key] = target
-					}
-				}
-				if state["desired_input_path_profile"] != nil || state["applied_input_path_profile"] != nil {
-					for _, key := range []string{"input_path_sync_status", "input_path_sync_message", "input_path_sync_updated_at"} {
-						if stored[key] != nil {
-							state[key] = stored[key]
-						}
-					}
-				}
+		current := inputStates[node.ID]
+		desired, _ := current["desired_input_path_profile"].(map[string]any)
+		applied, _ := current["applied_input_path_profile"].(map[string]any)
+		if desired["id"] == profileID || applied["id"] == profileID {
+			for key, value := range current {
+				state[key] = value
 			}
 		}
 		clients = append(clients, map[string]any{"node_id": node.ID, "hostname": node.Hostname, "status": node.Status, "input_path_sync": state})
@@ -165,53 +183,70 @@ func (s *Server) listInputPathRollouts(w http.ResponseWriter, r *http.Request, p
 	jsonOK(w, map[string]any{"profile_id": profileID, "profile_revision": profile.Revision, "profile_state": profile.State, "history": history, "count": len(history), "clients": clients, "updated_at": time.Now().UTC()})
 }
 
-func (s *Server) markInputPathRolloutDesired(ctxPrincipal string, proposal map[string]any, targets []string) {
-	s.fleetSyncMu.Lock()
-	defer s.fleetSyncMu.Unlock()
-	pathProfile, _ := proposal["input_path_profile"].(map[string]any)
-	if pathProfile == nil {
-		return
+// Input status comes from the durable command results. Each client's desired
+// status belongs to its newest command, and only completed results can
+// establish an applied revision. This avoids a database request per client.
+func (m *rolloutStateManager) inputPathSnapshot(includeHistory bool) (map[string]*rolloutRecord, map[string]map[string]any) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	type deployment struct {
+		record  *rolloutRecord
+		profile map[string]any
 	}
-	for _, nodeID := range targets {
-		id := safeID(nodeID)
-		doc, _ := s.metadata.Get(context.Background(), "fleet-sync", id, 0)
-		state := map[string]any{"node_id": nodeID}
-		_ = json.Unmarshal(doc.Payload, &state)
-		state["desired_input_path_profile"] = pathProfile
-		state["input_path_sync_status"] = "pending"
-		state["input_path_sync_updated_at"] = time.Now().UTC()
-		payload, _ := json.Marshal(state)
-		_, _ = s.metadata.Put(context.Background(), metastore.Document{Collection: "fleet-sync", ID: id, State: "desired", Payload: payload, CreatedBy: ctxPrincipal})
+	ordered := []deployment{}
+	for _, item := range m.items {
+		if item.Type != rolloutTypeConfigPush || item.StartedAt == nil {
+			continue
+		}
+		var payload struct {
+			Profile map[string]any `json:"input_path_profile"`
+		}
+		if json.Unmarshal(item.Payload, &payload) == nil && payload.Profile != nil {
+			ordered = append(ordered, deployment{item, payload.Profile})
+		}
 	}
-}
-
-func (s *Server) recordInputPathRolloutResult(commandID, nodeID, status, message string) {
-	s.fleetSyncMu.Lock()
-	defer s.fleetSyncMu.Unlock()
-	rollout, ok := s.rollouts.Get(commandID)
-	if !ok || rollout == nil {
-		return
+	sort.Slice(ordered, func(i, j int) bool {
+		return ordered[i].record.StartedAt.After(*ordered[j].record.StartedAt)
+	})
+	rollouts := make(map[string]*rolloutRecord, len(ordered))
+	states := map[string]map[string]any{}
+	for _, item := range ordered {
+		live := item.record
+		copy := *live
+		if includeHistory {
+			copy.NodeResults = make(map[string]*rolloutNodeResult, len(live.NodeResults))
+		}
+		for nodeID, result := range live.NodeResults {
+			if includeHistory {
+				resultCopy := *result
+				copy.NodeResults[nodeID] = &resultCopy
+			}
+			state := states[nodeID]
+			if state == nil {
+				status := result.Status
+				if status == rolloutStatusCompleted {
+					status = "applied"
+				} else if live.Status == rolloutStatusCancelled && status != rolloutStatusFailed {
+					status = rolloutStatusCancelled
+				}
+				updatedAt := *live.StartedAt
+				if !result.DoneAt.IsZero() {
+					updatedAt = result.DoneAt
+				}
+				state = map[string]any{
+					"node_id": nodeID, "desired_input_path_profile": item.profile,
+					"input_path_sync_status": status, "input_path_sync_message": result.Message,
+					"input_path_sync_updated_at": updatedAt,
+				}
+				states[nodeID] = state
+			}
+			if result.Status == rolloutStatusCompleted && state["applied_input_path_profile"] == nil {
+				state["applied_input_path_profile"] = item.profile
+			}
+		}
+		if includeHistory {
+			rollouts[live.ID] = &copy
+		}
 	}
-	var payload map[string]any
-	if json.Unmarshal(rollout.Payload, &payload) != nil {
-		return
-	}
-	profile, _ := payload["input_path_profile"].(map[string]any)
-	if profile == nil {
-		return
-	}
-	id := safeID(nodeID)
-	doc, _ := s.metadata.Get(context.Background(), "fleet-sync", id, 0)
-	state := map[string]any{"node_id": nodeID}
-	_ = json.Unmarshal(doc.Payload, &state)
-	resultStatus := "applied"
-	if strings.EqualFold(status, "failed") || strings.EqualFold(status, "error") {
-		resultStatus = "failed"
-	}
-	state["input_path_sync_status"] = resultStatus
-	state["input_path_sync_message"] = message
-	state["input_path_sync_updated_at"] = time.Now().UTC()
-	state["applied_input_path_profile"] = profile
-	data, _ := json.Marshal(state)
-	_, _ = s.metadata.Put(context.Background(), metastore.Document{Collection: "fleet-sync", ID: id, State: "applied", Payload: data, CreatedBy: doc.CreatedBy})
+	return rollouts, states
 }

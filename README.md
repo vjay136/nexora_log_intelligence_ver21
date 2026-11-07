@@ -4,6 +4,8 @@ Nexora Log Intelligence Ver21 is a deterministic, review-gated log parsing and f
 
 > Install from the single versioned release archive in a fresh directory. Verify its external `.sha256` file and the complete internal `SHA256SUMS`; never mix loose files from different releases.
 
+Release `22.0.0-1` (Ver22) builds on Ver21 R10.1.1. See the [Ver22 release notes](docs/V22_RELEASE_NOTES.md) for upgrade details and fleet operations.
+
 Release `21.0.0-10` (Ver21 R10) builds on [Ver21 R9](https://github.com/vjay136/nexora_log_intelligence_ver21/releases/tag/v21.0.0-9). R10 improves key/value tail authoring in FieldSense and Quarantine Resolution through the shared KV Intelligence Engine. See the [release notes](docs/V21_R10_RELEASE_NOTES.md), [qualification record](docs/V21_R10_TEST_RESULTS.md) and [manager demo guide](docs/V21_R10_MANAGER_DEMO.md).
 
 ## V18 upgrade baseline architecture

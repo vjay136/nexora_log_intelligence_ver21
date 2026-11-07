@@ -43,7 +43,7 @@ func TestValidateAllowsMoreThanOneHundredBoundedInputs(t *testing.T) {
 		t.Fatalf("101 bounded inputs should be accepted: %v", err)
 	}
 	config.Inputs = make([]InputConfig, 257)
-	if err := validate(config); err == nil || !strings.Contains(err.Error(), "1..256 inputs") {
+	if err := validate(config); err == nil || !strings.Contains(err.Error(), "at most 256 paths") {
 		t.Fatalf("expected input cap error, got %v", err)
 	}
 	config.Inputs = []InputConfig{{Path: filepath.Join(root, "input.log"), Service: "test"}}

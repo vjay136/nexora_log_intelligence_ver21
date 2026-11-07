@@ -1,5 +1,11 @@
 # Changelog
 
+## [22.0.0-1] - 2026-11-08
+
+- Align quarantine replay eligibility with the controller's exact bundle acknowledgement and expose rejection details.
+- Add fleet enrollment grants and governed input path controls.
+- Compile parser rule order once and add nested key/value mapping evidence.
+
 ## [21.0.0-10] - 2026-11-07
 
 - Integrate shared KV Intelligence Engine analysis with FieldSense authoring and quarantine recovery.

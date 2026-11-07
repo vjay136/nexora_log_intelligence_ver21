@@ -109,8 +109,8 @@ build_rpm_fixture() {
     "$RPM_BUILD_IMAGE" bash -lc "$rpm_command"
 }
 # Synthetic Ver21 R9 payload for local package lifecycle mechanics only;
-# tag CI downloads the genuine published v21.0.0-10 RPMs.
-build_rpm_fixture "$work/previous" "$work/previous-work" 21.0.0 10
+# tag CI downloads the genuine published v21.0.0-10.1.1 RPMs.
+build_rpm_fixture "$work/previous" "$work/previous-work" 21.0.0 10.1.1
 build_rpm_fixture "$work/pass1" "$work/pass1-work" "$NLI_VERSION" "$NLI_RELEASE"
 build_rpm_fixture "$work/pass2" "$work/pass2-work" "$NLI_VERSION" "$NLI_RELEASE"
 for name in nli_client_ver21.rpm nli_controller_agent_ver21.rpm webview_ver21.zip webapp_ver21.zip install-controller-ver21.sh install-client-ver21.sh install-controller-aws-ver21.sh install-client-aws-ver21.sh install-controller-aws-cloudflare-ver21.sh aws-rhel-preflight-ver21.sh aws-security-group-plan-ver21.sh setup-cloudflare-tunnel-v21.sh verify-cloudflare-tunnel-v21.sh uninstall-cloudflare-tunnel-v21.sh cloudflare-quick-diagnosis-v21.sh vercel-preflight.mjs uninstall-controller-ver21.sh uninstall-client-ver21.sh INSTALLATION_AND_CONFIGURATION.md VERCEL_DEPLOYMENT.md CLOUDFLARE_PAGES_DEPLOYMENT.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS RELEASE_ID; do

@@ -80,6 +80,12 @@ except (OSError, ValueError):
     pass
 PY
 )
+if [[ $enrollment_token == fleet.* ]]; then
+  [[ $scheme == https ]] || fail 'fleet enrollment requires HTTPS'
+  if [[ -s /var/lib/nli-control-client/node.token && -n $existing_controller_url && "${controller_url%/}" != "$existing_controller_url" ]]; then
+    fail 'fleet re-enrollment must use the existing controller endpoint'
+  fi
+fi
 existing_ca=$(python3 - "$CONFIG" <<'PY'
 import json, pathlib, sys
 try:
@@ -214,16 +220,28 @@ printf 'NLI_ENROLLMENT_TOKEN=%s\n' "$enrollment_token" >"$env_tmp"
 install -o root -g nli -m 0640 "$env_tmp" "$ENV_FILE"
 rm -f "$env_tmp"
 
+service_was_active=false
+systemctl is-active --quiet "$SERVICE" && service_was_active=true
 systemctl stop "$SERVICE" >/dev/null 2>&1 || true
+token_backup=''
 if [[ ${NLI_REENROLL:-0} == 1 && -s /var/lib/nli-control-client/node.token ]]; then
-  mv /var/lib/nli-control-client/node.token "/var/lib/nli-control-client/node.token.backup.$(date +%s)"
+  token_backup=$(mktemp /var/lib/nli-control-client/node.token.previous.XXXXXX)
+  mv -f -- /var/lib/nli-control-client/node.token "$token_backup"
 fi
 NLI_ENROLLMENT_TOKEN=$enrollment_token "$BINARY" --config "$CONFIG" --once || {
   enrollment_token=''
+  if [[ -n $token_backup && ! -s /var/lib/nli-control-client/node.token ]]; then
+    mv -f -- "$token_backup" /var/lib/nli-control-client/node.token
+    [[ $service_was_active == false ]] || systemctl start "$SERVICE" || true
+  elif [[ -n $token_backup ]]; then
+    rm -f -- "$token_backup"
+  fi
+  printf 'NLI_ENROLLMENT_TOKEN=\n' >"$ENV_FILE"
   journalctl -u "$SERVICE" --no-pager -n 60 >&2 || true
   info 'check controller URL, client route (`ip route`), name resolution (`getent hosts HOST`), TCP 12382 reachability, and the controller firewall'
-  fail 'enrollment/heartbeat failed; services remain stopped. Fix connectivity and rerun sudo nli-client-setup with the same unused bootstrap file or fresh token'
+  fail 'enrollment/heartbeat failed; correct the error and retry with the same valid fleet bundle or a fresh one-use token'
 }
+[[ -z $token_backup ]] || rm -f -- "$token_backup"
 [[ -s /var/lib/nli-control-client/node.token ]] || fail 'controller did not issue a node token'
 chown root:nli /var/lib/nli-control-client/node.token
 chmod 0640 /var/lib/nli-control-client/node.token

@@ -711,8 +711,8 @@ func validateCatalogConfig(collection string, config map[string]any) error {
 		}
 	case "input-paths":
 		inputs, ok := config["inputs"].([]any)
-		if !ok || len(inputs) == 0 || len(inputs) > 256 {
-			return errors.New("input path profile requires 1 to 256 inputs")
+		if !ok || len(inputs) > 256 {
+			return errors.New("input path profile requires an inputs array with at most 256 entries")
 		}
 		families := map[string]bool{"auto": true, "imap": true, "pop": true, "webtop-webmail": true, "webtop": true, "mta": true, "smtp-in": true, "smtp-out": true, "pss": true, "pabd": true, "capd": true}
 		seen := map[string]bool{}
@@ -720,6 +720,11 @@ func validateCatalogConfig(collection string, config map[string]any) error {
 			input, ok := raw.(map[string]any)
 			if !ok {
 				return fmt.Errorf("input %d must be an object", index+1)
+			}
+			if disabled, exists := input["disabled"]; exists {
+				if _, ok := disabled.(bool); !ok {
+					return fmt.Errorf("input %d disabled must be true or false", index+1)
+				}
 			}
 			path, pathOK := input["path"].(string)
 			family, familyOK := input["service"].(string)
@@ -1519,8 +1524,13 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 			}
 		}
 	}
-	if len(targets) > 1000 {
-		jsonError(w, "rollout exceeds the 1000-client target limit", http.StatusConflict)
+	inputProfile, _ := proposal["input_path_profile"].(map[string]any)
+	targetLimit := 1000
+	if inputProfile != nil && proposal["type"] == rolloutTypeConfigPush {
+		targetLimit = maxInputPathRolloutTargets
+	}
+	if len(targets) > targetLimit {
+		jsonError(w, fmt.Sprintf("rollout exceeds the %d-client target limit", targetLimit), http.StatusConflict)
 		return
 	}
 	seenTargets := map[string]bool{}
@@ -1528,6 +1538,10 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 		node, ok := s.fleet.Get(target)
 		if !ok || node == nil || node.Status == fleet.StatusOffline || seenTargets[target] {
 			jsonError(w, "rollout contains a missing, offline, or duplicate target", http.StatusConflict)
+			return
+		}
+		if inputProfile["requires_ver22"] == true && !inputPathClientSupportsV22(node.Version) {
+			jsonError(w, "disabled paths and empty profiles require a Ver22 client: "+target, http.StatusConflict)
 			return
 		}
 		seenTargets[target] = true
@@ -1559,7 +1573,6 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 		jsonError(w, "proposal state update failed", http.StatusInternalServerError)
 		return
 	}
-	s.markInputPathRolloutDesired(principal.Username, proposal, targets)
 	if parserBundle != nil {
 		s.markParserSyncRolloutDesired(r.Context(), principal.Username, doc.ID, *parserBundle, targets)
 	}
@@ -1691,10 +1704,14 @@ func (s *Server) handleFleetSync(w http.ResponseWriter, r *http.Request) {
 		byID[doc.ID] = state
 	}
 	out := []map[string]any{}
+	_, inputStates := s.rollouts.inputPathSnapshot(false)
 	for _, node := range s.fleet.All() {
 		state, _ := byID[safeID(node.ID)].(map[string]any)
 		if state == nil {
 			state = map[string]any{"node_id": node.ID, "active_config_hash": node.ConfigHash, "drifted": false, "status": "unmanaged"}
+		}
+		for key, value := range inputStates[node.ID] {
+			state[key] = value
 		}
 		out = append(out, map[string]any{"node": node, "sync": state})
 	}

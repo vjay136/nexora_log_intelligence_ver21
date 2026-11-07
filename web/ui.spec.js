@@ -254,6 +254,41 @@ test('R10 KV row preview reuses the tail and applies an inspected grammar', asyn
   await expect.poll(()=>plan.fields[0].kv_pair_separators).toEqual(['||']);
 });
 
+test('KV mode switch clears named-only state and shows native evidence coverage',async({page})=>{
+  await mockController(page);
+  const raw='prefix status:failed,reason:notneeded,server:cloud';
+  const actual={status:'failed',reason:'notneeded',server:'cloud'};
+  const submitted=[];
+  await page.route('**/api/v1/assurance/mapping-preview',async route=>{
+    const field=route.request().postDataJSON().plan.fields[0];
+    submitted.push(field);
+    await route.fulfill({json:{passed:true,actual,errors:[],assessment:{
+      source_evidence_pct:100,observed_fields:3,output_fields:3,structured_coverage_passed:true
+    }}});
+  });
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  await page.locator('#nfi-raw').fill(raw);
+  await page.getByText('Import or edit a mapping plan',{exact:true}).click();
+  const importField=async field=>{
+    await page.locator('#nfi-plan-import').fill(JSON.stringify({version:1,fields:[field]}));
+    await page.getByRole('button',{name:'Import mapping',exact:true}).click();
+  };
+  const named={name:'tail',method:'key_value',type:'string',policy:'required',source:'status',kv_profile:'configured',
+    kv_start:'2',unit:'token',assignment_separators:[':'],pair_delimiters:','};
+  await importField(named);
+  const row=page.locator('[data-qrw-row]');
+  await row.locator('[data-qrw-key=method]').selectOption('kv_eol');
+  await expect(row.locator('[data-qrw-key=source]')).toHaveValue('2');
+  await page.getByRole('button',{name:'Preview mapping',exact:true}).click();
+  expect(submitted.at(-1)).toMatchObject({method:'kv_all',source:'2',end_of_line:true,assignment_separators:[':'],pair_delimiters:','});
+  expect(submitted.at(-1)).not.toHaveProperty('kv_start');
+  await expect(page.locator('#nfi-live-state')).toContainText('Source evidence coverage: 100% (3/3');
+  await importField({...named,method:'kv_all',source:'2',type:'object',end_of_line:true});
+  await page.getByRole('button',{name:'Preview mapping',exact:true}).click();
+  expect(submitted.at(-1)).not.toHaveProperty('kv_start');
+});
+
 test('R9 catalog exposes actual inventory and restores archived parsers as inactive drafts',async({page})=>{
  await mockController(page);let restored;
  await page.route('**/api/v1/parser-packs/deleted',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({deleted_parsers:[{id:'retired',name:'Retired parser',original_state:'published',restorable:true}]})}));
@@ -1865,6 +1900,17 @@ test('input path editor adds, edits, removes and validates without replacing exi
   expect((await config()).inputs.at(-1).service).toBe('imap');
   await form.locator('[data-input-family="10"]').selectOption('auto');
   expect((await config()).inputs.at(-1).multiline.rules).not.toContain('generic_continuation');
+  await form.getByRole('button',{name:'Edit /var/log/custom/one.log'}).click();
+  await expect(form.locator('[data-input-path="10"]')).toBeFocused();
+  await form.getByRole('button',{name:'Disable /var/log/custom/one.log'}).click();
+  expect((await config()).inputs.at(-1).disabled).toBe(true);
+  expect((await config()).inputs[0].disabled).toBeUndefined();
+  await form.getByRole('button',{name:'Enable /var/log/custom/one.log'}).click();
+  expect((await config()).inputs.at(-1).disabled).toBeUndefined();
+  await form.getByRole('button',{name:'Disable all draft paths'}).click();
+  expect((await config()).inputs.every(item=>item.disabled)).toBe(true);
+  await form.getByRole('button',{name:'Enable all draft paths'}).click();
+  expect((await config()).inputs.every(item=>!item.disabled)).toBe(true);
   await form.getByRole('button',{name:'Remove /var/log/custom/one.log'}).click();
   await expect.poll(async()=> (await config()).inputs.length).toBe(10);
   await form.getByRole('button',{name:'Validate paths'}).click();
@@ -2206,4 +2252,21 @@ test('Guided Parser Repair Studio onboards a pasted sample without quarantine re
   expect(verification).toMatchObject({raw,desired,service:'login',preserve_source:true});
   expect(mock.qrwReplays).toEqual([]);
   expect(mock.observed.some(item=>item.endsWith('/analyze')&&item.includes('/quarantine/records/'))).toBe(false);
+});
+
+test('Ver22 replay requires the controller acknowledgement even when the hashes match', async ({ page }) => {
+  const hash = 'a'.repeat(64);
+  await mockController(page, {
+    qrwRecords: [{ id: 'q-1', node_id: 'node-1', status: 'waiting', raw_available: true, replay_attempt_count: 0 }],
+    qrwParsers: [{ id: 'origin-parser', revision: 2, state: 'published', payload: { source_quarantine_record_id: 'q-1', artifact_checksum: hash, validation_passed: true, activated: true } }],
+    qrwSyncAssets: [{ asset_class: 'parser', asset_id: 'origin-parser', desired: { sha256: hash }, clients: [{ node_id: 'node-1', desired_hash: hash, applied_hash: hash, drifted: false, status: 'pending', exact_acknowledgement: false }] }]
+  });
+  await login(page);
+  await page.getByTestId('nav-quarantine-wizard').click();
+  await page.getByRole('button', { name: 'Inspect', exact: true }).click();
+  await page.locator('[data-wizard-step="8"] button').click();
+  await expect(page.getByRole('button', { name: /Request targeted replay/ })).toBeDisabled();
+  await page.getByRole('button', { name: '9 · Verify replay result', exact: true }).click();
+  await expect(page.locator('#qrw-verification')).toContainText('waiting');
+  await expect(page.locator('[data-wizard-step="9"]')).toHaveAttribute('data-step-complete', 'false');
 });

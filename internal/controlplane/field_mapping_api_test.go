@@ -41,6 +41,10 @@ func TestNFIExamplePreviewApprovalPublicationAndProductionParity(t *testing.T) {
 		t.Fatalf("mapping preview: %d %s", response.StatusCode, body)
 	}
 	actual := decodeMap(t, body)["actual"].(map[string]any)
+	assessment := decodeMap(t, body)["assessment"].(map[string]any)
+	if assessment["source_evidence_pct"] != float64(100) || assessment["observed_fields"] != float64(len(desired)) || assessment["structured_coverage_passed"] != true {
+		t.Fatalf("mapping evidence assessment: %#v", assessment)
+	}
 	if diff, _ := structuralDiff(actual, desired); len(diff) != 0 {
 		t.Fatalf("mapping output: %#v", diff)
 	}

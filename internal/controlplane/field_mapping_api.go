@@ -76,7 +76,29 @@ func (s *Server) handleMappingPreview(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]any{"passed": false, "actual": map[string]any{}, "trace": result.Trace, "evidence": result.Evidence, "errors": []string{err.Error()}, "persisted": false, "activated": false, "engine": "nfi-v1"})
 		return
 	}
-	jsonOK(w, map[string]any{"passed": true, "actual": result.Values, "fields": result.Evidence, "evidence": result.Evidence, "trace": result.Trace, "errors": []string{}, "persisted": false, "activated": false, "engine": "nfi-v1"})
+	jsonOK(w, map[string]any{"passed": true, "actual": result.Values, "fields": result.Evidence, "evidence": result.Evidence, "trace": result.Trace, "assessment": assessMappingEvidence(result, len(input.Raw)), "errors": []string{}, "persisted": false, "activated": false, "engine": "nfi-v1"})
+}
+
+// Assess only fields emitted for this sample. Defaults and derived values
+// can be valid output without having a direct source span.
+func assessMappingEvidence(result fieldmapping.Result, inputBytes int) map[string]any {
+	observed := 0
+	for name := range result.Values {
+		evidence, ok := result.Evidence[name]
+		if ok && evidence.Start >= 0 && evidence.End > evidence.Start && evidence.End <= inputBytes {
+			observed++
+		}
+	}
+	total := len(result.Values)
+	assessment := map[string]any{
+		"observed_fields": observed, "output_fields": total,
+		"fields_without_direct_span": total - observed,
+		"structured_coverage_passed": true,
+	}
+	if total > 0 {
+		assessment["source_evidence_pct"] = 100 * observed / total
+	}
+	return assessment
 }
 
 func (s *Server) handleFieldMappingStatus(w http.ResponseWriter, r *http.Request) {
@@ -295,6 +317,12 @@ func assuranceMappingRuntimePack(id, version, author string, definition map[stri
 	for _, field := range plan.Fields {
 		if field.KVProfile != "" {
 			minimumClient = "21.0.0-10"
+			break
+		}
+	}
+	for _, field := range plan.Fields {
+		if field.KVNestedObjects {
+			minimumClient = "22.0.0-1"
 			break
 		}
 	}

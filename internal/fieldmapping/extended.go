@@ -121,6 +121,9 @@ func compileExtended(cf *compiledField, seen map[string]bool) error {
 		return fmt.Errorf("kv_profile requires key/value extraction and must be auto or configured")
 	}
 	namedProfile := f.Method == "key_value" && f.KVProfile != ""
+	if f.KVNestedObjects && (f.KVProfile == "" || f.Method == "key_value" && f.Type != "object") {
+		return fmt.Errorf("nested KV objects require a KV profile and object output for a named key")
+	}
 	if f.KVStart != "" && !namedProfile {
 		return fmt.Errorf("kv_start requires a named key_value field with a KV profile")
 	}

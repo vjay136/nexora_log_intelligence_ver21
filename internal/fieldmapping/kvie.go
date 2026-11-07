@@ -119,6 +119,8 @@ var kvieProfiles = func() []*kvieProfile {
 	presets := []KVProfile{
 		{AssignmentSeparators: []string{"=>", ":=", "="}, PairDelimiters: ":;| \t\r\n"},
 		{AssignmentSeparators: []string{":"}, PairDelimiters: ";| \t\r\n"},
+		{AssignmentSeparators: []string{":"}, PairDelimiters: ","},
+		{AssignmentSeparators: []string{"=>", ":=", "="}, PairDelimiters: ","},
 		{AssignmentSeparators: []string{";"}, PairDelimiters: "| \t\r\n"},
 		{AssignmentSeparators: []string{"=>", ":=", "=", ":"}, PairDelimiters: ";| \t\r\n"},
 		{AssignmentSeparators: []string{"=>", ":=", "=", ":", ";"}, PairDelimiters: "| \t\r\n"},
@@ -351,10 +353,78 @@ func (r *record) extractKVIE(cf compiledField, evidence Evidence) (any, Evidence
 	}
 	evidence.Start, evidence.End, evidence.Source = start, end, true
 	value, evidence, found, err := projectKeys(scan.pairs, f, evidence)
+	if err == nil && found && f.KVNestedObjects {
+		remaining := MaxFields
+		value, err = expandNestedKV(r.ctx, value, f.DuplicatePolicy, 0, &remaining)
+	}
 	if err != nil {
 		err = fmt.Errorf("%w: %w", ErrIncompleteKV, err)
 	}
 	return value, evidence, found, err
+}
+
+// Expand only complete, explicitly bracketed key/value groups. Each nested
+// group has its own grammar and ordinary bracketed text remains a string.
+func expandNestedKV(ctx context.Context, value any, duplicatePolicy string, depth int, remaining *int) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	switch item := value.(type) {
+	case map[string]any:
+		for key, child := range item {
+			expanded, err := expandNestedKV(ctx, child, duplicatePolicy, depth, remaining)
+			if err != nil {
+				return nil, fmt.Errorf("nested key %q: %w", key, err)
+			}
+			item[key] = expanded
+		}
+	case []any:
+		for i, child := range item {
+			expanded, err := expandNestedKV(ctx, child, duplicatePolicy, depth, remaining)
+			if err != nil {
+				return nil, err
+			}
+			item[i] = expanded
+		}
+	case string:
+		text := strings.TrimSpace(item)
+		if len(text) < 3 {
+			return item, nil
+		}
+		open := strings.IndexByte("{[(<", text[0])
+		if open < 0 || text[len(text)-1] != "}])>"[open] {
+			return item, nil
+		}
+		body := strings.TrimSpace(text[1 : len(text)-1])
+		if !kvieHeader.MatchString(body) {
+			return item, nil
+		}
+		if depth >= MaxDepth {
+			return nil, fmt.Errorf("nested KV exceeds depth limit %d", MaxDepth)
+		}
+		profiles, err := detectKVIE(ctx, body, 0)
+		if err != nil {
+			return nil, err
+		}
+		if len(profiles) != 1 {
+			return nil, fmt.Errorf("nested KV grammars disagree")
+		}
+		observations := profiles[0].Observations
+		if len(observations) > *remaining {
+			return nil, fmt.Errorf("nested KV exceeds aggregate field limit %d", MaxFields)
+		}
+		*remaining -= len(observations)
+		pairs := make(map[string][]pair, len(observations))
+		for _, observation := range observations {
+			pairs[observation.Key] = append(pairs[observation.Key], pair{observation.Value, observation.Start, observation.End})
+		}
+		object, _, _, err := projectKeys(pairs, Field{Method: "kv_all", DuplicatePolicy: duplicatePolicy}, Evidence{})
+		if err != nil {
+			return nil, err
+		}
+		return expandNestedKV(ctx, object, duplicatePolicy, depth+1, remaining)
+	}
+	return value, nil
 }
 
 // profileObservations returns the scoped facts used by mapping so the

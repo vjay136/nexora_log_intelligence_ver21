@@ -255,6 +255,15 @@ func (s *Server) listParserSyncDocuments(ctx context.Context, collection, state 
 	return documents, nil
 }
 
+// Keep Fleet Sync and replay on the same acknowledgement contract.
+func parserBundleAcknowledged(state map[string]any, hash string) bool {
+	return hash != "" &&
+		state["desired_asset_bundle_hash"] == hash &&
+		state["active_asset_bundle_hash"] == hash &&
+		state["asset_sync_status"] == "applied" &&
+		state["asset_drifted"] != true
+}
+
 func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle, error) {
 	bundle := parserAssetBundle{SchemaVersion: 1, Assets: []parserBundleAsset{}}
 	seenRuntimeParserID := map[string]string{}
@@ -793,7 +802,7 @@ func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {
 			state := byNode[safeID(node.ID)]
 			active := fmt.Sprint(state["active_asset_bundle_hash"])
 			desired := fmt.Sprint(state["desired_asset_bundle_hash"])
-			acknowledged := desired == bundle.BundleHash && active == bundle.BundleHash && fmt.Sprint(state["asset_sync_status"]) == "applied"
+			acknowledged := parserBundleAcknowledged(state, bundle.BundleHash)
 			status := "pending"
 			if acknowledged {
 				status = "applied"
@@ -991,7 +1000,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 		applied := fmt.Sprint(state["active_asset_bundle_hash"])
 		desired := bundle.BundleHash
 		drift := applied != desired
-		acknowledged := !drift && fmt.Sprint(state["desired_asset_bundle_hash"]) == desired && fmt.Sprint(state["asset_sync_status"]) == "applied"
+		acknowledged := parserBundleAcknowledged(state, desired)
 		status := strings.TrimSpace(fmt.Sprint(state["asset_sync_status"]))
 		if status == "" || status == "<nil>" {
 			status = "pending"

@@ -29,6 +29,7 @@ func TestKVIEOnePlanForReportedMailTails(t *testing.T) {
 		"status:failed reason;notneeded server;cloud",
 		"status=failed:reason=notneeded:server=cloud",
 		"status=failed reason=notneeded server=cloud",
+		"status:failed,reason:notneeded,server:cloud",
 	} {
 		t.Run(tail, func(t *testing.T) {
 			raw := kvieMailHeader + tail
@@ -49,6 +50,45 @@ func TestKVIEOnePlanForReportedMailTails(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestKVIEOptInNestedObjects(t *testing.T) {
+	raw := `status:ok,details:{phase:ready,env:{stage=prod;inner=[zone=west id=0042]}},note:(plain text)`
+	field := Field{Name: "tail", Method: "kv_all", Type: "object", OutputPolicy: "flatten", KVProfile: "auto"}
+	for _, nested := range []bool{false, true} {
+		field.KVNestedObjects = nested
+		plan, err := Compile(Plan{Version: 1, Fields: []Field{field}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := plan.Execute(context.Background(), raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := plan.ValidateComplete(raw, result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Values["note"] != "(plain text)" {
+			t.Fatalf("plain bracketed value changed: %#v", result.Values)
+		}
+		var want any = "{phase:ready,env:{stage=prod;inner=[zone=west id=0042]}}"
+		if nested {
+			want = map[string]any{"phase": "ready", "env": map[string]any{
+				"stage": "prod", "inner": map[string]any{"zone": "west", "id": "0042"},
+			}}
+		}
+		if !reflect.DeepEqual(result.Values["details"], want) {
+			t.Fatalf("nested=%v, got %#v, want %#v", nested, result.Values["details"], want)
+		}
+	}
+	plan, err := Compile(Plan{Version: 1, Fields: []Field{field}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tooDeep := "status:ok,details:" + strings.Repeat("{a=", MaxDepth+1) + "value" + strings.Repeat("}", MaxDepth+1)
+	if _, err := plan.Execute(context.Background(), tooDeep); !errors.Is(err, ErrIncompleteKV) || !strings.Contains(err.Error(), "depth limit") {
+		t.Fatalf("excessive nesting should fail with a bounded diagnostic: %v", err)
 	}
 }
 

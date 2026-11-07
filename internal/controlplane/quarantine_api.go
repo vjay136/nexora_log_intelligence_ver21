@@ -1040,7 +1040,7 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 	desiredBundleHash := stateString("desired_asset_bundle_hash")
 	activeBundleHash := stateString("active_asset_bundle_hash")
 	syncStatus := stateString("asset_sync_status")
-	if bundle.BundleHash == "" || desiredBundleHash != bundle.BundleHash || activeBundleHash != bundle.BundleHash || syncStatus != "applied" {
+	if !parserBundleAcknowledged(syncState, bundle.BundleHash) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1052,6 +1052,7 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 			"desired_bundle_hash":  desiredBundleHash,
 			"active_bundle_hash":   activeBundleHash,
 			"sync_status":          syncStatus,
+			"sync_error":           stateString("asset_sync_error"),
 			"next_action":          "Prepare the current bundle rollout for the selected client, approve it in this workspace, then refresh verification. Replay unlocks when that exact bundle is acknowledged.",
 			"actions":              map[string]any{"prepare_rollout": map[string]any{"method": "POST", "path": "/api/v1/parser-sync/rollout", "body": map[string]any{"target_mode": "origin", "origin_node_id": request.NodeID, "bundle_hash": bundle.BundleHash}}, "verify": map[string]any{"method": "POST", "path": "/api/v1/parser-sync/verify", "body": map[string]any{"node_ids": []string{request.NodeID}, "bundle_hash": bundle.BundleHash}}},
 		})

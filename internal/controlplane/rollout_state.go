@@ -204,10 +204,28 @@ func (m *rolloutStateManager) NextForNode(node string, lease time.Duration) (*pr
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
 	items := make([]*rolloutRecord, 0)
+	var oldestConfig *rolloutRecord
 	for _, item := range m.items {
 		result := item.NodeResults[node]
-		if item.Status == rolloutStatusRunning && result != nil && result.Status != rolloutStatusCompleted && result.Status != rolloutStatusFailed && !(result.Status == rolloutStatusRunning && result.LeaseUntil.After(now)) {
+		if item.Status != rolloutStatusRunning || result == nil || result.Status == rolloutStatusCompleted || result.Status == rolloutStatusFailed {
+			continue
+		}
+		if item.Type == rolloutTypeConfigPush {
+			if oldestConfig == nil || rolloutStartTime(item).Before(rolloutStartTime(oldestConfig)) {
+				oldestConfig = item
+			}
+			continue
+		}
+		if result.Status != rolloutStatusRunning || !result.LeaseUntil.After(now) {
 			items = append(items, item)
+		}
+	}
+	// A lost acknowledgement can leave an earlier config leased. Do not
+	// deliver a later config until that command finishes or is retried.
+	if oldestConfig != nil {
+		result := oldestConfig.NodeResults[node]
+		if result.Status != rolloutStatusRunning || !result.LeaseUntil.After(now) {
+			items = append(items, oldestConfig)
 		}
 	}
 	if len(items) == 0 {
@@ -224,4 +242,11 @@ func (m *rolloutStateManager) NextForNode(node string, lease time.Duration) (*pr
 	result.LeaseUntil = now.Add(lease)
 	_ = m.save()
 	return &protocol.Command{ID: item.ID, Type: item.Type, Payload: append(json.RawMessage(nil), item.Payload...), CreatedAt: item.CreatedAt, LeaseUntil: result.LeaseUntil, Attempt: result.Attempts, RequestedBy: item.CreatedBy}, true
+}
+
+func rolloutStartTime(item *rolloutRecord) time.Time {
+	if item.StartedAt != nil {
+		return *item.StartedAt
+	}
+	return item.CreatedAt
 }

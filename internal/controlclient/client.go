@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
@@ -521,7 +522,21 @@ func (c *Client) EnsureEnrollment(ctx context.Context) error {
 		Tags: c.cfg.Tags,
 	}
 	var response protocol.RegisterResponse
-	if err := c.requestJSON(ctx, http.MethodPost, "/api/v1/node/register", request, &response, map[string]string{"X-NLI-Enrollment": enrollment}); err != nil {
+	headers := map[string]string{"X-NLI-Enrollment": enrollment}
+	if strings.HasPrefix(enrollment, "fleet.") {
+		if !strings.HasPrefix(c.cfg.ControllerURL, "https://") {
+			return errors.New("fleet enrollment requires HTTPS")
+		}
+		id, proof, err := fleetEnrollmentIdentity()
+		if err != nil {
+			return err
+		}
+		if id != c.nodeID {
+			return fmt.Errorf("this installation already has a different identity; use its original enrollment method")
+		}
+		headers["X-NLI-Enrollment-Proof"] = proof
+	}
+	if err := c.requestJSON(ctx, http.MethodPost, "/api/v1/node/register", request, &response, headers); err != nil {
 		return err
 	}
 	if response.NodeToken == "" {
@@ -1292,6 +1307,13 @@ func (c *Client) loadOrCreateNodeID() (string, error) {
 		}
 		return strings.TrimSpace(string(data)), nil
 	}
+	if enrollment := os.Getenv(c.cfg.EnrollmentTokenEnv); strings.HasPrefix(enrollment, "fleet.") {
+		id, _, err := fleetEnrollmentIdentity()
+		if err != nil {
+			return "", err
+		}
+		return id, atomicWrite(c.cfg.InstallIDFile, []byte(id+"\n"), 0640)
+	}
 	hostname, _ := os.Hostname()
 	random := make([]byte, 8)
 	if _, err := rand.Read(random); err != nil {
@@ -1302,6 +1324,25 @@ func (c *Client) loadOrCreateNodeID() (string, error) {
 	// identity from its telemetry output configuration. Keep the identifier
 	// group-readable; the controller sidecar runs with primary group nli.
 	return id, atomicWrite(c.cfg.InstallIDFile, []byte(id+"\n"), 0640)
+}
+
+// Derive an application-specific ID and separate grant proof. The raw Linux
+// machine identity stays local even when a client is reinstalled.
+func fleetEnrollmentIdentity() (string, string, error) {
+	value, err := os.ReadFile("/etc/machine-id")
+	if err != nil {
+		return "", "", fmt.Errorf("read fleet enrollment machine identity: %w", err)
+	}
+	machine, err := hex.DecodeString(strings.TrimSpace(string(value)))
+	if err != nil || len(machine) != 16 || bytes.Equal(machine, make([]byte, 16)) {
+		return "", "", errors.New("fleet enrollment requires a valid unique /etc/machine-id")
+	}
+	derive := func(context string) string {
+		mac := hmac.New(sha256.New, machine)
+		_, _ = mac.Write([]byte(context))
+		return hex.EncodeToString(mac.Sum(nil))
+	}
+	return "nli-fleet-" + derive("nli/fleet/identity/v1"), derive("nli/fleet/host-proof/v1"), nil
 }
 
 func ensureNLIGroupReadable(path string) error {

@@ -101,15 +101,47 @@ func (f *Fleet) load() {
 	}
 }
 
-func (f *Fleet) save() {
+func (f *Fleet) save() error {
 	nodes := make([]*Node, 0, len(f.nodes))
 	for _, n := range f.nodes {
 		nodes = append(nodes, n)
 	}
-	data, _ := json.MarshalIndent(nodes, "", "  ")
+	data, err := json.MarshalIndent(nodes, "", "  ")
+	if err != nil {
+		return err
+	}
 	tmp := f.path + ".tmp"
-	os.WriteFile(tmp, data, 0640)
-	os.Rename(tmp, f.path)
+	if err := os.WriteFile(tmp, data, 0640); err != nil {
+		return err
+	}
+	return os.Rename(tmp, f.path)
+}
+
+// RegisterEnrollment atomically persists registration and its credential.
+// Retrying a bound enrollment preserves fleet metadata and refreshes the token.
+func (f *Fleet) RegisterEnrollment(n Node, token string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	existing, registered := f.nodes[n.ID]
+	if registered {
+		n = *existing
+	} else {
+		n.RegisteredAt = time.Now().UTC()
+	}
+	n.LastSeen = time.Now().UTC()
+	n.Status = StatusOnline
+	digest := sha256.Sum256([]byte(token))
+	n.TokenHash = hex.EncodeToString(digest[:])
+	f.nodes[n.ID] = &n
+	if err := f.save(); err != nil {
+		if registered {
+			f.nodes[n.ID] = existing
+		} else {
+			delete(f.nodes, n.ID)
+		}
+		return err
+	}
+	return nil
 }
 
 // Register adds or updates a node. Called when a client checks in.

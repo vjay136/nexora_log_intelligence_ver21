@@ -93,6 +93,7 @@ type Field struct {
 	KVBrackets       *map[string]string `json:"kv_brackets,omitempty"`
 	KVKeyPattern     string             `json:"kv_key_pattern,omitempty"`
 	KVRejectEmpty    bool               `json:"kv_reject_empty,omitempty"`
+	KVNestedObjects  bool               `json:"kv_nested_objects,omitempty"`
 	EndOfLine        bool               `json:"end_of_line,omitempty"`
 	EmptyPolicy      string             `json:"empty_policy,omitempty"`
 	CustomType       string             `json:"custom_type,omitempty"`

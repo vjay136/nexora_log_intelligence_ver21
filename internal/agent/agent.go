@@ -43,6 +43,7 @@ import (
 type InputConfig struct {
 	Path      string           `json:"path"`
 	Service   string           `json:"service"`
+	Disabled  bool             `json:"disabled,omitempty"`
 	Selection SelectionConfig  `json:"selection,omitempty"`
 	Multiline multiline.Config `json:"multiline"`
 	Mask      masker.Config    `json:"mask"`
@@ -252,8 +253,8 @@ func Load(path string) (Config, error) {
 }
 
 func validate(c Config) error {
-	if len(c.Inputs) == 0 || len(c.Inputs) > 256 {
-		return fmt.Errorf("configure 1..256 inputs")
+	if c.Inputs == nil || len(c.Inputs) > 256 {
+		return fmt.Errorf("configure an inputs array containing at most 256 paths")
 	}
 	if c.PollMS < 50 || c.PollMS > 60000 {
 		return fmt.Errorf("poll_ms must be 50..60000")
@@ -637,6 +638,15 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 	if err := validateDistinctInputs(c.Inputs); err != nil {
 		return err
 	}
+	// Keep disabled paths in the saved configuration and leave their source
+	// checkpoints intact, but never open or watch them until enabled again.
+	activeInputs := make([]InputConfig, 0, len(c.Inputs))
+	for _, input := range c.Inputs {
+		if !input.Disabled {
+			activeInputs = append(activeInputs, input)
+		}
+	}
+	c.Inputs = activeInputs
 	geo, err := enrichment.Open(c.Enrichment)
 	if err != nil {
 		return fmt.Errorf("GeoIP initialization: %w", err)

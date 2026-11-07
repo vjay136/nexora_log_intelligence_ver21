@@ -26,6 +26,7 @@ const (
 	maxSeparatorCount    = 32
 	maxPatternCount      = 64
 	maxPatternBytes      = 4096
+	maxBracketDepth      = 64
 )
 
 // DuplicatePolicy controls what happens when the same output key is found
@@ -446,6 +447,9 @@ func (p *Parser) findFirstHeader(input string, start int) (int, bool, error) {
 			continue
 		}
 		if closer, opens := p.openBrackets[c]; opens {
+			if len(stack) == maxBracketDepth {
+				return 0, false, parseError(CodeMalformedBracket, i, "", "bracket nesting exceeds limit")
+			}
 			stack = append(stack, closer)
 			i++
 			continue
@@ -505,6 +509,9 @@ func (p *Parser) findBoundary(input string, valueStart int, fieldType string) (*
 			continue
 		}
 		if closer, opens := p.openBrackets[c]; opens {
+			if len(stack) == maxBracketDepth {
+				return nil, parseError(CodeMalformedBracket, i, "", "bracket nesting exceeds limit")
+			}
 			stack = append(stack, closer)
 			i++
 			continue

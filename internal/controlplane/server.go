@@ -759,21 +759,44 @@ func (s *Server) handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "credential generation failed", http.StatusInternalServerError)
 		return
 	}
-	if !s.consumeEnrollmentToken(r.Header.Get("X-NLI-Enrollment")) {
-		jsonError(w, "invalid or consumed enrollment token", http.StatusUnauthorized)
-		return
-	}
+	enrollment := r.Header.Get("X-NLI-Enrollment")
 	node := &fleet.Node{ID: request.ID, Hostname: request.Hostname, IP: request.IP, OS: request.OS, Arch: request.Arch, Version: request.Version, ConfigHash: request.ConfigHash, MetricsURL: request.MetricsURL, Tags: request.Tags}
-	s.fleet.Register(node)
 	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
-	if err := s.fleet.SetToken(request.ID, token); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
+	initial := true
+	if strings.HasPrefix(enrollment, fleetGrantPrefix) {
+		s.enrollmentMu.Lock()
+		accepted, err := s.acceptFleetGrant(enrollment, request.ID, r.Header.Get("X-NLI-Enrollment-Proof"))
+		if err == nil && accepted {
+			_, existing := s.fleet.Get(request.ID)
+			initial = !existing
+			err = s.fleet.RegisterEnrollment(*node, token)
+		}
+		s.enrollmentMu.Unlock()
+		if err != nil {
+			jsonError(w, "could not persist fleet enrollment", http.StatusInternalServerError)
+			return
+		}
+		if !accepted {
+			jsonError(w, "invalid, expired, revoked or differently bound fleet enrollment grant", http.StatusUnauthorized)
+			return
+		}
+	} else {
+		if strings.HasPrefix(request.ID, fleetNodePrefix) || !s.consumeEnrollmentToken(enrollment) {
+			jsonError(w, "invalid or consumed enrollment token", http.StatusUnauthorized)
+			return
+		}
+		s.fleet.Register(node)
+		if err := s.fleet.SetToken(request.ID, token); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	// Initial enrollment sync uses the same independent rollout approval gate
 	// as every other parser bundle rollout.
-	if bundle, err := s.buildActiveParserBundle(r.Context()); err == nil {
-		_, _ = s.proposeParserBundleRollout(r.Context(), "nli-v21-auto-enrollment", "Initial parser asset synchronization", "Initial parser synchronization for a newly enrolled client requires independent rollout approval.", "selected", bundle, []string{request.ID})
+	if initial {
+		if bundle, err := s.buildActiveParserBundle(r.Context()); err == nil {
+			_, _ = s.proposeParserBundleRollout(r.Context(), "nli-v21-auto-enrollment", "Initial parser asset synchronization", "Initial parser synchronization for a newly enrolled client requires independent rollout approval.", "selected", bundle, []string{request.ID})
+		}
 	}
 	jsonCreated(w, protocol.RegisterResponse{Status: "registered", NodeID: request.ID, NodeToken: token})
 }
@@ -932,7 +955,6 @@ func (s *Server) handleNodeCommandResult(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.recordParserSyncRolloutResult(r.Context(), commandID, result)
-	s.recordInputPathRolloutResult(commandID, result.NodeID, result.Status, result.Message)
 	s.recordQuarantineReplayResult(r.Context(), commandID, result.NodeID, result.Status, result.Message)
 	jsonOK(w, map[string]string{"status": "recorded"})
 }

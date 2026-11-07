@@ -22,6 +22,7 @@ type ParserPackExecutor struct {
 	compiled     bool
 	validators   map[string]*regexp.Regexp
 	mappingPlans map[string]*fieldmapping.Compiled
+	orderedRules []ParserRule
 }
 
 type ExecutionRequest struct {
@@ -148,6 +149,7 @@ func (e *ParserPackExecutor) compile() error {
 			e.validators[predicateKey(rule.ID, false, predicateIndex)] = compiled
 		}
 	}
+	e.orderedRules = SortRulesByPriority(e.pack.Rules)
 	e.compiled = true
 	return nil
 }
@@ -199,7 +201,7 @@ func (e *ParserPackExecutor) Execute(request *ExecutionRequest) (*ExecutionResul
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(e.pack.ResourceLimits.ExecutionDeadlineMs)*time.Millisecond)
 	defer cancel()
 
-	rules := SortRulesByPriority(e.selectRules(request))
+	rules := e.selectRules(request)
 	if len(rules) == 0 {
 		return e.quarantinedResult(metadata, started, "no_eligible_rule"), nil
 	}
@@ -438,8 +440,8 @@ func evidenceLabel(field capturedField) string {
 }
 
 func (e *ParserPackExecutor) selectRules(request *ExecutionRequest) []ParserRule {
-	selected := make([]ParserRule, 0, len(e.pack.Rules))
-	for _, rule := range e.pack.Rules {
+	selected := make([]ParserRule, 0, len(e.orderedRules))
+	for _, rule := range e.orderedRules {
 		if len(rule.ServiceSelectors) > 0 {
 			matched := false
 			for _, selector := range rule.ServiceSelectors {

@@ -114,13 +114,13 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
                 fail(f"{relative} does not reference packaged artifact {name}")
 
     workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    for claim in ("NLI V21 R10 release", "nli-v21-r10-unsigned-release", "docs/V21_R10_RELEASE_NOTES.md", "v21.0.0-9"):
+    for claim in ("NLI V22 release", "nli-v22-unsigned-release", "docs/V22_RELEASE_NOTES.md", "v21.0.0-10.1.1"):
         if claim not in workflow:
-            fail(f"release workflow does not identify the R10 workflow/R9 baseline: {claim!r}")
+            fail(f"release workflow does not identify the Ver22 workflow and Ver21 baseline: {claim!r}")
 
     release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-    if "NLI_VERSION=21.0.0" not in release_env or "NLI_RELEASE=10.1.1" not in release_env.splitlines():
-        fail("packaging release identity is not 21.0.0-10.1.1")
+    if "NLI_VERSION=22.0.0" not in release_env or "NLI_RELEASE=1" not in release_env.splitlines():
+        fail("packaging release identity is not 22.0.0-1")
 
     for relative in (
         "README.md", "CHANGELOG.md", "docs/V21_R10_RELEASE_NOTES.md",

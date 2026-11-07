@@ -16,11 +16,95 @@ if [[ ${1:-} == --rotate-enrollment ]]; then
   rotate_enrollment=1
   shift
 fi
-[[ $# -eq 0 ]] || { printf 'usage: sudo nli-controller-setup [--rotate-enrollment]\n' >&2; exit 2; }
-
 fail() { printf 'nli-controller-setup: %s\n' "$*" >&2; exit 1; }
 info() { printf 'nli-controller-setup: %s\n' "$*"; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || fail 'run as root: sudo nli-controller-setup'
+if [[ ${1:-} == --create-enrollment-batch || ${1:-} == --reissue-enrollment ]]; then
+  [[ $rotate_enrollment == 0 && ( $# == 2 || $# == 3 ) ]] || fail 'use --create-enrollment-batch COUNT [VALID_HOURS] or --reissue-enrollment NODE_ID [VALID_HOURS]'
+  python3 - "$STATE_DIR" "$BOOTSTRAP_FILE" "$1" "$2" "${3:-168}" <<'PY'
+import datetime as dt
+import grp
+import hashlib
+import os
+from pathlib import Path
+import re
+import secrets
+import shutil
+import stat
+import sys
+from urllib.parse import urlsplit
+
+state, source, action, subject, validity = sys.argv[1:]
+try:
+    hours = int(validity)
+    count = int(subject) if action == "--create-enrollment-batch" else 1
+except ValueError:
+    raise SystemExit("COUNT and VALID_HOURS must be integers")
+if not 1 <= count <= 2000 or not 1 <= hours <= 720:
+    raise SystemExit("COUNT must be 1 to 2000 and VALID_HOURS 1 to 720")
+replacement = subject if action == "--reissue-enrollment" else ""
+if replacement and not re.fullmatch(r"nli-fleet-[a-f0-9]{64}", replacement):
+    raise SystemExit("supply the exact nli-fleet node ID for reissue")
+try:
+    bootstrap = Path(source)
+    mode = bootstrap.lstat()
+    if not stat.S_ISREG(mode.st_mode) or mode.st_uid != 0 or mode.st_mode & 0o077:
+        raise SystemExit("the controller bootstrap file must be root-owned and mode 0600")
+    settings = dict(line.split("=", 1) for line in bootstrap.read_text().splitlines() if "=" in line)
+except FileNotFoundError:
+    raise SystemExit("run controller setup first to generate the verified client bootstrap file")
+url = settings.get("NLI_CONTROLLER_URL", "")
+parsed = urlsplit(url)
+if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+    raise SystemExit("fleet enrollment requires the controller's verified HTTPS endpoint")
+ca = settings.get("NLI_CONTROLLER_CA_BASE64", "")
+if ca and not re.fullmatch(r"[A-Za-z0-9+/=]+", ca):
+    raise SystemExit("invalid CA in the controller bootstrap file")
+
+os.umask(0o077)
+group = grp.getgrnam("nli").gr_gid
+root = Path(state) / "enrollment"
+grants, bundles = root / "grants", root / "bundles"
+for path, gid, permissions in ((root, group, 0o750), (grants, group, 0o750), (bundles, 0, 0o700)):
+    path.mkdir(exist_ok=True)
+    mode = path.lstat()
+    if not stat.S_ISDIR(mode.st_mode) or mode.st_uid != 0:
+        raise SystemExit(f"expected a root-owned enrollment directory at {path}")
+    os.chown(path, 0, gid)
+    path.chmod(permissions)
+
+deadline = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+name = f"{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%SZ}-{secrets.token_hex(6)}"
+batch = bundles / name
+staged = bundles / f".{name}.pending"
+staged.mkdir()
+created = []
+try:
+    for slot in range(1, count + 1):
+        token = "fleet." + secrets.token_hex(32)
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        grant = grants / digest
+        with grant.open("x", encoding="utf-8") as stream:
+            created.append(grant)
+            stream.write(f"{deadline} {replacement}\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchown(stream.fileno(), 0, group)
+            os.fchmod(stream.fileno(), 0o640)
+        with (staged / f"client-{slot:04d}.env").open("x", encoding="utf-8") as stream:
+            stream.write(f"NLI_CONTROLLER_URL={url}\nNLI_CONTROLLER_CA_BASE64={ca}\nNLI_ENROLLMENT_TOKEN={token}\n")
+    staged.rename(batch)
+except BaseException:
+    for grant in created:
+        grant.unlink(missing_ok=True)
+    shutil.rmtree(staged, ignore_errors=True)
+    raise
+print(f"Created {count} protected enrollment file(s) in {batch}")
+print(f"Expires {deadline}. Distribute one file per host and retain the controller copy for retries.")
+PY
+  exit
+fi
+[[ $# -eq 0 ]] || fail 'use --rotate-enrollment, --create-enrollment-batch COUNT [VALID_HOURS], or --reissue-enrollment NODE_ID [VALID_HOURS]'
 for command in python3 curl systemctl openssl base64 hostname sha256sum ss; do command -v "$command" >/dev/null || fail "$command is required"; done
 [[ -f $CONFIG && -f $ENV_FILE ]] || fail 'install the controller RPM before running setup'
 [[ -f $SUPABASE_SCHEMA_TEMPLATE ]] || fail "Supabase schema template is missing: $SUPABASE_SCHEMA_TEMPLATE"

@@ -4,11 +4,54 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"nexora.local/nli-v20/internal/fleet"
 	"nexora.local/nli-v20/internal/rollout"
 )
+
+func TestInputPathSyncTracksLatestDesiredAndOnlySuccessfulApply(t *testing.T) {
+	manager := newRolloutStateManager(filepath.Join(t.TempDir(), "rollouts.json"))
+	targets := []string{"origin"}
+	start := func(profile string) string {
+		t.Helper()
+		record, err := manager.Create(rolloutTypeConfigPush, "input paths", "operator", targets, map[string]any{
+			"input_path_profile": map[string]any{"id": profile, "revision": 1},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.Start(record.ID, targets); err != nil {
+			t.Fatal(err)
+		}
+		return record.ID
+	}
+	oldID, newID := start("old"), start("new")
+	if cmd, ok := manager.NextForNode("origin", time.Minute); !ok || cmd.ID != oldID {
+		t.Fatalf("first config command = %#v", cmd)
+	}
+	if cmd, ok := manager.NextForNode("origin", time.Minute); ok {
+		t.Fatalf("new config should wait behind old lease, got %#v", cmd)
+	}
+	if err := manager.RecordNodeResult(oldID, "origin", rolloutStatusCompleted, "applied"); err != nil {
+		t.Fatal(err)
+	}
+	if cmd, ok := manager.NextForNode("origin", time.Minute); !ok || cmd.ID != newID {
+		t.Fatalf("next config command = %#v", cmd)
+	}
+	if err := manager.RecordNodeResult(newID, "origin", rolloutStatusFailed, "restart failed"); err != nil {
+		t.Fatal(err)
+	}
+	_, states := manager.inputPathSnapshot(false)
+	state := states["origin"]
+	if state["input_path_sync_status"] != "failed" ||
+		state["desired_input_path_profile"].(map[string]any)["id"] != "new" ||
+		state["applied_input_path_profile"].(map[string]any)["id"] != "old" {
+		t.Fatalf("incorrect input sync state: %#v", state)
+	}
+}
 
 func TestInputPathProfileAllows256AndRejects257Inputs(t *testing.T) {
 	inputs := make([]any, 256)
@@ -141,7 +184,9 @@ func TestInputPathProfileRolloutSupportsExactOneAndExistingTargetModes(t *testin
 	if response.StatusCode != http.StatusOK || decodeMap(t, data)["pending_approval_count"] != float64(0) {
 		t.Fatalf("pending approval count after approval: %d %s", response.StatusCode, data)
 	}
-	f.server.recordInputPathRolloutResult(liveID, "path-node-1", "completed", "configuration validated and applied")
+	if err := f.server.rollouts.RecordNodeResult(liveID, "path-node-1", "completed", "configuration validated and applied"); err != nil {
+		t.Fatal(err)
+	}
 	response, data = f.request(http.MethodGet, "/api/v1/config/input-paths/mail-profile/rollout", nil)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("rollout history %d: %s", response.StatusCode, data)
