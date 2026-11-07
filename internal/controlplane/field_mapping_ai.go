@@ -409,6 +409,8 @@ func mappingAIEnums(name string) []string {
 		return []string{"omit", "preserve_null", "reject"}
 	case "output_policy":
 		return []string{"include", "omit", "intermediate", "flatten"}
+	case "kv_profile":
+		return []string{"auto", "configured"}
 	case "empty_policy":
 		return []string{"preserve", "missing", "null", "reject"}
 	case "timezone":

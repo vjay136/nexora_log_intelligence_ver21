@@ -278,3 +278,26 @@ body.stale #stream-state{color:var(--amber);background:rgba(248,193,92,.12)}
 .nfi-source-lines{display:flex;overflow:auto;max-height:300px;border:1px solid var(--border);border-radius:8px}.nfi-source-lines pre{border:0!important;margin:0!important;border-radius:0!important;overflow:visible!important;max-height:none!important;white-space:pre!important}.nfi-line-numbers{color:#687f9e;user-select:none;min-width:42px;text-align:right;background:rgba(255,255,255,.025)!important}.nfi-source-lines #nfi-raw-selection{min-width:max-content;flex:1}
 
 .nfi-info{position:relative}.nfi-info:focus-visible::after{content:attr(data-tooltip);position:absolute;z-index:50;left:0;top:28px;width:min(360px,70vw);padding:12px;border:1px solid #42d7f5;border-radius:8px;background:#122238;color:#e0edff;text-align:left;font-size:11px;line-height:1.5;white-space:normal;box-shadow:0 10px 25px #0008}
+
+.nfi-kv-inspector {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--cyan);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-block: 12px;
+  overflow-wrap: anywhere;
+}
+.nfi-kv-inspector pre { max-height: 12rem; overflow: auto; white-space: pre-wrap; }
+.nfi-kv-profile { border-top: 1px solid var(--border); padding-block: 10px; }
+.nfi-kv-profile ul { max-height: 12rem; overflow: auto; }
+.qrw-step-hint {
+  border-left: 4px solid var(--cyan);
+  padding: 8px 12px;
+  font-weight: 650;
+}
+button[data-qrw-action-step] {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+button[data-qrw-action-step="7"], button[data-qrw-action-step="8"] { outline-color: var(--amber); }
+button[data-qrw-action-step="9"] { outline-color: var(--green); }

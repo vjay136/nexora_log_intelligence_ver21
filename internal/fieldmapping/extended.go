@@ -117,11 +117,25 @@ func compileExtended(cf *compiledField, seen map[string]bool) error {
 	if f.OutputPolicy == "flatten" && (f.Method != "kv_all" || f.Type != "object") {
 		return fmt.Errorf("flatten requires kv_all with object type")
 	}
-	if f.EndOfLine && f.Method != "kv_all" {
-		return fmt.Errorf("end_of_line requires kv_all extraction")
+	if !contains([]string{"", "auto", "configured"}, f.KVProfile) || f.KVProfile != "" && f.Method != "kv_all" && f.Method != "key_value" {
+		return fmt.Errorf("kv_profile requires key/value extraction and must be auto or configured")
 	}
-	if f.Method == "kv_all" && f.Source != "" && f.Source != "raw" {
-		start, err := index(f.Source, 1)
+	namedProfile := f.Method == "key_value" && f.KVProfile != ""
+	if f.KVStart != "" && !namedProfile {
+		return fmt.Errorf("kv_start requires a named key_value field with a KV profile")
+	}
+	if f.KVProfile != "configured" && (len(f.KVPairSeparators) > 0 || f.KVQuotes != "" || f.KVEscape != "" || f.KVBrackets != nil || f.KVKeyPattern != "" || f.KVRejectEmpty) {
+		return fmt.Errorf("custom KV lexical options require a configured profile")
+	}
+	if f.EndOfLine && f.Method != "kv_all" && !namedProfile {
+		return fmt.Errorf("end_of_line requires kv_all or a profiled key_value field")
+	}
+	source := f.Source
+	if namedProfile {
+		source = f.KVStart
+	}
+	if (f.Method == "kv_all" || namedProfile) && source != "" && source != "raw" {
+		start, err := index(source, 1)
 		if err != nil {
 			return err
 		}
@@ -130,6 +144,13 @@ func compileExtended(cf *compiledField, seen map[string]bool) error {
 			if err != nil || end < start {
 				return fmt.Errorf("invalid key/value source range")
 			}
+		}
+	}
+	if f.KVProfile == "configured" {
+		assignments, delimiters := keySettings(*f)
+		cf.kvie, err = compileKVIEProfile(assignments, delimiters, *f)
+		if err != nil {
+			return err
 		}
 	}
 	if len(f.Description) > 4096 || len(f.Example) > 4096 || len(f.CustomType) > 128 {
@@ -220,7 +241,7 @@ func compileExtended(cf *compiledField, seen map[string]bool) error {
 	return nil
 }
 func extendedMethod(f Field) bool {
-	return contains([]string{"raw", "field", "word", "token", "token_match", "before", "after", "between", "count", "kv_all", "regex_all", "regex_groups"}, f.Method) || f.Method == "key_value" && (len(f.AssignmentSeparators) > 0 || len(f.KeyAliases) > 0)
+	return contains([]string{"raw", "field", "word", "token", "token_match", "before", "after", "between", "count", "kv_all", "regex_all", "regex_groups"}, f.Method) || f.Method == "key_value" && (len(f.AssignmentSeparators) > 0 || len(f.KeyAliases) > 0 || f.KVProfile != "")
 }
 func regexGroup(re *regexp.Regexp, name string) (int, error) {
 	if name == "" {
@@ -249,6 +270,9 @@ func (r *record) extractExtended(cf compiledField, prior map[string]any) (any, E
 		return r.raw, e, true, nil
 	}
 	if f.Method == "kv_all" || f.Method == "key_value" {
+		if f.KVProfile != "" {
+			return r.extractKVIE(cf, e)
+		}
 		if f.Method == "kv_all" {
 			selected, start, end, found, err := r.keySource(cf)
 			if err != nil || !found {
@@ -341,7 +365,7 @@ func (r *record) extractExtended(cf compiledField, prior map[string]any) (any, E
 	return r.raw[e.Start:e.End], e, true, nil
 }
 
-func extractKeys(raw string, f Field, e Evidence) (any, Evidence, bool, error) {
+func keySettings(f Field) ([]string, string) {
 	separators := f.AssignmentSeparators
 	if len(separators) == 0 {
 		sep := f.KVSeparator
@@ -354,10 +378,19 @@ func extractKeys(raw string, f Field, e Evidence) (any, Evidence, bool, error) {
 	if delimiters == "" {
 		delimiters = ":;,| \t\r\n"
 	}
+	return separators, delimiters
+}
+
+func extractKeys(raw string, f Field, e Evidence) (any, Evidence, bool, error) {
+	separators, delimiters := keySettings(f)
 	pairs, err := scanPairsManyMode(raw, separators, delimiters, f.RequireComplete)
 	if err != nil {
 		return nil, e, false, err
 	}
+	return projectKeys(pairs, f, e)
+}
+
+func projectKeys(pairs map[string][]pair, f Field, e Evidence) (any, Evidence, bool, error) {
 	normalized := map[string][]pair{}
 	if f.RequireComplete && len(pairs) == 0 {
 		return nil, e, false, fmt.Errorf("key/value tail contains no pairs")
@@ -402,10 +435,21 @@ func extractKeys(raw string, f Field, e Evidence) (any, Evidence, bool, error) {
 		e.Start = values[0].start
 		e.End = values[0].end
 		e.Source = true
+		if f.KVProfile != "" {
+			for _, value := range values {
+				e.Spans = append(e.Spans, Span{value.start, value.end})
+			}
+		}
 		return v, e, true, err
 	}
 	out := map[string]any{}
-	for key, values := range normalized {
+	keys := make([]string, 0, len(normalized))
+	for key := range normalized {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		values := normalized[key]
 		if len(f.KeyInclude) > 0 && !contains(f.KeyInclude, key) || contains(f.KeyExclude, key) {
 			continue
 		}

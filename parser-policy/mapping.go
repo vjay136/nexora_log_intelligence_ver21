@@ -1,6 +1,11 @@
 package parserpolicy
 
-import "context"
+import (
+	"context"
+	"errors"
+
+	"nexora.local/nli-v20/internal/fieldmapping"
+)
 
 func (e *ParserPackExecutor) executeMappingStage(ctx context.Context, request *ExecutionRequest, rule ParserRule, stage Stage, fields workingSet) (int, int, error) {
 	plan := e.mappingPlans[rule.ID+"/"+stage.ID]
@@ -12,6 +17,9 @@ func (e *ParserPackExecutor) executeMappingStage(ctx context.Context, request *E
 	}
 	result, err := plan.Execute(ctx, request.Input)
 	if err != nil {
+		if errors.Is(err, fieldmapping.ErrIncompleteKV) {
+			return 0, 0, fail("incomplete_structured_tail", err.Error())
+		}
 		return 0, 0, fail("mapping_validation", err.Error())
 	}
 	if err := plan.ValidateComplete(request.Input, result); err != nil {

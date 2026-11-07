@@ -34,7 +34,8 @@ func BenchmarkNFIAndR6RegexSameOutput(b *testing.B) {
 		request := &parserpolicy.ExecutionRequest{Input: nfiExample, Service: nfiCaseService(cases[0]), SourceType: "file", Context: context.Background()}
 		result, err := executor.Execute(request)
 		if err != nil || result.Quarantined {
-			detail,_:=json.Marshal(result);b.Fatalf("benchmark output did not pass reviewed regression: err=%v result=%s",err,detail)
+			detail, _ := json.Marshal(result)
+			b.Fatalf("benchmark output did not pass reviewed regression: err=%v result=%s", err, detail)
 		}
 		if diff, _ := structuralDiff(result.EventPayload.Fields, desired); len(diff) != 0 {
 			b.Fatal("benchmark outputs differ")

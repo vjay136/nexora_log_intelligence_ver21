@@ -350,7 +350,7 @@ func (p *Parser) Parse(input string) (Result, error) {
 			pairSeparator = end.separator
 			next = end.next
 		}
-		valueStartTrimmed, valueEndTrimmed := trimSpaceBounds(input, h.valueStart, valueEnd)
+		valueStartTrimmed, valueEndTrimmed := p.trimValueBounds(input, h.valueStart, valueEnd)
 		if valueEndTrimmed-valueStartTrimmed > p.config.MaxValueBytes {
 			return result, parseError(CodeValueTooLarge, valueStartTrimmed, h.key, "value exceeds configured maximum")
 		}
@@ -523,7 +523,7 @@ func (p *Parser) findBoundary(input string, valueStart int, fieldType string) (*
 				next := skipSpace(input, after)
 				nextHeader, valid := p.headerAt(input, next)
 				if valid {
-					candidateStart, candidateEnd := trimSpaceBounds(input, valueStart, i)
+					candidateStart, candidateEnd := p.trimValueBounds(input, valueStart, i)
 					candidate := input[candidateStart:candidateEnd]
 					if fieldType == "ip" && net.ParseIP(stripIPZone(candidate)) == nil {
 						i++
@@ -877,6 +877,21 @@ func trimSpaceBounds(input string, start, end int) (int, int) {
 		start++
 	}
 	for end > start && isSpace(input[end-1]) {
+		end--
+	}
+	return start, end
+}
+
+func (p *Parser) trimValueBounds(input string, start, end int) (int, int) {
+	start = skipSpace(input[:end], start)
+	for end > start && isSpace(input[end-1]) {
+		escapes := 0
+		for i := end - 2; i >= start && input[i] == p.escape; i-- {
+			escapes++
+		}
+		if escapes%2 != 0 {
+			break
+		}
 		end--
 	}
 	return start, end

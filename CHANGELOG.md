@@ -1,5 +1,11 @@
 # Changelog
 
+## [21.0.0-10] - 2026-11-07
+
+- Integrate shared KV Intelligence Engine analysis with FieldSense authoring and quarantine recovery.
+- Clarify preview, validation, approval and rollout actions in the wizard.
+- Include a manager demo guide and qualify the R9 to R10 RPM lifecycle.
+
 ## [21.0.0-9] - 2026-11-06
 
 - Calculate dashboard totals from the selected retained time range and client scope.

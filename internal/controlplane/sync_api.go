@@ -172,6 +172,7 @@ func (s *Server) subsystemSyncSnapshot(ctx context.Context, snapshot telemetry.S
 		nal["reason"] = "assurance run metadata collection failed"
 	}
 	nursfState := "idle"
+	nal["kvie"] = s.fieldSenseAnalysis().kvStatus()
 	if snapshot.Diagnostics.LiveSources > 0 {
 		nursfState = "live"
 	}

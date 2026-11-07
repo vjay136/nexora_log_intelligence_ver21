@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-func TestR9SuggestionsDiscoverEntireMailKVTail(t *testing.T) {
+func TestSuggestionsDiscoverEntireMailKVTail(t *testing.T) {
 	prefix := "20250811 080053105+0100 host smtp 3692 0 140026854221568 Note;SieveRuleMsg "
-	for _, tail := range []string{"status=failed;reason=not needed", "status=failed:reason=notneeded:server=cloud", "|status:failed|reason:notneeded|server:cloud"} {
+	for _, tail := range []string{"status=failed;reason=not needed", "status=failed:reason=notneeded:server=cloud", "|status:failed|reason:notneeded|server:cloud", "status:failed reason;notneeded server;cloud"} {
 		raw := prefix + tail
 		_, fields, err := nfiSuggestRecord(context.Background(), raw, "")
 		if err != nil {
@@ -30,15 +30,6 @@ func TestR9SuggestionsDiscoverEntireMailKVTail(t *testing.T) {
 		}
 		if err := p.ValidateComplete(raw, r); err != nil {
 			t.Fatalf("suggested incomplete: %v", err)
-		}
-	}
-	_, fields, err := nfiSuggestRecord(context.Background(), prefix+"status:failed reason;notneeded server;cloud", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range fields {
-		if f.Method == "key_value" {
-			t.Fatal("mixed ambiguous assignments guessed")
 		}
 	}
 }

@@ -71,6 +71,21 @@ func TestEscapesNestedJSONAndDelimiterCollisions(t *testing.T) {
 	}
 }
 
+func TestEscapedTrailingSpacePreservesValueAndEvidence(t *testing.T) {
+	input := "msg=hello\\  |status=ok\\ "
+	result, err := mixedkv.Parse(input, mixedkv.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Fields["msg"] != "hello " || result.Fields["status"] != "ok " {
+		t.Fatalf("escaped spaces lost: %#v", result.Fields)
+	}
+	span := result.Entries[1].ValueSpan
+	if input[span.Start:span.End] != "ok\\ " {
+		t.Fatalf("incorrect raw value span: %+v", span)
+	}
+}
+
 func TestURLIPv6AndTimeColonsAreNotPairBoundaries(t *testing.T) {
 	input := `url=https://example.test:8443/a:b:ip=2001:db8::1:time=12:34:56:status=ok`
 	config := mixedkv.DefaultConfig()

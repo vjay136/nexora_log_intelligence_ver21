@@ -183,7 +183,7 @@ test('R7 NFI maps compound tokens and colon pairs through the real controller an
   await confirmations.nth(1).check();
   await page.getByRole('button', { name: 'Test all fields', exact: true }).click();
   const verified = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/assurance/mapping-preview' && response.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Verify on controller', exact: true }).click();
+  await page.getByRole('button', { name: 'Preview mapping', exact: true }).click();
   const preview = await verified;
   expect(preview.status()).toBe(200);
   expect(await preview.json()).toMatchObject({ passed:true, actual:{loglevel:'Note', event:'SieveRuleMsg', status:'failed', reason:'notneeded', server:'cloud'} });
@@ -196,6 +196,26 @@ test('R7 NFI maps compound tokens and colon pairs through the real controller an
   await page.getByRole('button', { name:'Validate and save review-gated draft', exact:true }).click();
   expect((await saved).status()).toBe(201);
   await expect(page.locator('#page-title')).toHaveText('NLI FieldSense Studio');
+});
+
+test('KVIE inspects a pipe tail and previews the same row through the packaged controller', async ({ page }) => {
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  await page.getByRole('button',{name:'Manual Sense Mode',exact:true}).click();
+  await page.locator('#nfi-raw').fill('20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg |status:failed|reason:notneeded|server:cloud');
+  const inspected=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/assurance/kv-inspect')&&r.request().method()==='POST');
+  const add=page.getByRole('button',{name:'Add dynamic KV tail',exact:true});
+  await add.click();
+  expect((await inspected).status()).toBe(200);
+  const row=page.locator('[data-qrw-row]').first();
+  await expect(row.locator('[data-qrw-key=source]')).toHaveValue('9');
+  await expect(page.locator('#kvie-inspector')).toContainText('server = cloud');
+  await row.getByRole('button',{name:'Preview',exact:true}).click();
+  await expect(page.locator('#nfi-live-json')).toContainText('"server": "cloud"');
+  await expect(page.locator('[data-qrw-row]')).toHaveCount(1);
+  await add.click();
+  await expect(page.locator('#kvie-inspector')).toContainText('reason = notneeded');
+  await expect(page.locator('[data-qrw-row]')).toHaveCount(1);
 });
 
 test('FieldSense manual controls keep live output and native controller evidence aligned', async ({ page }) => {
@@ -215,7 +235,7 @@ test('FieldSense manual controls keep live output and native controller evidence
   await expect(page.locator('#nfi-help-content')).toContainText('1-based');
   await page.getByRole('button',{name:'Close help',exact:true}).click();
   const verified=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/assurance/mapping-preview'&&response.request().method()==='POST');
-  await page.getByRole('button',{name:'Verify on controller',exact:true}).click();
+  await page.getByRole('button',{name:'Preview mapping',exact:true}).click();
   const response=await verified;
   expect(response.status()).toBe(200);
   const result=await response.json();
@@ -256,7 +276,7 @@ test('R8 packaged Design Studio switches all eight styles without reposting or r
   }
   expect(writes.filter(path=>path!=='/api/v1/communications/browser-heartbeat')).toEqual([]);
   const responsePromise=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/assurance/mapping-preview'&&response.request().method()==='POST');
-  await page.getByRole('button',{name:'Verify on controller',exact:true}).click();
+  await page.getByRole('button',{name:'Preview mapping',exact:true}).click();
   const response=await responsePromise;
   expect(response.status()).toBe(200);
   expect(await response.json()).toMatchObject({passed:true,actual:{mail_service:'smtp'}});

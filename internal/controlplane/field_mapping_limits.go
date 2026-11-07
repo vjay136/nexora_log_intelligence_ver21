@@ -10,13 +10,15 @@ import (
 // Analysis capacity is separate from ingestion, health, fleet and approval work.
 // No waiting queue retains operator samples when all analysis slots are busy.
 type fieldSenseAdmission struct {
-	slots     chan struct{}
-	timeout   time.Duration
-	accepted  atomic.Int64
-	completed atomic.Int64
-	rejected  atomic.Int64
-	timedOut  atomic.Int64
-	canceled  atomic.Int64
+	slots         chan struct{}
+	timeout       time.Duration
+	accepted      atomic.Int64
+	completed     atomic.Int64
+	rejected      atomic.Int64
+	timedOut      atomic.Int64
+	canceled      atomic.Int64
+	kvInspections atomic.Int64
+	kvNoMatch     atomic.Int64
 }
 
 func (s *Server) fieldSenseAnalysis() *fieldSenseAdmission {
@@ -72,4 +74,8 @@ func fieldSenseContextError(w http.ResponseWriter, ctx context.Context) bool {
 
 func (a *fieldSenseAdmission) status() map[string]any {
 	return map[string]any{"concurrency": cap(a.slots), "active": len(a.slots), "timeout_ms": a.timeout.Milliseconds(), "queued": 0, "accepted": a.accepted.Load(), "completed": a.completed.Load(), "busy_rejections": a.rejected.Load(), "timed_out": a.timedOut.Load(), "canceled": a.canceled.Load(), "ingestion_independent": true}
+}
+
+func (a *fieldSenseAdmission) kvStatus() map[string]any {
+	return map[string]any{"engine": "kvie-v1", "minimum_client_release": "21.0.0-10", "inspection_total": a.kvInspections.Load(), "no_match_total": a.kvNoMatch.Load(), "preview_path": "/api/v1/assurance/kv-inspect", "automatic_publication": false}
 }

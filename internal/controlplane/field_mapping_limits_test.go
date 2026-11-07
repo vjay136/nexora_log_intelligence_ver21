@@ -20,6 +20,11 @@ func TestFieldSenseAdmissionIsolationAndRecovery(t *testing.T) {
 	if busy.Code != http.StatusTooManyRequests || busy.Header().Get("Retry-After") != "1" {
 		t.Fatalf("busy analysis: %d", busy.Code)
 	}
+	kvBusy := httptest.NewRecorder()
+	s.handleKVInspect(kvBusy, httptest.NewRequest("POST", "/", strings.NewReader(`{}`)))
+	if kvBusy.Code != http.StatusTooManyRequests || kvBusy.Header().Get("Retry-After") != "1" {
+		t.Fatalf("KV inspection bypassed shared admission: %d", kvBusy.Code)
+	}
 	// A deadline frees capacity when the handler exits; no background queue starts.
 	select {
 	case <-ctx.Done():

@@ -61,36 +61,44 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 type Field struct {
 	Selection
 	KeyOptions
-	Name            string      `json:"name"`
-	Label           string      `json:"label,omitempty"`
-	Type            string      `json:"type,omitempty"`
-	Policy          string      `json:"policy,omitempty"`
-	Method          string      `json:"method"`
-	Source          string      `json:"source,omitempty"`
-	SourceEnd       string      `json:"source_end,omitempty"`
-	Delimiter       string      `json:"delimiter,omitempty"`
-	Part            string      `json:"part,omitempty"`
-	Confirmed       bool        `json:"confirmed,omitempty"`
-	Transform       string      `json:"transform,omitempty"`
-	TimestampFormat string      `json:"timestamp_format,omitempty"`
-	Timezone        string      `json:"timezone,omitempty"`
-	TimezoneName    string      `json:"timezone_name,omitempty"`
-	DefaultValue    string      `json:"default_value,omitempty"`
-	Validation      string      `json:"validation,omitempty"`
-	NullPolicy      string      `json:"null_policy,omitempty"`
-	KVSeparator     string      `json:"kv_separator,omitempty"`
-	PairDelimiters  string      `json:"pair_delimiters,omitempty"`
-	DuplicatePolicy string      `json:"duplicate_policy,omitempty"`
-	JoinSeparator   string      `json:"join_separator,omitempty"`
-	QuoteAware      *bool       `json:"quote_aware,omitempty"`
-	Operations      []Operation `json:"operations,omitempty"`
-	OutputPolicy    string      `json:"output_policy,omitempty"`
-	EndOfLine       bool        `json:"end_of_line,omitempty"`
-	EmptyPolicy     string      `json:"empty_policy,omitempty"`
-	CustomType      string      `json:"custom_type,omitempty"`
-	CustomPattern   string      `json:"custom_pattern,omitempty"`
-	Description     string      `json:"description,omitempty"`
-	Example         string      `json:"example,omitempty"`
+	Name             string             `json:"name"`
+	Label            string             `json:"label,omitempty"`
+	Type             string             `json:"type,omitempty"`
+	Policy           string             `json:"policy,omitempty"`
+	Method           string             `json:"method"`
+	Source           string             `json:"source,omitempty"`
+	SourceEnd        string             `json:"source_end,omitempty"`
+	Delimiter        string             `json:"delimiter,omitempty"`
+	Part             string             `json:"part,omitempty"`
+	Confirmed        bool               `json:"confirmed,omitempty"`
+	Transform        string             `json:"transform,omitempty"`
+	TimestampFormat  string             `json:"timestamp_format,omitempty"`
+	Timezone         string             `json:"timezone,omitempty"`
+	TimezoneName     string             `json:"timezone_name,omitempty"`
+	DefaultValue     string             `json:"default_value,omitempty"`
+	Validation       string             `json:"validation,omitempty"`
+	NullPolicy       string             `json:"null_policy,omitempty"`
+	KVSeparator      string             `json:"kv_separator,omitempty"`
+	PairDelimiters   string             `json:"pair_delimiters,omitempty"`
+	DuplicatePolicy  string             `json:"duplicate_policy,omitempty"`
+	JoinSeparator    string             `json:"join_separator,omitempty"`
+	QuoteAware       *bool              `json:"quote_aware,omitempty"`
+	Operations       []Operation        `json:"operations,omitempty"`
+	OutputPolicy     string             `json:"output_policy,omitempty"`
+	KVProfile        string             `json:"kv_profile,omitempty"`
+	KVStart          string             `json:"kv_start,omitempty"`
+	KVPairSeparators []string           `json:"kv_pair_separators,omitempty"`
+	KVQuotes         string             `json:"kv_quotes,omitempty"`
+	KVEscape         string             `json:"kv_escape,omitempty"`
+	KVBrackets       *map[string]string `json:"kv_brackets,omitempty"`
+	KVKeyPattern     string             `json:"kv_key_pattern,omitempty"`
+	KVRejectEmpty    bool               `json:"kv_reject_empty,omitempty"`
+	EndOfLine        bool               `json:"end_of_line,omitempty"`
+	EmptyPolicy      string             `json:"empty_policy,omitempty"`
+	CustomType       string             `json:"custom_type,omitempty"`
+	CustomPattern    string             `json:"custom_pattern,omitempty"`
+	Description      string             `json:"description,omitempty"`
+	Example          string             `json:"example,omitempty"`
 	// These bounded display-only values allow existing browser drafts to be
 	// round-tripped without permitting arbitrary configuration properties.
 	ID         string `json:"id,omitempty"`
@@ -184,6 +192,7 @@ type Result struct {
 	Evidence      map[string]Evidence    `json:"evidence"`
 	Trace         map[string][]TraceStep `json:"trace,omitempty"`
 	DynamicFields []string               `json:"dynamic_fields,omitempty"`
+	kvieScans     map[kvieCacheKey]kvieScan
 }
 
 type compiledField struct {
@@ -192,6 +201,7 @@ type compiledField struct {
 	ops           []*regexp.Regexp
 	tokenPattern  *regexp.Regexp
 	customPattern *regexp.Regexp
+	kvie          *kvieProfile
 }
 
 type Compiled struct{ fields []compiledField }
@@ -457,6 +467,14 @@ func (c *Compiled) execute(ctx context.Context, raw string, trace bool) (Result,
 	scanner, err := newRecord(raw)
 	if err != nil {
 		return result, err
+	}
+	scanner.ctx = ctx
+	for _, field := range c.fields {
+		if field.field.KVProfile != "" {
+			scanner.kvieScans = make(map[kvieCacheKey]kvieScan)
+			result.kvieScans = scanner.kvieScans
+			break
+		}
 	}
 	outputBytes := 0
 	for _, f := range c.fields {

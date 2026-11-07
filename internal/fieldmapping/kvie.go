@@ -1,0 +1,384 @@
+package fieldmapping
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+	"unicode/utf8"
+
+	"nexora.local/nli-v20/internal/mixedkv"
+)
+
+// ErrIncompleteKV identifies malformed or ambiguous structured input that
+// must remain available for recovery instead of entering a generic fallback.
+var ErrIncompleteKV = errors.New("incomplete_structured_tail")
+
+var kvieHeader = regexp.MustCompile(`^\|?[ \t]*[A-Za-z_][A-Za-z0-9_.-]*[ \t]*[=:;]`)
+
+// KVProfile describes a complete observed extraction. Observations carry
+// half-open UTF-8 byte spans in the original record.
+type KVProfile struct {
+	AssignmentSeparators []string              `json:"assignment_separators"`
+	PairDelimiters       string                `json:"pair_delimiters"`
+	Observations         []KeyValueObservation `json:"observations"`
+}
+
+type kvieProfile struct {
+	assignments []string
+	delimiters  string
+	pairSeps    []string
+	multiSeps   []string
+	quotes      string
+	escape      byte
+	brackets    map[string]string
+	signature   string
+	parser      *mixedkv.Parser
+}
+
+type kvieCacheKey struct {
+	start, end int
+	signature  string
+}
+
+type kvieScan struct {
+	pairs map[string][]pair
+	err   error
+}
+
+func compileKVIEProfile(assignments []string, delimiters string, field Field) (*kvieProfile, error) {
+	cfg := mixedkv.DefaultConfig()
+	cfg.AssignmentSeparators = assignments
+	cfg.PairSeparators = nil
+	// FieldSense's existing pair option is a set of characters. The shared
+	// parser receives each configured character as a distinct separator.
+	if len(field.KVPairSeparators) > 0 {
+		cfg.PairSeparators = append([]string(nil), field.KVPairSeparators...)
+	} else {
+		for _, delimiter := range delimiters {
+			if separator := string(delimiter); !contains(cfg.PairSeparators, separator) {
+				cfg.PairSeparators = append(cfg.PairSeparators, separator)
+			}
+		}
+	}
+	cfg.BracketPairs["<"] = ">"
+	if field.KVBrackets != nil {
+		cfg.BracketPairs = make(map[string]string, len(*field.KVBrackets))
+		for open, close := range *field.KVBrackets {
+			cfg.BracketPairs[open] = close
+		}
+	}
+	if field.KVQuotes != "" {
+		cfg.QuoteCharacters = field.KVQuotes
+	}
+	if field.KVEscape != "" {
+		cfg.EscapeCharacter = field.KVEscape
+	}
+	if field.KVKeyPattern != "" {
+		cfg.KeyPattern = field.KVKeyPattern
+	}
+	cfg.RejectEmptyValues = field.KVRejectEmpty
+	cfg.DuplicatePolicy = mixedkv.DuplicateArray
+	cfg.MaxFields = MaxFields
+	parser, err := mixedkv.Compile(cfg)
+	if err != nil {
+		return nil, err
+	}
+	signature, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	var single string
+	var multiple []string
+	for _, separator := range cfg.PairSeparators {
+		if utf8.RuneCountInString(separator) == 1 {
+			single += separator
+		} else {
+			multiple = append(multiple, separator)
+		}
+	}
+	return &kvieProfile{
+		assignments: assignments,
+		delimiters:  single,
+		pairSeps:    cfg.PairSeparators,
+		multiSeps:   multiple,
+		quotes:      cfg.QuoteCharacters,
+		escape:      cfg.EscapeCharacter[0],
+		brackets:    cfg.BracketPairs,
+		signature:   string(signature),
+		parser:      parser,
+	}, nil
+}
+
+var kvieProfiles = func() []*kvieProfile {
+	// Colon assignments deliberately use non-colon pair boundaries. A colon
+	// can belong to a timestamp, URL, IPv6 address or an ordinary value.
+	presets := []KVProfile{
+		{AssignmentSeparators: []string{"=>", ":=", "="}, PairDelimiters: ":;| \t\r\n"},
+		{AssignmentSeparators: []string{":"}, PairDelimiters: ";| \t\r\n"},
+		{AssignmentSeparators: []string{";"}, PairDelimiters: "| \t\r\n"},
+		{AssignmentSeparators: []string{"=>", ":=", "=", ":"}, PairDelimiters: ";| \t\r\n"},
+		{AssignmentSeparators: []string{"=>", ":=", "=", ":", ";"}, PairDelimiters: "| \t\r\n"},
+	}
+	out := make([]*kvieProfile, 0, len(presets))
+	for _, preset := range presets {
+		profile, err := compileKVIEProfile(preset.AssignmentSeparators, preset.PairDelimiters, Field{})
+		if err != nil {
+			panic(err)
+		}
+		out = append(out, profile)
+	}
+	return out
+}()
+
+func (p *kvieProfile) observe(raw string, offset int) ([]KeyValueObservation, error) {
+	// Leading pipes occur in wrapped mail tails. Preserve their byte offset
+	// and only recognize framing when the selected profile allows pipes.
+	body := strings.TrimLeft(raw, " \t\r\n")
+	offset += len(raw) - len(body)
+	frame := ""
+	for _, separator := range p.pairSeps {
+		if len(separator) > len(frame) && strings.Trim(separator, "|") == "" && strings.HasPrefix(body, separator) {
+			frame = separator
+		}
+	}
+	if frame != "" {
+		body = body[len(frame):]
+		offset += len(frame)
+	}
+	framingEnd := strings.TrimRight(body, " \t\r\n")
+	if frame != "" && strings.HasSuffix(framingEnd, frame) {
+		backslashes := 0
+		for i := len(framingEnd) - len(frame) - 1; i >= 0 && framingEnd[i] == p.escape; i-- {
+			backslashes++
+		}
+		if backslashes%2 == 0 {
+			body = framingEnd[:len(framingEnd)-len(frame)]
+		}
+	}
+	parsed, err := p.parser.Parse(body)
+	if err != nil {
+		var parseErr *mixedkv.Error
+		if errors.As(err, &parseErr) {
+			positioned := *parseErr
+			if positioned.Offset >= 0 {
+				positioned.Offset += offset
+			}
+			if positioned.Code != mixedkv.CodeNoKeyValue {
+				return nil, fmt.Errorf("%w: %w", ErrIncompleteKV, &positioned)
+			}
+			return nil, &positioned
+		}
+		return nil, err
+	}
+	if parsed.RemainderSpan != nil {
+		return nil, fmt.Errorf("%w: unconsumed key/value fragment at byte %d", ErrIncompleteKV, offset+parsed.RemainderSpan.Start+1)
+	}
+	out := make([]KeyValueObservation, 0, len(parsed.Entries))
+	for _, entry := range parsed.Entries {
+		value := body[entry.ValueSpan.Start:entry.ValueSpan.End]
+		if err := p.validateValue(value); err != nil {
+			return nil, fmt.Errorf("%w: key %q at byte %d: %v", ErrIncompleteKV, entry.SourceKey, offset+entry.ValueSpan.Start, err)
+		}
+		out = append(out, KeyValueObservation{
+			Key: entry.SourceKey, Value: entry.Value.(string),
+			Start: offset + entry.ValueSpan.Start, End: offset + entry.ValueSpan.End,
+		})
+	}
+	return out, nil
+}
+
+func (p *kvieProfile) validateValue(value string) error {
+	if value == "" {
+		return nil
+	}
+	if strings.ContainsRune(p.quotes, rune(value[0])) {
+		if len(value) < 2 || value[len(value)-1] != value[0] {
+			return fmt.Errorf("quoted value has trailing unconsumed data")
+		}
+		return nil
+	}
+	if close, ok := p.brackets[value[:1]]; ok && strings.HasSuffix(value, close) {
+		return nil
+	}
+	return strictUnquotedPairValue(value, p.delimiters, p.escape, p.multiSeps)
+}
+
+func detectKVIE(ctx context.Context, raw string, offset int) ([]KVProfile, error) {
+	best := 0
+	structured := kvieHeader.MatchString(strings.TrimLeft(raw, " \t\r\n"))
+	var out []KVProfile
+	var evidenceError error
+	for _, preset := range kvieProfiles {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		observations, err := preset.observe(raw, offset)
+		if errors.Is(err, ErrIncompleteKV) {
+			structured = true
+			var previous, current *mixedkv.Error
+			if evidenceError == nil || errors.As(err, &current) && (!errors.As(evidenceError, &previous) || current.Offset > previous.Offset) {
+				evidenceError = err
+			}
+		}
+		if err != nil || len(observations) < best {
+			continue
+		}
+		if len(observations) > best {
+			best = len(observations)
+			out = nil
+		}
+		duplicate := false
+		for _, candidate := range out {
+			if sameObservations(observations, candidate.Observations) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			out = append(out, KVProfile{
+				AssignmentSeparators: append([]string(nil), preset.assignments...),
+				PairDelimiters:       preset.delimiters,
+				Observations:         observations,
+			})
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		if evidenceError != nil {
+			return nil, evidenceError
+		}
+		err := errors.New("no complete KV profile matched the selected source; check the start position, separators, and quotes")
+		if structured {
+			err = fmt.Errorf("%w: %v", ErrIncompleteKV, err)
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
+func sameObservations(a, b []KeyValueObservation) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// InspectKeyValues uses the same bounded source selection and profiles as
+// production extraction. The caller can show distinct competing candidates.
+func InspectKeyValues(ctx context.Context, raw string, field Field) ([]KVProfile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(raw) > MaxInputBytes || !utf8.ValidString(raw) || strings.ContainsRune(raw, 0) {
+		return nil, fmt.Errorf("key/value input violates bounds or UTF-8 contract")
+	}
+	selector := Field{
+		Name: "tail", Method: "kv_all", Type: "object",
+		Source: field.Source, SourceEnd: field.SourceEnd,
+		Selection: field.Selection, EndOfLine: field.EndOfLine, QuoteAware: field.QuoteAware,
+	}
+	if field.Method == "key_value" {
+		selector.Source = field.KVStart
+	}
+	compiled, err := Compile(Plan{Version: 1, Fields: []Field{selector}})
+	if err != nil {
+		return nil, err
+	}
+	r := record{raw: raw}
+	selected, start, _, found, err := r.keySource(compiled.fields[0])
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("key/value source position is absent from this record")
+	}
+	return detectKVIE(ctx, selected, start)
+}
+
+func (r *record) extractKVIE(cf compiledField, evidence Evidence) (any, Evidence, bool, error) {
+	f := cf.field
+	selector := cf
+	if f.Method == "key_value" {
+		selector.field.Source = f.KVStart
+	}
+	selected, start, end, found, err := r.keySource(selector)
+	if err != nil || !found {
+		return nil, evidence, found, err
+	}
+	signature := "auto"
+	if cf.kvie != nil {
+		signature = cf.kvie.signature
+	}
+	key := kvieCacheKey{start, end, signature}
+	scan, cached := r.kvieScans[key]
+	if !cached {
+		var observations []KeyValueObservation
+		if cf.kvie != nil {
+			observations, scan.err = cf.kvie.observe(selected, start)
+			if scan.err != nil && !errors.Is(scan.err, ErrIncompleteKV) && kvieHeader.MatchString(strings.TrimLeft(selected, " \t\r\n")) {
+				scan.err = fmt.Errorf("%w: %w", ErrIncompleteKV, scan.err)
+			}
+		} else {
+			var candidates []KVProfile
+			candidates, scan.err = detectKVIE(r.ctx, selected, start)
+			if scan.err == nil {
+				if len(candidates) != 1 {
+					scan.err = fmt.Errorf("%w: multiple KV profiles disagree; select the intended separators explicitly", ErrIncompleteKV)
+				} else {
+					observations = candidates[0].Observations
+				}
+			}
+		}
+		scan.pairs = make(map[string][]pair)
+		for _, observation := range observations {
+			scan.pairs[observation.Key] = append(scan.pairs[observation.Key], pair{observation.Value, observation.Start, observation.End})
+		}
+		r.kvieScans[key] = scan
+	}
+	if scan.err != nil {
+		return nil, evidence, false, scan.err
+	}
+	evidence.Start, evidence.End, evidence.Source = start, end, true
+	value, evidence, found, err := projectKeys(scan.pairs, f, evidence)
+	if err != nil {
+		err = fmt.Errorf("%w: %w", ErrIncompleteKV, err)
+	}
+	return value, evidence, found, err
+}
+
+// profileObservations returns the scoped facts used by mapping so the
+// completeness gate can validate a configured grammar without reinterpreting
+// its values with the legacy scanner.
+func (r Result) profileObservations(start, end int) ([]KeyValueObservation, bool) {
+	out := []KeyValueObservation{}
+	found := false
+	for key, scan := range r.kvieScans {
+		if key.start != start || key.end < end || scan.err != nil {
+			continue
+		}
+		found = true
+		for name, values := range scan.pairs {
+			for _, value := range values {
+				out = append(out, KeyValueObservation{Key: name, Start: value.start, End: value.end})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Start == out[j].Start {
+			return out[i].Key < out[j].Key
+		}
+		return out[i].Start < out[j].Start
+	})
+	return out, found
+}

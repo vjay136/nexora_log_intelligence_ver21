@@ -176,7 +176,7 @@ func nfiSuggestCorpus(ctx context.Context, samples []string, separator string) (
 
 func nfiSuggestionIdentity(f fieldmapping.Field) string {
 	operations, _ := json.Marshal(f.Operations)
-	return f.Method + "\x00" + f.Source + "\x00" + f.SourceEnd + "\x00" + f.Delimiter + "\x00" + f.Part + "\x00" + string(operations)
+	return f.Method + "\x00" + f.Source + "\x00" + f.SourceEnd + "\x00" + f.Delimiter + "\x00" + f.Part + "\x00" + f.KVProfile + "\x00" + f.KVStart + "\x00" + string(operations)
 }
 
 func nfiSuggestionUniqueName(name string, used map[string]bool) string {
@@ -304,11 +304,10 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 	if scanErr != nil {
 		return "", nil, scanErr
 	}
-	if mail && len(observations) == 0 && scanErr == nil {
-		candidate, err := fieldmapping.ScanKeyValues(discoveryRaw, []string{":"}, ":;,| \t\r\n", true)
-		if err == nil && len(candidate) >= 2 {
-			assignments = []string{":"}
-			observations = candidate
+	if mail && len(tokens) > 8 && len(observations) == 0 {
+		profiles, err := fieldmapping.InspectKeyValues(ctx, raw, fieldmapping.Field{Name: "tail_fields", Type: "object", Method: "kv_all", Source: "9", EndOfLine: true})
+		if err == nil && len(profiles) > 0 {
+			return family, nfiKVIEFields(fields, profiles[0]), nil
 		}
 	}
 	keys := []string{}
@@ -395,6 +394,31 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 		fields = append(fields, nfiSuggestedField("token_"+strconv.Itoa(i+1), "position", strconv.Itoa(i+1), token))
 	}
 	return "unstructured-tokens", fields, nil
+}
+
+func nfiKVIEFields(fields []fieldmapping.Field, profile fieldmapping.KVProfile) []fieldmapping.Field {
+	used, seen := map[string]bool{}, map[string]bool{}
+	for _, f := range fields {
+		used[f.Name] = true
+	}
+	for _, pair := range profile.Observations {
+		if len(fields) >= fieldmapping.MaxFields {
+			break
+		}
+		if seen[pair.Key] {
+			continue
+		}
+		seen[pair.Key] = true
+		name := nfiSuggestionUniqueName(pair.Key, used)
+		used[name] = true
+		f := nfiSuggestedField(name, "key_value", pair.Key, pair.Value)
+		f.KVProfile, f.KVStart, f.EndOfLine = "auto", "9", true
+		f.AssignmentSeparators, f.PairDelimiters = profile.AssignmentSeparators, profile.PairDelimiters
+		f.Type = nfiSuggestedType(pair.Key, pair.Value)
+		f.Evidence = "Observed with KV AutoSense at token 9; verify the source, grammar and output name"
+		fields = append(fields, f)
+	}
+	return fields
 }
 
 func nfiSuggestNested(ctx context.Context, raw, key, text string, used map[string]bool) []fieldmapping.Field {

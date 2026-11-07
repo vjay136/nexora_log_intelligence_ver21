@@ -1,6 +1,7 @@
 package fieldmapping
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,9 +19,11 @@ type pair struct {
 }
 type record struct {
 	raw        string
+	ctx        context.Context
 	tokens     []span
 	lines      []span
 	kv         map[string]map[string][]pair
+	kvieScans  map[kvieCacheKey]kvieScan
 	object     any
 	jsonParsed bool
 	jsonError  error

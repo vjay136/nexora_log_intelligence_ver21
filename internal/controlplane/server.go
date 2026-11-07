@@ -566,6 +566,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/assurance/corpus", guard(middleware.PermissionParsePreview, s.handleAssuranceCorpus))
 	s.mux.HandleFunc("/api/v1/assurance/parser-preview", guard(middleware.PermissionParsePreview, s.handleAssuranceParserPreview))
 	s.mux.HandleFunc("/api/v1/assurance/mapping-preview", guard(middleware.PermissionParsePreview, s.handleMappingPreview))
+	s.mux.HandleFunc("/api/v1/assurance/kv-inspect", guard(middleware.PermissionParsePreview, s.handleKVInspect))
 	s.mux.HandleFunc("/api/v1/field-mapping", guard(middleware.PermissionReadParsers, s.handleFieldMappingStatus))
 	s.mux.HandleFunc("/api/v1/field-mapping/suggest", guard(middleware.PermissionParsePreview, s.handleFieldMappingSuggest))
 	s.mux.HandleFunc("/api/v1/field-mapping/ai-suggest", guard(middleware.PermissionParsePreview, s.handleFieldMappingAISuggest))

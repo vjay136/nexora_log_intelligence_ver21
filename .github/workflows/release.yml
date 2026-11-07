@@ -1,4 +1,4 @@
-name: NLI V21 R9 release
+name: NLI V21 R10 release
 
 on:
   push:
@@ -44,6 +44,9 @@ on:
       - 'docs/V21_R9_RELEASE_NOTES.md'
       - 'docs/V21_R9_TEST_RESULTS.md'
       - 'docs/V21_R9_FIELD_MAPPING_GUIDE.md'
+      - 'docs/V21_R10_RELEASE_NOTES.md'
+      - 'docs/V21_R10_TEST_RESULTS.md'
+      - 'docs/V21_R10_MANAGER_DEMO.md'
       - 'docs/VER21_IMPLEMENTATION_PLAN.md'
       - 'README.md'
       - 'CHANGELOG.md'
@@ -52,7 +55,7 @@ on:
   workflow_dispatch:
     inputs:
       previous_release_tag:
-        description: 'Previous production tag used for upgrade/rollback qualification; defaults to Ver21 R7'
+        description: 'Previous production tag used for upgrade/rollback qualification; defaults to Ver21 R9'
         required: false
         type: string
 
@@ -70,8 +73,16 @@ jobs:
         env:
           NLI_BUILD_SCRATCH: ${{ runner.temp }}
         run: |
-          git show v21.0.0-8:supabase/nli_schema.sql > '${{ runner.temp }}/nli-r8-schema.sql'
-          NLI_PREVIOUS_SUPABASE_SCHEMA='${{ runner.temp }}/nli-r8-schema.sql' make release-static
+          if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then
+            source packaging/release.env
+            expected_tag="v${NLI_VERSION}-${NLI_RELEASE}"
+            if [[ "$GITHUB_REF_NAME" != "$expected_tag" ]]; then
+              printf 'Release tag %s does not match package identity %s\n' "$GITHUB_REF_NAME" "$expected_tag" >&2
+              exit 1
+            fi
+          fi
+          git show v21.0.0-9:supabase/nli_schema.sql > '${{ runner.temp }}/nli-r9-schema.sql'
+          NLI_PREVIOUS_SUPABASE_SCHEMA='${{ runner.temp }}/nli-r9-schema.sql' make release-static
       - name: Test Go and Web contracts
         run: |
           go test ./...
@@ -109,7 +120,7 @@ jobs:
       - name: Download genuine previous release RPMs
         env:
           GH_TOKEN: ${{ github.token }}
-          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-8' }}
+          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-9' }}
           PREVIOUS_RELEASE_REPO: ${{ github.repository }}
         run: |
           mkdir -p '${{ runner.temp }}/previous'
@@ -140,7 +151,7 @@ jobs:
         run: make release-rocky OUTPUT_DIR='${{ runner.temp }}/nli-release' PREVIOUS_DIR='${{ runner.temp }}/previous'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2; Node.js 24
         with:
-          name: nli-v21-r9-unsigned-release
+          name: nli-v21-r10-unsigned-release
           path: ${{ runner.temp }}/nli-release/
           if-no-files-found: error
           retention-days: 14
@@ -158,6 +169,6 @@ jobs:
             gh release create "$GITHUB_REF_NAME" "${release_assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Nexora Log Intelligence Ver21 — $GITHUB_REF_NAME" \
-              --notes-file docs/V21_R9_RELEASE_NOTES.md \
+              --notes-file docs/V21_R10_RELEASE_NOTES.md \
               --latest
           fi

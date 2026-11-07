@@ -2,11 +2,15 @@
 
 ## Source and release boundary
 
-- Authoritative R9 source baseline: released Ver21 R8 (`v21.0.0-8`) at commit `82ce826aaf32a34b7aa46127ffaa1f7064e77886`; R7 and R8 published history stays preserved.
-- Ver20 R6 remains historical migration evidence only and is not the R9 implementation base.
-- Working release: Ver21 `21.0.0-9` in the dedicated Ver21 repository.
+- R10 source baseline is released Ver21 R9 (`v21.0.0-9`), commit `6fb870067631d27fbf8d2f178b393790e8d3df01`.
+- Ver20 R6 remains historical migration evidence only and predates the R10 implementation baseline.
+- Working release: Ver21 `21.0.0-10` in the dedicated Ver21 repository.
 - Compatibility boundary: retain RPM package identities, systemd units, and state/configuration paths so an in-place upgrade does not fork production state. Published artifacts use Ver21-only filenames.
 - No feature is permitted to fabricate parser readiness, telemetry, client acknowledgements, or AI results.
+
+## R10 shared KV Intelligence Engine
+
+Use the existing native field mapping path for KV analysis, validation and parser execution. Let operators inspect and edit key/value tail profiles within the existing authoring workflows. Keep approval and rollout tied to parser revisions and client acknowledgements. See the [R10 manager demo guide](V21_R10_MANAGER_DEMO.md).
 
 ## R9: complete source mapping and synchronized lifecycle
 

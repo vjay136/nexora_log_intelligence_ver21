@@ -1077,7 +1077,7 @@ rendered = source.replace(placeholder, digest)
 rendered = rendered.replace(
     "-- Do not run this template directly. `sudo nli-controller-setup` renders an\n"
     "-- installation-specific copy at /root/nli-supabase-bootstrap.sql.",
-    "-- Generated installation-specific bootstrap for Ver21 R9 (21.0.0-9).\n"
+    "-- Generated installation-specific bootstrap for Ver21 R10 (21.0.0-10).\n"
     "-- Run this COMPLETE generated file in this project's Supabase SQL Editor.\n"
     "-- RPC schema version 1 remains compatible with existing R7 metadata."
 )

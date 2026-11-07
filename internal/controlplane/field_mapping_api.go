@@ -103,15 +103,17 @@ func (s *Server) handleFieldMappingStatus(w http.ResponseWriter, r *http.Request
 		profiles = append(profiles, map[string]any{"id": doc.ID, "name": body.Name, "state": doc.State, "revision": doc.Revision, "mapping_plan": body.Parser["mapping_plan"]})
 	}
 	sort.Slice(profiles, func(i, j int) bool { return fmt.Sprint(profiles[i]["id"]) < fmt.Sprint(profiles[j]["id"]) })
+	admission := s.fieldSenseAnalysis()
 	jsonOK(w, map[string]any{
 		"subsystem": "nfi", "name": "NLI FieldSense Studio", "engine": "nfi-v1", "available": true,
-		"analysis":     s.fieldSenseAnalysis().status(),
+		"analysis":     admission.status(),
+		"kvie":         admission.kvStatus(),
 		"generated_at": time.Now().UTC(), "states": states, "profiles": profiles, "profile_count": len(profiles),
 		"methods": fieldmapping.Methods, "operations": fieldmapping.Operations, "types": fieldmapping.Types,
 		"limits":                              map[string]int{"max_input_bytes": fieldmapping.MaxInputBytes, "max_fields": fieldmapping.MaxFields, "max_operations_per_field": fieldmapping.MaxOperations, "max_learning_samples": 100},
 		"minimum_client_release":              "21.0.0-7",
 		"dynamic_tail_minimum_client_release": "21.0.0-9",
-		"execution":                           "The same bounded native plan runs in controller preview and enrolled clients. Dynamic EOL/flatten plans require R9 clients. Saved drafts require validation, approval and exact-bundle acknowledgement before replay.",
+		"execution":                           "The same bounded native plan runs in controller preview and enrolled clients. Legacy dynamic EOL plans require R9; KVIE profiles require R10. Saved drafts require validation, approval and exact-bundle acknowledgement before replay.",
 		"learning":                            "Deterministic structural suggestions from operator samples; ambiguous meanings require operator labels. No external AI calls or automatic parser activation.",
 	})
 }
@@ -289,6 +291,12 @@ func assuranceMappingRuntimePack(id, version, author string, definition map[stri
 			continue
 		}
 		names = append(names, field.Name)
+	}
+	for _, field := range plan.Fields {
+		if field.KVProfile != "" {
+			minimumClient = "21.0.0-10"
+			break
+		}
 	}
 	sort.Strings(names)
 	limits := parserpolicy.DefaultResourceLimits()

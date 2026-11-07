@@ -206,10 +206,52 @@ test('R9 dynamic tail keeps future keys in verified JSON and out of fixed projec
  await mockController(page);let plan;
  await page.route('**/api/v1/assurance/mapping-preview',async route=>{plan=route.request().postDataJSON().plan;await route.fulfill({contentType:'application/json',body:JSON.stringify({passed:true,actual:{status:'failed',reason:'notneeded',server:'cloud',future_key:'preserved'},errors:[]})});});
  await login(page);await page.getByTestId('nav-field-mapping').click();await page.locator('#nfi-raw').fill('20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg status=failed:reason=notneeded:server=cloud');
- page.once('dialog',dialog=>dialog.accept('9'));await page.getByRole('button',{name:'Add dynamic KV tail',exact:true}).click();
- await expect(page.locator('[data-qrw-row]')).toHaveCount(1);await page.getByRole('button',{name:'Verify on controller',exact:true}).click();await expect(page.locator('#nfi-live-json')).toContainText('future_key');
+ await page.getByRole('button',{name:'Add dynamic KV tail',exact:true}).click();
+ await expect(page.locator('[data-qrw-row]')).toHaveCount(1);await page.getByRole('button',{name:'Preview mapping',exact:true}).click();await expect(page.locator('#nfi-live-json')).toContainText('future_key');
  await page.locator('[data-action=nfi-generate]').first().click();await expect(page.locator('#nfi-parser-json')).not.toHaveValue('{}');const parser=JSON.parse(await page.locator('#nfi-parser-json').inputValue());
  expect(plan.fields[0]).toMatchObject({method:'kv_all',source:'9',source_end:'',unit:'token',output_policy:'flatten',assignment_separators:['='],require_complete:true});expect(parser.fields).toEqual([]);expect(parser.field_mapping).toEqual({});expect(parser.output_schema.fields).toEqual([]);expect(parser.mapping_plan.fields[0]).toMatchObject({method:'kv_all',output_policy:'flatten'});expect(JSON.parse(await page.locator('#nfi-cases-json').inputValue())[0].desired.future_key).toBe('preserved');
+});
+
+test('R10 KV row preview reuses the tail and applies an inspected grammar', async ({page}) => {
+  await mockController(page);
+  const raw='20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg |status:failed|reason:notneeded|server:cloud';
+  const actual={status:'failed',reason:'notneeded',server:'cloud'};
+  let inspected, plan, inspectionCount=0;
+  await page.route('**/api/v1/assurance/kv-inspect',async route=>{
+    inspected=route.request().postDataJSON();
+    inspectionCount++;
+    await route.fulfill({json:{profiles:[{
+      assignment_separators:[':'],pair_delimiters:'|',
+      observations:[{key:'status',value:'failed',start:86,end:99}]
+    }]}});
+  });
+  await page.route('**/api/v1/assurance/mapping-preview',async route=>{
+    plan=route.request().postDataJSON().plan;
+    await route.fulfill({json:{passed:true,actual,errors:[]}});
+  });
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  await page.locator('#nfi-raw').fill(raw);
+  const add=page.getByRole('button',{name:'Add dynamic KV tail',exact:true});
+  await add.click();
+  const row=page.locator('[data-qrw-row]');
+  await expect(row).toHaveCount(1);
+  expect(inspected).toMatchObject({raw,field:{method:'kv_all',source:'9',end_of_line:true,kv_profile:'auto'}});
+  await expect(page.locator('#nfi-live-json')).toContainText('notneeded');
+  await row.getByRole('button',{name:'Preview',exact:true}).click();
+  await expect(row).toHaveCount(1);
+  expect(inspectionCount).toBe(1);
+  await add.click();
+  await expect(row).toHaveCount(1);
+  expect(inspectionCount).toBe(2);
+  await expect(page.locator('#kvie-inspector')).toContainText('status = failed');
+  await page.getByRole('button',{name:'Apply grammar 1',exact:true}).click();
+  await expect(row.locator('[data-qrw-key=kv_profile]')).toHaveValue('configured');
+  await expect(row.locator('[data-qrw-key=assignment_separators]')).toHaveValue('[":"]');
+  await expect.poll(()=>plan.fields[0]).toMatchObject({kv_profile:'configured',assignment_separators:[':'],pair_delimiters:'|'});
+  await row.locator('details.nfi-extended > summary').click();
+  await row.locator('[data-qrw-key=kv_pair_separators]').fill('["||"]');
+  await expect.poll(()=>plan.fields[0].kv_pair_separators).toEqual(['||']);
 });
 
 test('R9 catalog exposes actual inventory and restores archived parsers as inactive drafts',async({page})=>{
@@ -233,8 +275,8 @@ test('R9 native merge removes consumed output schema fields and conditional non-
  await page.route('**/api/v1/assurance/mapping-preview',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({passed:true,actual,errors:[]})}));
  await login(page);await page.getByTestId('nav-field-mapping').click();await page.locator('#nfi-raw').fill('mailnode smtp');await page.getByText('Import or edit a mapping plan',{exact:true}).click();
  const fields=[{name:'host',method:'position',source:'1',type:'string',policy:'required'},{name:'service',method:'position',source:'2',type:'string',policy:'required'},{name:'merged',method:'constant',default_value:'',type:'string',policy:'required',operations:[{op:'merge',fields:['host','service'],separator:'/',remove_sources:true}]}];
- await page.locator('#nfi-plan-import').fill(JSON.stringify({version:1,fields}));await page.getByRole('button',{name:'Import mapping',exact:true}).click();await page.getByRole('button',{name:'Verify on controller',exact:true}).click();await page.locator('[data-action=nfi-generate]').first().click();let parser=JSON.parse(await page.locator('#nfi-parser-json').inputValue());expect(parser.fields.map(field=>field.name)).toEqual(['merged']);expect(parser.mapping_plan.fields).toHaveLength(3);
- fields[2].operations[0]={op:'conditional_merge',fields:['host','service'],separator:'/',remove_sources:true,condition_field:'host',condition_operator:'equals',condition_value:'different',else_value:'unchanged'};actual={host:'mailnode',service:'smtp',merged:'unchanged'};await page.locator('#nfi-plan-import').fill(JSON.stringify({version:1,fields}));await page.getByRole('button',{name:'Import mapping',exact:true}).click();await page.getByRole('button',{name:'Verify on controller',exact:true}).click();await page.locator('[data-action=nfi-generate]').first().click();parser=JSON.parse(await page.locator('#nfi-parser-json').inputValue());expect(parser.fields.map(field=>field.name)).toEqual(['host','service','merged']);expect(parser.fields.find(field=>field.name==='host').required).toBe(false);expect(parser.output_schema.fields.find(field=>field.name==='host').policy).toBe('optional');
+ await page.locator('#nfi-plan-import').fill(JSON.stringify({version:1,fields}));await page.getByRole('button',{name:'Import mapping',exact:true}).click();await page.getByRole('button',{name:'Preview mapping',exact:true}).click();await page.locator('[data-action=nfi-generate]').first().click();let parser=JSON.parse(await page.locator('#nfi-parser-json').inputValue());expect(parser.fields.map(field=>field.name)).toEqual(['merged']);expect(parser.mapping_plan.fields).toHaveLength(3);
+ fields[2].operations[0]={op:'conditional_merge',fields:['host','service'],separator:'/',remove_sources:true,condition_field:'host',condition_operator:'equals',condition_value:'different',else_value:'unchanged'};actual={host:'mailnode',service:'smtp',merged:'unchanged'};await page.locator('#nfi-plan-import').fill(JSON.stringify({version:1,fields}));await page.getByRole('button',{name:'Import mapping',exact:true}).click();await page.getByRole('button',{name:'Preview mapping',exact:true}).click();await page.locator('[data-action=nfi-generate]').first().click();parser=JSON.parse(await page.locator('#nfi-parser-json').inputValue());expect(parser.fields.map(field=>field.name)).toEqual(['host','service','merged']);expect(parser.fields.find(field=>field.name==='host').required).toBe(false);expect(parser.output_schema.fields.find(field=>field.name==='host').policy).toBe('optional');
 });
 
 test('R9 a delayed wizard load cannot replace a newer quarantine inbox navigation',async({page})=>{
@@ -604,7 +646,7 @@ test('FieldSense guided and expert modes preserve edits, show contextual help an
   await row.locator('[data-qrw-key=source] + .nfi-info').click();await expect(page.locator('#nfi-help-dialog')).toBeVisible();await expect(page.locator('#nfi-help-content')).toContainText('1-based');await page.getByRole('button',{name:'Close help',exact:true}).click();
   await page.locator('[data-action=nfi-highlight]').first().click();await expect(page.locator('#nfi-raw-selection mark')).toHaveText('smtp');await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:test.info().outputPath('fieldsense-studio-guided.png'),fullPage:true});await page.setViewportSize({width:390,height:844});await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:test.info().outputPath('fieldsense-studio-mobile.png'),fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.setViewportSize({width:1280,height:720});
   await page.getByRole('button',{name:'Expert mode',exact:true}).click();await expect(page.locator('#nfi-guide-steps')).toBeHidden();await expect(row.locator('[data-qrw-key=name]')).toHaveValue('mail_service');await page.getByRole('button',{name:'Switch to Guided Builder',exact:true}).click();await expect(page.locator('#nfi-guide-steps')).toBeVisible();
-  await page.getByRole('button',{name:'Suggest & Sense Mode',exact:true}).click();await page.getByRole('button',{name:'Suggest from raw log',exact:true}).click();await expect(page.locator('[data-action=nfi-suggestion-accept]')).not.toHaveCount(0);await page.locator('[data-action=nfi-suggestion-edit]').first().click();await expect(page.locator('[data-qrw-key=name]').first()).toBeFocused();await page.locator('[data-action=nfi-suggestion-regenerate]').first().click();await page.locator('[data-action=nfi-suggestion-accept]').first().click();await expect(page.locator('[data-action=nfi-suggestion-accept]').first()).toHaveText('Accepted');let requested=false;await page.route('**/api/v1/assurance/mapping-preview',async route=>{requested=true;await new Promise(resolve=>setTimeout(resolve,600));try{await route.fulfill({contentType:'application/json',body:JSON.stringify({passed:true,actual:{},fields:{},errors:[]})});}catch{}});await page.getByRole('button',{name:'Verify on controller',exact:true}).click();await expect.poll(()=>requested).toBe(true);await page.getByRole('button',{name:'Cancel analysis',exact:true}).click();await expect(page.locator('#nfi-live-state')).toContainText('Analysis cancelled');await expect(page.getByRole('button',{name:'Verify on controller',exact:true})).toBeEnabled();
+  await page.getByRole('button',{name:'Suggest & Sense Mode',exact:true}).click();await page.getByRole('button',{name:'Suggest from raw log',exact:true}).click();await expect(page.locator('[data-action=nfi-suggestion-accept]')).not.toHaveCount(0);await page.locator('[data-action=nfi-suggestion-edit]').first().click();await expect(page.locator('[data-qrw-key=name]').first()).toBeFocused();await page.locator('[data-action=nfi-suggestion-regenerate]').first().click();await page.locator('[data-action=nfi-suggestion-accept]').first().click();await expect(page.locator('[data-action=nfi-suggestion-accept]').first()).toHaveText('Accepted');let requested=false;await page.route('**/api/v1/assurance/mapping-preview',async route=>{requested=true;await new Promise(resolve=>setTimeout(resolve,600));try{await route.fulfill({contentType:'application/json',body:JSON.stringify({passed:true,actual:{},fields:{},errors:[]})});}catch{}});await page.getByRole('button',{name:'Preview mapping',exact:true}).click();await expect.poll(()=>requested).toBe(true);await page.getByRole('button',{name:'Cancel analysis',exact:true}).click();await expect(page.locator('#nfi-live-state')).toContainText('Analysis cancelled');await expect(page.getByRole('button',{name:'Preview mapping',exact:true})).toBeEnabled();
 });
 
 test('FieldSense published mappings reopen as isolated repair drafts and retain scoped priority',async({page})=>{
@@ -638,7 +680,7 @@ test('FieldSense optional AI uses configured capability and failed Assurance whi
  await page.route('**/api/v1/assurance/mapping-preview',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({passed:false,actual:{},errors:['Required mapping mismatch']})}));
  const proposal={id:'ai-review-only',state:'draft',payload:{name:'AI review only',source_hash:'synthetic-failure',proposal:{pattern_type:'regex',pattern:'^(?P<status>.*)$'},requires_human_approval:true}};await page.route('**/api/v1/assurance/ai-proposal',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:proposal.id,requires_human_approval:true,published:false})}));await page.route('**/api/v1/assurance/ai-proposals',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({proposals:[proposal]})}));
  await login(page);await page.getByTestId('nav-field-mapping').click();await page.locator('#nfi-raw').fill('status=FAILED');await page.getByRole('button',{name:'Add Custom Field',exact:true}).click();await page.locator('[data-qrw-key=name]').fill('my_status');await page.locator('[data-qrw-key=policy]').selectOption('required');await page.locator('[data-qrw-key=method]').selectOption('key_value');await page.locator('[data-qrw-key=source]').fill('status');await page.getByText('Optional configured AI help · review only',{exact:true}).click();await page.getByRole('button',{name:'Ask configured AI for review-only help',exact:true}).click();expect(writes.includes('/api/v1/assurance/ai-proposal')).toBe(false);
- await page.getByRole('button',{name:'Verify on controller',exact:true}).click();await page.getByRole('button',{name:'Ask configured AI for review-only help',exact:true}).click();await expect(page.locator('#nfi-ai-status')).toContainText('Review-only AI draft');await expect(page.locator('#nfi-ai-proposals')).toContainText('AI review only');await expect(page.locator('[data-qrw-key=name]')).toHaveValue('my_status');expect(writes).toContain('/api/v1/assurance/run');expect(writes).toContain('/api/v1/assurance/ai-proposal');expect(writes.some(path=>path.endsWith('/publish')||path.endsWith('/assurance/parsers'))).toBe(false);expect(mock.observed.some(item=>item.endsWith('/rollouts/proposals')&&item.startsWith('POST'))).toBe(false);
+ await page.getByRole('button',{name:'Preview mapping',exact:true}).click();await page.getByRole('button',{name:'Ask configured AI for review-only help',exact:true}).click();await expect(page.locator('#nfi-ai-status')).toContainText('Review-only AI draft');await expect(page.locator('#nfi-ai-proposals')).toContainText('AI review only');await expect(page.locator('[data-qrw-key=name]')).toHaveValue('my_status');expect(writes).toContain('/api/v1/assurance/run');expect(writes).toContain('/api/v1/assurance/ai-proposal');expect(writes.some(path=>path.endsWith('/publish')||path.endsWith('/assurance/parsers'))).toBe(false);expect(mock.observed.some(item=>item.endsWith('/rollouts/proposals')&&item.startsWith('POST'))).toBe(false);
 });
 
 test('FieldSense controller suggestions preserve manual mappings and expose optional read-only parser-pool evidence',async({page})=>{
@@ -682,7 +724,7 @@ test('NFI standalone workbench verifies ordered splits, Unicode selections and m
   const fields=[{name:'kind',type:'string',policy:'required',method:'position',source:'2',operations:[{op:'split',delimiter:';',part:2},{op:'split',delimiter:'|',part:1},{op:'lowercase'},{op:'prefix',value:'event:'}]},{name:'symbol',type:'string',policy:'required',method:'character',source:'1',source_end:'1'},{name:'combined',type:'string',policy:'derived',method:'derived',source:'kind,symbol',join_separator:'/'}];
   await page.locator('#nfi-plan-import').fill(JSON.stringify({version:1,fields,service_scope:'mapping-test',scope_pattern:'^α',reviewed_global_scope:false}));await page.getByRole('button',{name:'Import mapping',exact:true}).click();await page.getByRole('button',{name:'Test all fields',exact:true}).click();
   await expect(page.locator('[data-qrw-row]').nth(2).locator('[data-qrw-preview]')).toHaveText('event:x/α');
-  await page.getByRole('button',{name:'Verify on controller',exact:true}).click();await expect(page.locator('#qrw-field-status')).toContainText('Verified by controller');expect(verifiedPlan.fields[0].operations).toHaveLength(4);
+  await page.getByRole('button',{name:'Preview mapping',exact:true}).click();await expect(page.locator('#qrw-field-status')).toContainText('Verified by controller');expect(verifiedPlan.fields[0].operations).toHaveLength(4);
   await page.locator('[data-action=nfi-generate]').first().click();const parser=JSON.parse(await page.locator('#nfi-parser-json').inputValue());expect(parser.mapping_plan.fields[2].method).toBe('derived');expect(parser.service_scope).toBe('mapping-test');expect(parser.scope_pattern).toBe('^α');
   await page.getByRole('button',{name:'Validate and save review-gated draft',exact:true}).click();await expect.poll(()=>mock.observed.includes('POST /api/v1/assurance/parsers')).toBe(true);await expect(page.locator('#page-title')).toHaveText('NLI FieldSense Studio');await expect(page.locator('#page tr').filter({hasText:'native-field-mapping'})).toContainText('draft');
   await page.getByRole('button',{name:'Use candidate in Parser Creation Workspace',exact:true}).click();expect(JSON.parse(await page.locator('#parser-workspace-form [name=parser]').inputValue()).mapping_plan.fields).toHaveLength(3);

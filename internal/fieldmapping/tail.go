@@ -11,9 +11,10 @@ import (
 
 // KeyValueObservation is source-backed discovery data, never a guessed value.
 type KeyValueObservation struct {
-	Key        string
-	Value      string
-	Start, End int
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
 }
 
 // ScanKeyValues exposes the exact native scanner to authoring suggestions.
@@ -67,12 +68,16 @@ func strictPairValue(value, delimiters string) error {
 	if value[0] == '{' || value[0] == '[' {
 		return nil
 	}
+	return strictUnquotedPairValue(value, delimiters, '\\', nil)
+}
+
+func strictUnquotedPairValue(value, delimiters string, escape byte, multiSeparators []string) error {
 	if net.ParseIP(value) != nil || strings.Contains(value, "://") {
 		return nil
 	}
 	var plain strings.Builder
 	for i := 0; i < len(value); i++ {
-		if value[i] == '\\' && i+1 < len(value) {
+		if value[i] == escape && i+1 < len(value) {
 			i++
 			plain.WriteByte(' ')
 			continue
@@ -88,6 +93,11 @@ func strictPairValue(value, delimiters string) error {
 	}
 	for _, match := range foreignAssignment.FindAllString(text, -1) {
 		if strings.ContainsRune(delimiters, rune(match[len(match)-1])) {
+			ambiguous = true
+		}
+	}
+	for _, separator := range multiSeparators {
+		if strings.Contains(text, separator) {
 			ambiguous = true
 		}
 	}

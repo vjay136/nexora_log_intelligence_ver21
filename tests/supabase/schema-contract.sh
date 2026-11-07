@@ -43,9 +43,9 @@ SQL
 select md5(row_to_json(d)::text) from public.nli_documents d where collection='parser-packs' and document_id='r7-preserved' and revision=1;
 set role anon;
 set request.headers = '{"x-nli-controller-secret":"$secret"}';
-select public.nli_health()->>'bootstrap_release' = '21.0.0-9' and public.nli_get_document('parser-packs','r7-preserved',1)->'payload'->>'baseline' = '21.0.0-7';
+select public.nli_health()->>'bootstrap_release' = '21.0.0-10' and public.nli_get_document('parser-packs','r7-preserved',1)->'payload'->>'baseline' = '21.0.0-7';
 SQL
-  [[ $(tail -n1 "$scratch/r7-before-upgrade") == $(head -n1 "$scratch/r7-after-upgrade") && $(tail -n1 "$scratch/r7-after-upgrade") == 't' ]] || { echo 'Genuine previous-release to R9 SQL upgrade changed existing metadata' >&2; exit 1; }
+  [[ $(tail -n1 "$scratch/r7-before-upgrade") == $(head -n1 "$scratch/r7-after-upgrade") && $(tail -n1 "$scratch/r7-after-upgrade") == 't' ]] || { echo 'Genuine previous-release to R10 SQL upgrade changed existing metadata' >&2; exit 1; }
 fi
 
 docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres <"$scratch/schema.sql" >/dev/null
@@ -94,7 +94,7 @@ docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgre
 select md5(string_agg(row_to_json(d)::text, '|' order by collection,document_id,revision)) from public.nli_documents d;
 set role anon;
 set request.headers = '{"x-nli-controller-secret":"$secret"}';
-select public.nli_health()->>'bootstrap_release' = '21.0.0-9' and public.nli_health()->>'schema_version' = '1' and public.nli_health()->'persistence_capabilities' ? 'nfi_mapping_plan_metadata';
+select public.nli_health()->>'bootstrap_release' = '21.0.0-10' and public.nli_health()->>'schema_version' = '1' and public.nli_health()->'persistence_capabilities' ? 'nfi_mapping_plan_metadata';
 select public.nli_get_document('parser-packs','r7-preserved',1)->'payload'->>'baseline' = '21.0.0-7';
 select public.nli_get_document('parser-packs','nfi-r8',0)->>'state' = 'in_review' and public.nli_get_document('parser-packs','nfi-r8',0)->>'revision' = '2';
 select public.nli_get_document('parser-packs','nfi-r8',1)->'payload' = public.nli_get_document('parser-packs','nfi-r8',2)->'payload';
@@ -108,12 +108,12 @@ SQL
 docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres <<SQL >"$scratch/r9-result"
 set role anon;
 set request.headers = '{"x-nli-controller-secret":"$secret"}';
-select public.nli_put_document('parser-packs','nfi-r9-eol','draft','{"parser":{"pattern_type":"mapping","mapping_plan":{"version":1,"fields":[{"name":"tail","method":"kv_all","source":"9","unit":"token","end_of_line":true,"output_policy":"flatten","assignment_separators":["="],"pair_delimiters":":;| ","require_complete":true}]}}}'::jsonb,'$payload_digest','r9-admin',false)->>'revision';
+select public.nli_put_document('parser-packs','nfi-r9-eol','draft','{"parser":{"pattern_type":"mapping","mapping_plan":{"version":1,"fields":[{"name":"tail","method":"kv_all","kv_profile":"auto","source":"9","unit":"token","end_of_line":true,"output_policy":"flatten","assignment_separators":["="],"pair_delimiters":":;| ","require_complete":true}]}}}'::jsonb,'$payload_digest','r9-admin',false)->>'revision';
 select public.nli_put_document('parser-trash','archive-r9','archived','{"parser_id":"nfi-r9-eol","original_revision":1,"original_state":"published","restore_policy":"new_draft"}'::jsonb,'$payload_digest','r9-admin',false)->>'revision';
-select public.nli_health()->'persistence_capabilities' ?& array['dynamic_kv_eol_metadata','parser_recovery_archive'];
-select public.nli_get_document('parser-packs','nfi-r9-eol',1)->'payload'->'parser'->'mapping_plan'->'fields'->0->>'end_of_line' = 'true';
+select public.nli_health()->'persistence_capabilities' ?& array['dynamic_kv_eol_metadata','parser_recovery_archive','kvie_profile_metadata'];
+select public.nli_get_document('parser-packs','nfi-r9-eol',1)->'payload'->'parser'->'mapping_plan'->'fields'->0->>'kv_profile' = 'auto';
 select public.nli_get_document('parser-trash','archive-r9',1)->'payload'->>'restore_policy' = 'new_draft';
 SQL
-[[ $(tr '\n' ' ' <"$scratch/r9-result") == '1 1 t t t ' ]] || { echo 'R9 EOL/recovery persistence contract failed' >&2; exit 1; }
+[[ $(tr '\n' ' ' <"$scratch/r9-result") == '1 1 t t t ' ]] || { echo 'R10 KVIE/recovery persistence contract failed' >&2; exit 1; }
 
 echo 'Supabase schema/RLS/RPC contract: PASS'

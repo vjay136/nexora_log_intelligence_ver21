@@ -134,20 +134,20 @@ if "REQUIRE_PREVIOUS=0" in workflow:
 
 rocky_validation = (root / "tests/rocky/validate.sh").read_text(encoding="utf-8")
 for marker in (
-    "previous client must be the genuine Ver21 R8 RPM",
-    "previous controller must be the genuine Ver21 R8 RPM",
-    "${previous_client_release%%.*} == 8 && ${current_client_release%%.*} == 9",
-    "${previous_controller_release%%.*} == 8 && ${current_controller_release%%.*} == 9",
+    "previous client must be the genuine Ver21 R9 RPM",
+    "previous controller must be the genuine Ver21 R9 RPM",
+    "${previous_client_release%%.*} == 9 && ${current_client_release%%.*} == 10",
+    "${previous_controller_release%%.*} == 9 && ${current_controller_release%%.*} == 10",
 ):
     if marker not in rocky_validation:
         fail(f"Rocky lifecycle validation is missing previous-release gate {marker!r}")
-if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-8' }}" not in workflow:
-    fail("Ver21 lifecycle validation does not use the published Ver21 R8 baseline")
-if "name: nli-v21-r9-unsigned-release" not in workflow or "--notes-file docs/V21_R9_RELEASE_NOTES.md" not in workflow:
-    fail("Ver21 lifecycle workflow does not publish R9 artifacts and release notes")
+if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-9' }}" not in workflow:
+    fail("Ver21 lifecycle validation does not use the published Ver21 R9 baseline")
+if "name: nli-v21-r10-unsigned-release" not in workflow or "--notes-file docs/V21_R10_RELEASE_NOTES.md" not in workflow:
+    fail("Ver21 lifecycle workflow does not publish R10 artifacts and release notes")
 release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-if "NLI_VERSION=21.0.0" not in release_env or "NLI_RELEASE=9" not in release_env:
-    fail("Ver21 release identity is not 21.0.0-9")
+if "NLI_VERSION=21.0.0" not in release_env or "NLI_RELEASE=10" not in release_env:
+    fail("Ver21 release identity is not 21.0.0-10")
 if "PREVIOUS_RELEASE_REPO: ${{ github.repository }}" not in workflow:
     fail("Ver21 lifecycle validation does not use the current published repository")
 

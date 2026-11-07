@@ -19,7 +19,7 @@ func (c *Compiled) ValidateComplete(raw string, result Result) error {
 	assignments := []string{"="}
 	for _, cf := range c.fields {
 		f := cf.field
-		if f.Method == "key_value" || f.Method == "kv_all" {
+		if f.KVProfile == "" && (f.Method == "key_value" || f.Method == "kv_all") {
 			for _, s := range f.AssignmentSeparators {
 				if !contains(assignments, s) {
 					assignments = append(assignments, s)
@@ -31,8 +31,8 @@ func (c *Compiled) ValidateComplete(raw string, result Result) error {
 		}
 	}
 	for name, e := range result.Evidence {
-		if e.Source {
-			f := fields[name]
+		f := fields[name]
+		if e.Source || f.KVProfile != "" && e.Start >= 0 {
 			if f.Method != "key_value" && f.Method != "kv_all" && f.OutputPolicy != "omit" && f.OutputPolicy != "intermediate" {
 				narrow, omitted := false, false
 				for _, op := range f.Operations {
@@ -61,15 +61,15 @@ func (c *Compiled) ValidateComplete(raw string, result Result) error {
 			spans = append(spans, e.Spans...)
 		}
 	}
-	return validateStructuredCoverage(raw, spans, assignments)
+	return validateStructuredCoverage(raw, spans, assignments, result)
 }
 
 // ValidateStructuredCoverage checks values, rather than labels, so operators may
 // freely rename fields. Unstructured free text is not inferred to be key/value.
 func ValidateStructuredCoverage(raw string, spans []Span) error {
-	return validateStructuredCoverage(raw, spans, []string{"="})
+	return validateStructuredCoverage(raw, spans, []string{"="}, Result{})
 }
-func validateStructuredCoverage(raw string, spans []Span, assignments []string) error {
+func validateStructuredCoverage(raw string, spans []Span, assignments []string, result Result) error {
 	covered := func(start, end int) bool {
 		for _, s := range spans {
 			if s.Start <= start && s.End >= end && s.Start >= 0 {
@@ -82,18 +82,29 @@ func validateStructuredCoverage(raw string, spans []Span, assignments []string) 
 	if covered(0, len(raw)) {
 		return nil
 	}
+	end := len(strings.TrimRight(raw, " \t\r\n"))
 	if header := mailTail.FindStringIndex(raw); header != nil {
 		start = header[1]
+	}
+	if covered(start, end) && start < end {
+		return nil
+	}
+	if observations, ok := result.profileObservations(start, end); ok {
+		for _, v := range observations {
+			if !covered(v.Start, v.End) {
+				return fmt.Errorf("incomplete_structured_tail: key %q has no mapped or explicitly omitted source evidence", v.Key)
+			}
+		}
+		return nil
+	}
+	if start > 0 {
 		tail := strings.TrimSpace(raw[start:])
-		if strings.ContainsAny(tail, "=:;|") && !covered(start, len(strings.TrimRight(raw, " \t\r\n"))) {
+		if strings.ContainsAny(tail, "=:;|") {
 			// Even malformed mixed separators are retained for operator repair.
 			observations, err := ScanKeyValues(raw[start:], assignments, ":;,| \t\r\n", true)
 			if err != nil || len(observations) == 0 {
 				return fmt.Errorf("incomplete_structured_tail: unmapped or ambiguous mail payload at byte %d", start+1)
 			}
-		}
-		if covered(start, len(strings.TrimRight(raw, " \t\r\n"))) {
-			return nil
 		}
 	}
 	observations, err := ScanKeyValues(raw[start:], assignments, ":;,| \t\r\n", false)
