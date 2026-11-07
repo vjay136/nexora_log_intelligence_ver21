@@ -2,7 +2,7 @@
 
 Nexora Log Intelligence `21.0.0-10` uses released Ver21 R9 (`v21.0.0-9`) as the upgrade and rollback baseline. The release includes the client and controller RPMs, the WebApp and WebView, and their verification evidence.
 
-## R10 maintenance update (21.0.0-10.1)
+## R10 maintenance update (21.0.0-10.1.1)
 
 Install the controller and client RPMs from the same maintenance bundle, then use its WebApp or the controller-served WebView. This update uses the original R10 RPMs as the upgrade and rollback baseline.
 

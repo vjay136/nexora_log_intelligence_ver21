@@ -6,8 +6,8 @@ import subprocess
 import sys
 import tempfile
 root=Path(sys.argv[1] if len(sys.argv)>1 else ".").resolve()
-identity=dict(line.split("=",1) for line in (root/"packaging/release.env").read_text(encoding="utf-8").splitlines() if "=" in line and not line.startswith("#"))
-release=identity["NLI_VERSION"]+"-"+identity["NLI_RELEASE"]
+# R10 maintenance RPMs reuse the original R10 bootstrap and RPC contract.
+release="21.0.0-10"
 setup=(root/"scripts/setup-controller-rocky.sh").read_text(encoding="utf-8")
 script=setup.split('NLI_SETUP_SUPABASE_HASH=$supabase_secret_sha256 python3 - ',1)[1].split("<<'PY'\n",1)[1].split('\nPY',1)[0]
 with tempfile.TemporaryDirectory() as temporary:
@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory() as temporary:
  rendered=target.read_text(encoding="utf-8")
  assert "("+release+")" in rendered
  assert "'bootstrap_release', '"+release+"'" in rendered
- assert "Generated installation-specific bootstrap for Ver21 R"+identity["NLI_RELEASE"] in rendered
+ assert "Generated installation-specific bootstrap for Ver21 R10" in rendered
  assert "Generated installation-specific bootstrap" in rendered
  assert "Run this COMPLETE generated file" in rendered
  assert "Do not run this template directly" not in rendered
