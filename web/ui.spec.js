@@ -1098,6 +1098,8 @@ test('premium login presents the complete V21 banner in a responsive landscape s
   await expect(page.locator('.showcase-header .brand-wordmark strong')).toHaveText('Nexora');
   await expect.poll(()=>banner.evaluate(image=>image.naturalWidth)).toBeGreaterThan(0);
   await expect(banner).toHaveCSS('object-fit','contain');
+  const backdrop=await page.locator('.login-form-banner').evaluate(stage=>getComputedStyle(stage,'::before').backgroundImage);
+  expect(backdrop).toContain('login-banner-v21.png');
   const desktop=await page.locator('.login-form-banner').evaluate(stage=>({width:stage.getBoundingClientRect().width,height:stage.getBoundingClientRect().height,imageWidth:stage.querySelector('img').naturalWidth,imageHeight:stage.querySelector('img').naturalHeight}));
   expect(desktop.width).toBeGreaterThan(500);
   expect(desktop.width/desktop.height).toBeCloseTo(1.6,1);
