@@ -41,8 +41,8 @@ if [[ -n $previous_client && -n $previous_controller ]]; then
   previous_controller_release=$(rpm -qp --qf '%{RELEASE}' "$previous_controller")
   current_client_release=$(rpm -qp --qf '%{RELEASE}' "$client")
   current_controller_release=$(rpm -qp --qf '%{RELEASE}' "$controller")
-  [[ $previous_client_release =~ ^10[.]1[.]1([.]el[0-9]+)?$ && $current_client_release =~ ^1([.]el[0-9]+)?$ ]] || fail "client lifecycle baseline is not Ver21 R10.1.1 to Ver22"
-  [[ $previous_controller_release =~ ^10[.]1[.]1([.]el[0-9]+)?$ && $current_controller_release =~ ^1([.]el[0-9]+)?$ ]] || fail "controller lifecycle baseline is not Ver21 R10.1.1 to Ver22"
+  [[ $previous_client_release =~ ^10[.]1[.]1([.]el[0-9]+)?$ && $current_client_release =~ ^2([.]el[0-9]+)?$ ]] || fail "client lifecycle baseline is not Ver21 R10.1.1 to Ver22"
+  [[ $previous_controller_release =~ ^10[.]1[.]1([.]el[0-9]+)?$ && $current_controller_release =~ ^2([.]el[0-9]+)?$ ]] || fail "controller lifecycle baseline is not Ver21 R10.1.1 to Ver22"
   dnf -y install "$previous_client" "$previous_controller"
   install -d -o nli -g nli -m 0750 /var/lib/nli /var/lib/nli-controller
   echo pre-upgrade-client >/var/lib/nli/release-test.marker

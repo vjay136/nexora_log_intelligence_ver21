@@ -1,6 +1,6 @@
 # Nexora Log Intelligence Ver22
 
-Release 22.0.0-1 upgrades the existing controller and client RPMs. The installer and WebView filenames keep their compatibility names. Use the controller, clients and WebApp from the same release bundle. The upgrade and rollback baseline is Ver21 21.0.0-10.1.1.
+Release 22.0.0-2 upgrades the existing controller and client RPMs. The installer and WebView filenames keep their compatibility names. Use the controller, clients and WebApp from the same release bundle. The upgrade and rollback baseline is Ver21 21.0.0-10.1.1.
 
 ## Quarantine replay
 

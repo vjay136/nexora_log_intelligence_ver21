@@ -1988,7 +1988,7 @@ test('published input profile can be loaded and extended as a new draft revision
   mock.inputProfiles.push({id:'published-inputs',revision:4,state:'active',payload:{name:'Published inputs',config:{inputs:[{path:'/var/log/existing.log',service:'auto'}]}}});
   await login(page);
   await page.getByTestId('nav-input-paths').click();
-  await page.getByRole('button',{name:'Edit'}).click();
+  await page.getByRole('row').filter({hasText:'Published inputs'}).getByRole('button',{name:'Edit',exact:true}).click();
   const form=page.locator('#input-profile-form');
   await expect(form.locator('[name=id]')).toHaveValue('published-inputs');
   await form.locator('[name=quick_path]').fill('/var/log/added.log');

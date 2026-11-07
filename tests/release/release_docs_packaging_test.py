@@ -119,8 +119,8 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
             fail(f"release workflow does not identify the Ver22 workflow and Ver21 baseline: {claim!r}")
 
     release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-    if "NLI_VERSION=22.0.0" not in release_env or "NLI_RELEASE=1" not in release_env.splitlines():
-        fail("packaging release identity is not 22.0.0-1")
+    if "NLI_VERSION=22.0.0" not in release_env or "NLI_RELEASE=2" not in release_env.splitlines():
+        fail("packaging release identity is not 22.0.0-2")
 
     for relative in (
         "README.md", "CHANGELOG.md", "docs/V21_R10_RELEASE_NOTES.md",

@@ -1,6 +1,6 @@
 # Changelog
 
-## [22.0.0-1] - 2026-11-08
+## [22.0.0-2] - 2026-11-08
 
 - Align quarantine replay eligibility with the controller's exact bundle acknowledgement and expose rejection details.
 - Add fleet enrollment grants and governed input path controls.
