@@ -59,6 +59,51 @@ func replayRowCount(path string) (int, bool) {
 	return count, true
 }
 
+func TestTargetedReplayAcknowledgesOnlySelectedRecords(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	_, configPath, queue, _ := replayDeliveryFixture(t, server.URL)
+	data, err := os.ReadFile(queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected quarantine.Record
+	if err := json.Unmarshal(data, &selected); err != nil {
+		t.Fatal(err)
+	}
+	queueFile, err := os.OpenFile(queue, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer queueFile.Close()
+	encoder := json.NewEncoder(queueFile)
+	for i := 0; i < 1001; i++ {
+		record := quarantine.New(selected.NodeID, selected.Service, selected.SourcePath, uint64(i+2), "unrelated queued sample", "old", 5, nil, time.Now().UTC())
+		if err := encoder.Encode(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := queueFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var response strings.Builder
+	if err := replayQueue(queue, configPath, "", []string{selected.ID}, &response); err != nil {
+		t.Fatal(err)
+	}
+	var summary replaySummary
+	if err := json.Unmarshal([]byte(response.String()), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.Replayed != 1 || summary.Resolved != 1 || len(summary.ResolvedIDs) != 1 || summary.ResolvedIDs[0] != selected.ID || summary.Waiting != 0 || len(summary.WaitingIDs) != 0 {
+		t.Fatalf("selected replay returned unrelated outcomes: replayed=%d resolved=%d waiting=%d", summary.Replayed, summary.Resolved, summary.Waiting)
+	}
+	if count, ok := replayRowCount(queue); !ok || count != 1001 {
+		t.Fatalf("targeted replay changed the unrelated queue: count=%d valid=%t", count, ok)
+	}
+}
+
 func TestReplayRequiredRemoteRetryDoesNotDuplicateLocalPayload(t *testing.T) {
 	var unavailable atomic.Bool
 	unavailable.Store(true)

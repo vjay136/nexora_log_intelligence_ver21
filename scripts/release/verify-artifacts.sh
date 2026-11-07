@@ -99,7 +99,7 @@ rpm -qp --requires "$controller" | grep -Fxq hostname || fail "controller RPM do
 for rpm_file in "$client" "$controller"; do
   [[ $(query "$rpm_file" '%{VERSION}') == "$NLI_VERSION" ]] || fail "version mismatch in $(basename "$rpm_file")"
   rpm_release=$(query "$rpm_file" '%{RELEASE}')
-  [[ $rpm_release == "$NLI_RELEASE" || $rpm_release == "$NLI_RELEASE".* ]] || fail "release mismatch in $(basename "$rpm_file"): expected $NLI_RELEASE with optional distro suffix, got $rpm_release"
+  [[ $rpm_release == "$NLI_RELEASE" || $rpm_release =~ ^${NLI_RELEASE//./[.]}[.]el[0-9]+$ ]] || fail "release mismatch in $(basename "$rpm_file"): expected $NLI_RELEASE with optional distro suffix, got $rpm_release"
   [[ $(query "$rpm_file" '%{ARCH}') == "$NLI_ARCH" ]] || fail "architecture mismatch in $(basename "$rpm_file")"
   rpm -K "$rpm_file" >/dev/null || fail "RPM digest/signature check failed for $(basename "$rpm_file")"
 done

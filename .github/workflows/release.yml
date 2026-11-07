@@ -55,7 +55,7 @@ on:
   workflow_dispatch:
     inputs:
       previous_release_tag:
-        description: 'Previous production tag used for upgrade/rollback qualification; defaults to Ver21 R9'
+        description: 'Previous production tag used for upgrade/rollback qualification; defaults to Ver21 R10'
         required: false
         type: string
 
@@ -120,7 +120,7 @@ jobs:
       - name: Download genuine previous release RPMs
         env:
           GH_TOKEN: ${{ github.token }}
-          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-9' }}
+          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-10' }}
           PREVIOUS_RELEASE_REPO: ${{ github.repository }}
         run: |
           mkdir -p '${{ runner.temp }}/previous'

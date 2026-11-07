@@ -45,25 +45,28 @@ type quarantineVault struct {
 }
 
 type quarantineRecord struct {
-	ID              string    `json:"id"`
-	NodeID          string    `json:"node_id"`
-	Service         string    `json:"service"`
-	Hash            string    `json:"hash"`
-	FirstSeen       time.Time `json:"first_seen"`
-	LastAttempt     time.Time `json:"last_attempt"`
-	RetryAfter      time.Time `json:"retry_after,omitempty"`
-	AttemptCount    int       `json:"attempt_count"`
-	Status          string    `json:"status"`
-	ErrorCodes      []string  `json:"error_codes,omitempty"`
-	ParserRevision  string    `json:"parser_revision,omitempty"`
-	ReplayRolloutID string    `json:"replay_rollout_id,omitempty"`
-	SourcePath      string    `json:"source_path,omitempty"`
-	SourceLine      uint64    `json:"source_line,omitempty"`
-	RawAvailable    bool      `json:"raw_available"`
-	RawExpiresAt    time.Time `json:"raw_expires_at,omitempty"`
-	ExcludedAt      time.Time `json:"excluded_at,omitempty"`
-	ExcludedBy      string    `json:"excluded_by,omitempty"`
-	ExcludeReason   string    `json:"exclude_reason,omitempty"`
+	ID                   string    `json:"id"`
+	NodeID               string    `json:"node_id"`
+	Service              string    `json:"service"`
+	Hash                 string    `json:"hash"`
+	FirstSeen            time.Time `json:"first_seen"`
+	LastAttempt          time.Time `json:"last_attempt"`
+	RetryAfter           time.Time `json:"retry_after,omitempty"`
+	AttemptCount         int       `json:"attempt_count"`
+	ReplayAttemptCount   int       `json:"replay_attempt_count"`
+	LastReplayBundleHash string    `json:"last_replay_bundle_hash,omitempty"`
+	RecoveryReplayUsed   bool      `json:"recovery_replay_used,omitempty"`
+	Status               string    `json:"status"`
+	ErrorCodes           []string  `json:"error_codes,omitempty"`
+	ParserRevision       string    `json:"parser_revision,omitempty"`
+	ReplayRolloutID      string    `json:"replay_rollout_id,omitempty"`
+	SourcePath           string    `json:"source_path,omitempty"`
+	SourceLine           uint64    `json:"source_line,omitempty"`
+	RawAvailable         bool      `json:"raw_available"`
+	RawExpiresAt         time.Time `json:"raw_expires_at,omitempty"`
+	ExcludedAt           time.Time `json:"excluded_at,omitempty"`
+	ExcludedBy           string    `json:"excluded_by,omitempty"`
+	ExcludeReason        string    `json:"exclude_reason,omitempty"`
 }
 
 // A quarantine row is actionable in the repair workflow only while it is in
@@ -71,10 +74,40 @@ type quarantineRecord struct {
 // rows remain visible, but cannot be inspected or used to build a parser.
 func isActionableQuarantineRecord(record quarantineRecord) bool {
 	switch record.Status {
-	case "waiting", "replay_failed":
+	case "waiting", "replay_failed", "dead_letter", "manual_attention":
 		return record.RawAvailable
 	default:
 		return false
+	}
+}
+
+// Keep the existing four retry budget after the initial ingest, regardless of
+// how many parser strategies the ingest evaluated.
+const quarantineReplayLimit = 4
+
+func (s *Server) normalizeLegacyQuarantineReplay(record *quarantineRecord) {
+	if record.ReplayAttemptCount == 0 {
+		switch record.Status {
+		case "dead_letter", "manual_attention":
+			record.ReplayAttemptCount = quarantineReplayLimit
+		default:
+			if record.ReplayRolloutID != "" || record.Status == "reprocessing" || record.Status == "replay_failed" {
+				// Older controllers mixed the ingest counter with replay. Use a
+				// conservative upper bound when a replay is actually recorded.
+				record.ReplayAttemptCount = min(quarantineReplayLimit, max(1, record.AttemptCount-1))
+			}
+		}
+	}
+	if record.LastReplayBundleHash == "" && record.ReplayRolloutID != "" {
+		if rollout, ok := s.rollouts.Get(record.ReplayRolloutID); ok && rollout != nil && rollout.Type == rolloutTypeReplay {
+			var payload struct {
+				ExpectedBundleHash string `json:"expected_asset_bundle_hash"`
+				NodeID             string `json:"node_id"`
+			}
+			if json.Unmarshal(rollout.Payload, &payload) == nil && payload.NodeID == record.NodeID {
+				record.LastReplayBundleHash = payload.ExpectedBundleHash
+			}
+		}
 	}
 }
 
@@ -290,6 +323,7 @@ func (s *Server) storeQuarantineRecord(ctx context.Context, input quarantineReco
 	var existing quarantineRecord
 	if getErr == nil {
 		_ = json.Unmarshal(existingDoc.Payload, &existing)
+		s.normalizeLegacyQuarantineReplay(&existing)
 		if existing.Hash != "" && hash != "" && existing.Hash != hash {
 			return errors.New("record ID is already bound to a different hash")
 		}
@@ -314,7 +348,7 @@ func (s *Server) storeQuarantineRecord(ctx context.Context, input quarantineReco
 	} else if !errors.Is(getErr, os.ErrNotExist) {
 		return getErr
 	}
-	meta := quarantineRecord{ID: id, NodeID: input.NodeID, Service: input.Service, Hash: hash, FirstSeen: input.FirstSeen.UTC(), LastAttempt: input.LastAttempt.UTC(), RetryAfter: existing.RetryAfter, AttemptCount: input.AttemptCount, Status: status, ErrorCodes: append([]string(nil), input.ErrorCodes...), ParserRevision: input.ParserRevision, ReplayRolloutID: existing.ReplayRolloutID, SourcePath: input.SourcePath, SourceLine: input.SourceLine, RawAvailable: existing.RawAvailable, RawExpiresAt: existing.RawExpiresAt}
+	meta := quarantineRecord{ID: id, NodeID: input.NodeID, Service: input.Service, Hash: hash, FirstSeen: input.FirstSeen.UTC(), LastAttempt: input.LastAttempt.UTC(), RetryAfter: existing.RetryAfter, AttemptCount: input.AttemptCount, ReplayAttemptCount: existing.ReplayAttemptCount, LastReplayBundleHash: existing.LastReplayBundleHash, RecoveryReplayUsed: existing.RecoveryReplayUsed, Status: status, ErrorCodes: append([]string(nil), input.ErrorCodes...), ParserRevision: input.ParserRevision, ReplayRolloutID: existing.ReplayRolloutID, SourcePath: input.SourcePath, SourceLine: input.SourceLine, RawAvailable: existing.RawAvailable, RawExpiresAt: existing.RawExpiresAt}
 	storeRaw := v.enabled && rawIncluded && input.Raw != "" && !meta.RawAvailable
 	if storeRaw {
 		if len(input.Raw) > maxQuarantineRawBytes {
@@ -413,6 +447,7 @@ func (s *Server) getQuarantineRecord(ctx context.Context, id string) (quarantine
 	if err = json.Unmarshal(doc.Payload, &record); err != nil {
 		return record, doc, err
 	}
+	s.normalizeLegacyQuarantineReplay(&record)
 	return record, doc, nil
 }
 
@@ -453,6 +488,7 @@ func (s *Server) listQuarantine(ctx context.Context, limit, offset int, status, 
 		if status != "" && item.Status != status || nodeID != "" && item.NodeID != nodeID {
 			continue
 		}
+		s.normalizeLegacyQuarantineReplay(&item)
 		records = append(records, item)
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].FirstSeen.After(records[j].FirstSeen) })
@@ -484,7 +520,7 @@ func (s *Server) handleQuarantineSummary(w http.ResponseWriter, r *http.Request)
 	counts := map[string]int{"waiting": 0, "actionable": 0, "awaiting_evidence": 0, "reprocessing": 0, "resolved": 0, "raw_available": 0, "total": len(records)}
 	for _, item := range records {
 		switch item.Status {
-		case "waiting", "replay_failed":
+		case "waiting", "replay_failed", "dead_letter", "manual_attention":
 			counts["waiting"]++
 			if isActionableQuarantineRecord(item) {
 				counts["actionable"]++
@@ -844,7 +880,7 @@ func (s *Server) handleQuarantineExport(w http.ResponseWriter, r *http.Request) 
 			}
 			continue
 		}
-		item := map[string]any{"id": record.ID, "node_id": record.NodeID, "service": record.Service, "hash": record.Hash, "first_seen": record.FirstSeen, "last_attempt": record.LastAttempt, "attempt_count": record.AttemptCount, "status": record.Status, "error_codes": record.ErrorCodes, "parser_revision": record.ParserRevision, "source_path": record.SourcePath, "source_line": record.SourceLine, "raw_available": record.RawAvailable}
+		item := map[string]any{"id": record.ID, "node_id": record.NodeID, "service": record.Service, "hash": record.Hash, "first_seen": record.FirstSeen, "last_attempt": record.LastAttempt, "attempt_count": record.AttemptCount, "replay_attempt_count": record.ReplayAttemptCount, "status": record.Status, "error_codes": record.ErrorCodes, "parser_revision": record.ParserRevision, "source_path": record.SourcePath, "source_line": record.SourceLine, "raw_available": record.RawAvailable}
 		if len(raw) > 0 {
 			item["raw"] = string(raw)
 		}
@@ -938,8 +974,9 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var request struct {
-		RecordIDs []string `json:"record_ids"`
-		NodeID    string   `json:"node_id"`
+		RecordIDs          []string `json:"record_ids"`
+		NodeID             string   `json:"node_id"`
+		ExpectedBundleHash string   `json:"expected_bundle_hash,omitempty"`
 	}
 	if decodeJSON(r, &request, 64<<10) != nil || len(request.RecordIDs) == 0 || len(request.RecordIDs) > 1000 || safeID(request.NodeID) == "" {
 		jsonError(w, "node_id and 1..1000 record_ids are required", http.StatusBadRequest)
@@ -952,14 +989,14 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 	}
 	s.quarantine.mu.Lock()
 	defer s.quarantine.mu.Unlock()
-	unique := map[string]bool{}
+	records := make(map[string]quarantineRecord, len(request.RecordIDs))
+	documents := make(map[string]metastore.Document, len(request.RecordIDs))
 	for _, id := range request.RecordIDs {
 		id = safeID(id)
-		if id == "" || unique[id] {
+		if _, exists := records[id]; id == "" || exists {
 			continue
 		}
-		unique[id] = true
-		record, _, err := s.getQuarantineRecord(r.Context(), id)
+		record, doc, err := s.getQuarantineRecord(r.Context(), id)
 		if err != nil {
 			jsonError(w, "one or more quarantine records do not exist", http.StatusNotFound)
 			return
@@ -968,18 +1005,13 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 			jsonError(w, "all records must belong to the target node", http.StatusConflict)
 			return
 		}
-		if record.Status != "waiting" && record.Status != "replay_failed" {
-			jsonError(w, "only waiting or replay-failed records can be replayed", http.StatusConflict)
+		switch record.Status {
+		case "waiting", "replay_failed", "dead_letter", "manual_attention":
+		default:
+			jsonError(w, "record is already in progress, resolved, excluded, or has deleted evidence", http.StatusConflict)
 			return
 		}
-		if record.Status == "dead_letter" || record.Status == "manual_attention" || record.AttemptCount >= 5 {
-			jsonError(w, "record reached the five-attempt retry limit and needs manual attention", http.StatusConflict)
-			return
-		}
-		if !record.RetryAfter.IsZero() && time.Now().Before(record.RetryAfter) {
-			jsonError(w, "record retry backoff has not elapsed", http.StatusTooManyRequests)
-			return
-		}
+		records[id], documents[id] = record, doc
 	}
 	// Replay can mutate production records, so the target must first report
 	// applying the exact currently published parser bundle. A rollout proposal
@@ -987,6 +1019,10 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 	bundle, bundleErr := s.buildActiveParserBundle(r.Context())
 	if bundleErr != nil {
 		jsonError(w, "current parser bundle is unavailable; replay is gated", http.StatusServiceUnavailable)
+		return
+	}
+	if request.ExpectedBundleHash != "" && request.ExpectedBundleHash != bundle.BundleHash {
+		jsonError(w, "the published parser bundle changed; refresh the replay workspace", http.StatusConflict)
 		return
 	}
 	syncDoc, syncErr := s.metadata.Get(r.Context(), "fleet-sync", safeID(request.NodeID), 0)
@@ -1021,12 +1057,25 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 		})
 		return
 	}
-	if len(unique) == 0 {
+	if len(records) == 0 {
 		jsonError(w, "record_ids contains no valid IDs", http.StatusBadRequest)
 		return
 	}
-	ids := make([]string, 0, len(unique))
-	for id := range unique {
+	now := time.Now().UTC()
+	ids := make([]string, 0, len(records))
+	for id, record := range records {
+		if record.ReplayAttemptCount >= quarantineReplayLimit {
+			if record.RecoveryReplayUsed || !record.RawAvailable || (!record.RawExpiresAt.IsZero() && !record.RawExpiresAt.After(now)) ||
+				record.LastReplayBundleHash == "" || record.LastReplayBundleHash == bundle.BundleHash {
+				jsonError(w, "record reached the replay limit; one recovery replay requires retained evidence and a different acknowledged parser bundle", http.StatusConflict)
+				return
+			}
+			record.RecoveryReplayUsed = true
+			records[id] = record
+		} else if !record.RetryAfter.IsZero() && now.Before(record.RetryAfter) {
+			jsonError(w, "record retry backoff has not elapsed", http.StatusTooManyRequests)
+			return
+		}
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -1040,21 +1089,19 @@ func (s *Server) handleQuarantineReprocess(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "could not start replay rollout", http.StatusInternalServerError)
 		return
 	}
-	now := time.Now().UTC()
 	for _, id := range ids {
-		record, doc, getErr := s.getQuarantineRecord(r.Context(), id)
-		if getErr != nil {
-			continue
-		}
+		record := records[id]
 		record.Status = "reprocessing"
 		record.ReplayRolloutID = rollout.ID
-		record.AttemptCount++
+		record.LastReplayBundleHash = bundle.BundleHash
+		record.ReplayAttemptCount++
 		record.LastAttempt = now
-		if err := s.putQuarantineRecord(r.Context(), record, doc.CreatedBy); err != nil {
+		record.RetryAfter = time.Time{}
+		if err := s.putQuarantineRecord(r.Context(), record, documents[id].CreatedBy); err != nil {
 			jsonError(w, "replay started but queue status could not be updated", http.StatusInternalServerError)
 			return
 		}
-		if err := s.appendQuarantineHistory(r.Context(), quarantineHistoryEvent{Timestamp: now, Action: "reprocess_requested", RecordID: id, NodeID: request.NodeID, Status: "reprocessing", Message: "Targeted TypeReplay command queued; parser outcome is pending", RolloutID: rollout.ID}, principal.Username); err != nil {
+		if err := s.appendQuarantineHistory(r.Context(), quarantineHistoryEvent{Action: "reprocess_requested", RecordID: id, NodeID: request.NodeID, Status: "reprocessing", Message: "Targeted TypeReplay command queued; parser outcome is pending", RolloutID: rollout.ID}, principal.Username); err != nil {
 			jsonError(w, "replay started but history could not be written", http.StatusInternalServerError)
 			return
 		}
@@ -1156,11 +1203,12 @@ func (s *Server) recordQuarantineReplayResult(ctx context.Context, rolloutID, no
 		}
 		record.Status, record.LastAttempt = status, now
 		if status != "resolved" {
-			if record.AttemptCount >= 5 {
+			if record.ReplayAttemptCount >= quarantineReplayLimit {
 				record.Status = "dead_letter"
+				record.RetryAfter = time.Time{}
 				detail += " Retry limit reached; manual attention is required."
 			} else {
-				record.RetryAfter = now.Add(quarantineRetryBackoff(record.AttemptCount))
+				record.RetryAfter = now.Add(quarantineRetryBackoff(record.ReplayAttemptCount + 1))
 			}
 		} else {
 			record.RetryAfter = time.Time{}
@@ -1174,7 +1222,7 @@ func (s *Server) recordQuarantineReplayResult(ctx context.Context, rolloutID, no
 			record.ParserRevision = outcome.ParserRevision
 		}
 		_ = s.putQuarantineRecord(ctx, record, doc.CreatedBy)
-		_ = s.appendQuarantineHistory(ctx, quarantineHistoryEvent{Timestamp: now, Action: "reprocess_result", RecordID: id, NodeID: nodeID, Status: status, Message: detail, RolloutID: rolloutID}, "node:"+nodeID)
+		_ = s.appendQuarantineHistory(ctx, quarantineHistoryEvent{Action: "reprocess_result", RecordID: id, NodeID: nodeID, Status: record.Status, Message: detail, RolloutID: rolloutID}, "node:"+nodeID)
 	}
 }
 

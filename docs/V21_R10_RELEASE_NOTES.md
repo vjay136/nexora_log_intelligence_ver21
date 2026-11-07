@@ -2,6 +2,14 @@
 
 Nexora Log Intelligence `21.0.0-10` uses released Ver21 R9 (`v21.0.0-9`) as the upgrade and rollback baseline. The release includes the client and controller RPMs, the WebApp and WebView, and their verification evidence.
 
+## R10 maintenance update (21.0.0-10.1)
+
+Install the controller and client RPMs from the same maintenance bundle, then use its WebApp or the controller-served WebView. This update uses the original R10 RPMs as the upgrade and rollback baseline.
+
+- Both Guided Parser Repair Studio entry points support pasted samples alongside retained quarantine evidence. Sample verification uses the published parser and selected client acknowledgement without submitting a quarantine replay.
+- The wizard separates parser analysis attempts, targeted replay attempts, exact bundle acknowledgement and the controller-reported result. Step 9 shows retained record history, including cases where replay is unavailable.
+- Review Queue keeps lifecycle buttons beside a compact, expandable validation result. FieldSense Studio identifies the KV Intelligence Engine and shows where to inspect its grammar.
+
 ## KV Intelligence Engine
 
 The FieldSense and quarantine repair workflows expose KV analysis where the operator edits the mapping. Analysis separates assignment operators from pair boundaries. This matters for tails such as `|status:failed|reason:notneeded|server:cloud`, where `:` assigns values and `|` separates pairs. A reviewed rule can live alongside the positional header fields in a single ParserPack.

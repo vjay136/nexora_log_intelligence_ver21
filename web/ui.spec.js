@@ -877,7 +877,7 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   await login(page);
   await page.getByTestId('nav-quarantine-wizard').click();
   const lifecycle=page.locator('#page tr').filter({hasText:'reviewed-smtp'});
-  await expect(page.locator('.qrw-next-action')).toContainText('Select and inspect one retained failure');
+  await expect(page.locator('.qrw-next-action')).toContainText('Choose a retained failure or paste a new log');
   await page.getByRole('button',{name:'Inspect',exact:true}).click();
   await page.getByRole('button',{name:/Review desired schema/}).click();
   await page.getByRole('button',{name:'Suggest from raw log'}).click();
@@ -932,7 +932,7 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   await expect(replay.locator('[name=node_id]')).toHaveValue('node-1');
   await replay.getByRole('button',{name:/Request targeted replay/}).click();
   await expect.poll(()=>mock.qrwReplays).toHaveLength(1);
-  expect(mock.qrwReplays[0]).toEqual({record_ids:['q-1'],node_id:'node-1'});
+  expect(mock.qrwReplays[0]).toEqual({record_ids:['q-1'],node_id:'node-1',expected_bundle_hash:checksum});
   await expect(page.locator('[data-wizard-step="9"]')).toHaveClass(/active/);
   await expect(page.locator('[data-qrw-panel="9"]')).toBeVisible();
   await expect(page.locator('[data-qrw-panel="9"]')).toContainText('Replay request accepted; the final controller outcome is still pending.');
@@ -2116,4 +2116,94 @@ test('AI remediation proposals can be rejected or removed without publishing a p
  await page.locator('[data-action=ai-proposal-reject]').click();await page.getByRole('tab',{name:'Results',exact:true}).click();await expect(page.locator('#ai-panel-results')).toContainText('rejected');
  await page.locator('[data-action=ai-proposal-remove][data-id=review-approved]').click();await page.getByRole('tab',{name:'Results',exact:true}).click();await expect(page.locator('#ai-panel-results')).not.toContainText('Approved proposal');
  expect(writes).toEqual([['POST','/api/v1/assurance/ai-proposals/review-draft/reject',{reason:'Operator chose native mapping'}],['DELETE','/api/v1/assurance/ai-proposals/review-approved',{}]]);
+});
+
+test('An acknowledged but exhausted quarantine record has an honest Step 9 outcome', async ({ page }) => {
+  const hash = 'a'.repeat(64);
+  await mockController(page, {
+    qrwRecords: [{ id: 'q-1', node_id: 'node-1', status: 'manual_attention', raw_available: true, attempt_count: 5 }],
+    qrwParsers: [{ id: 'origin-parser', revision: 2, state: 'published', payload: { source_quarantine_record_id: 'q-1', artifact_checksum: hash, validation_passed: true, activated: true } }],
+    qrwSyncAssets: [{ asset_class: 'parser', asset_id: 'origin-parser', desired: { sha256: hash }, clients: [{ node_id: 'node-1', desired_hash: hash, applied_hash: hash, drifted: false, status: 'online' }] }]
+  });
+  await login(page);
+  await page.getByTestId('nav-quarantine-wizard').click();
+  await page.getByRole('button', { name: 'Inspect', exact: true }).click();
+  await page.locator('[data-wizard-step="8"] button').click();
+  await expect(page.getByRole('button', { name: /Request targeted replay/ })).toBeDisabled();
+  await expect(page.locator('#gprs-replay-form')).toContainText(/retry limit|attempts exhausted/i);
+  await page.getByRole('button', { name: '9 · Verify replay result', exact: true }).click();
+  await expect(page.locator('#qrw-verification')).toContainText('manual_attention');
+  await expect(page.locator('[data-wizard-step="9"]')).toHaveAttribute('data-step-complete', 'false');
+});
+
+test('Five parser strategies do not consume a retained record replay budget', async ({ page }) => {
+  const hash = 'a'.repeat(64);
+  const mock = await mockController(page, {
+    qrwRecords: [{ id: 'q-1', node_id: 'node-1', status: 'waiting', raw_available: true, attempt_count: 5, replay_attempt_count: 0 }],
+    qrwParsers: [{ id: 'origin-parser', revision: 2, state: 'published', payload: { source_quarantine_record_id: 'q-1', artifact_checksum: hash, validation_passed: true, activated: true } }],
+    qrwSyncAssets: [{ asset_class: 'parser', asset_id: 'origin-parser', desired: { sha256: hash }, clients: [{ node_id: 'node-1', desired_hash: hash, applied_hash: hash, drifted: false, status: 'online' }] }]
+  });
+  await login(page);
+  await page.getByTestId('nav-quarantine-wizard').click();
+  await page.getByRole('button', { name: 'Inspect', exact: true }).click();
+  await page.locator('[data-wizard-step="8"] button').click();
+  await page.getByRole('button', { name: /Request targeted replay/ }).click();
+  await expect.poll(() => mock.qrwReplays).toEqual([{ record_ids: ['q-1'], node_id: 'node-1', expected_bundle_hash: hash }]);
+  await expect(page.locator('#qrw-verification')).toBeVisible();
+  await expect(page.locator('[data-wizard-step="9"]')).toHaveAttribute('data-step-complete', 'true');
+});
+
+test('Guided Parser Repair Studio onboards a pasted sample without quarantine replay', async ({ page }) => {
+  const raw='login accepted alice';
+  const desired={event:'login',result:'accepted',username:'alice'};
+  const hash='a'.repeat(64);
+  const mock=await mockController(page,{
+    qrwRecords:[],
+    qrwSyncAssets:[{asset_class:'parser_pack',asset_id:'draft-1',desired:{sha256:hash},clients:[{node_id:'node-1',desired_hash:hash,applied_hash:hash,drifted:false}]}]
+  });
+  let draft;
+  await page.route('**/api/v1/assurance/parsers',route=>{
+    if(route.request().method()==='POST')draft=route.request().postDataJSON();
+    return route.fallback();
+  });
+  await page.route('**/api/v1/assurance/mapping-preview',route=>route.fulfill({json:{passed:true,actual:desired,errors:[]}}));
+  let verification,selectedParser='another-parser';
+  await page.route('**/api/v1/assurance/run',route=>{
+    verification=route.request().postDataJSON();
+    return route.fulfill({json:{passed:true,actual:desired,diff:[],parser:{name:selectedParser}}});
+  });
+  await login(page);
+  await page.getByTestId('nav-quarantine-wizard').click();
+  await page.getByLabel('Manual raw sample').fill(raw);
+  await page.getByLabel('Service scope',{exact:true}).first().fill('login');
+  await page.getByRole('button',{name:'1 · Use manual sample'}).click();
+  await expect(page.locator('#gprs-preview-form [name=raw_evidence]')).toHaveValue(raw);
+  await page.getByTestId('nav-assurance').click();
+  await page.getByRole('tab',{name:'Guided Parser Repair Studio'}).click();
+  await expect(page.locator('#gprs-preview-form [name=raw_evidence]')).toHaveValue(raw);
+  await page.getByLabel('Desired JSON field names').fill('event, result, username');
+  await page.getByRole('button',{name:/Create mappings from my field names/}).click();
+  await page.getByRole('button',{name:'Generate + validate complete parser pack',exact:true}).click();
+  const form=page.locator('#gprs-parser-helper-form');
+  await expect(form.locator('[data-parser-helper-status]')).toContainText('Complete parser validation passed');
+  await form.getByRole('button',{name:'Save review-gated draft',exact:true}).click();
+  await expect.poll(()=>draft?.cases?.[0]).toMatchObject({raw,desired,source:'manual',service:'login'});
+  expect(draft.source_quarantine_record_id).toBe('');
+  const studio=page.locator('#assurance-panel-gprs');
+  await studio.getByRole('button',{name:/7 · Review & publish/}).click();
+  const lifecycle=studio.locator('[data-qrw-panel="7"]');
+  await lifecycle.getByRole('button',{name:'Submit',exact:true}).click();
+  await lifecycle.getByRole('button',{name:'Approve',exact:true}).click();
+  await lifecycle.getByRole('button',{name:'Publish',exact:true}).click();
+  await studio.getByRole('button',{name:/8 · Deploy/}).first().click();
+  await studio.getByLabel('Verification client').selectOption('node-1');
+  await studio.getByRole('button',{name:'9 · Verify manual sample'}).click();
+  await studio.getByRole('button',{name:'9.1 · Run production verification'}).click();
+  await expect(studio.getByText(/selected a different parser/)).toBeVisible();
+  selectedParser='draft-1';
+  await studio.getByRole('button',{name:/9.1 .*Run production verification/}).click();
+  await expect(studio.getByText(/Verified · Expected fields matched/)).toBeVisible();
+  expect(verification).toMatchObject({raw,desired,service:'login',preserve_source:true});
+  expect(mock.qrwReplays).toEqual([]);
+  expect(mock.observed.some(item=>item.endsWith('/analyze')&&item.includes('/quarantine/records/'))).toBe(false);
 });

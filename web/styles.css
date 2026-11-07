@@ -302,3 +302,20 @@ button[data-qrw-action-step] {
 }
 button[data-qrw-action-step="7"], button[data-qrw-action-step="8"] { outline-color: var(--amber); }
 button[data-qrw-action-step="9"] { outline-color: var(--green); }
+
+.review-validation pre {
+  max-width: min(42ch, 35vw);
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.review-actions {
+  min-width: 10rem;
+  white-space: normal;
+}
+
+.review-actions button {
+  margin: 0.15rem;
+}

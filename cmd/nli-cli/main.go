@@ -641,15 +641,12 @@ func replayQueue(path, configPath, parserPackDir string, selectedIDs []string, o
 			history[index].TelemetryStatus = "failed"
 		}
 	}
-	for _, record := range unresolved {
-		summary.WaitingIDs = append(summary.WaitingIDs, record.ID)
-	}
 	for _, id := range selectedIDs {
 		if !seen[id] {
 			summary.MissingIDs = append(summary.MissingIDs, id)
 		}
 	}
-	summary.Replayed, summary.Resolved, summary.Waiting = replayed, resolved, len(summary.WaitingIDs)
+	summary.Replayed, summary.Resolved = replayed, resolved
 	// Close every configured file destination before atomically replacing the
 	// active quarantine queue. Linux permits renaming an open file, while
 	// Windows correctly rejects it; closing here keeps replay portable and also
@@ -683,12 +680,16 @@ func replayQueue(path, configPath, parserPackDir string, selectedIDs []string, o
 		}
 		summary.ResolvedIDs = nil
 		summary.Resolved = 0
-		summary.WaitingIDs = nil
-		for _, record := range unresolved {
+	}
+	// A targeted command acknowledges only the records it attempted. Including
+	// untouched queue entries can overflow the controller's bounded result
+	// and hide a successful replay behind an invalid acknowledgement.
+	for _, record := range unresolved {
+		if seen[record.ID] {
 			summary.WaitingIDs = append(summary.WaitingIDs, record.ID)
 		}
-		summary.Waiting = len(summary.WaitingIDs)
 	}
+	summary.Waiting = len(summary.WaitingIDs)
 	if err := appendQuarantineHistory(path+".history.jsonl", history); err != nil {
 		return err
 	}

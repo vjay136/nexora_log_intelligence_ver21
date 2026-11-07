@@ -36,9 +36,8 @@ fail() { printf 'install-client-ver21: %s\n' "$*" >&2; exit 1; }
 info() { printf 'install-client-ver21: %s\n' "$*"; }
 
 validate_rpm_release() {
-  local value=$1 label=$2 expected=$3 numeric
-  numeric=${value%%.*}
-  [[ $numeric == "$expected" ]] ||
+  local value=$1 label=$2 expected=$3
+  [[ $value == "$expected" || $value =~ ^${expected//./[.]}[.]el[0-9]+$ ]] ||
     fail "the selected $label RPM release $value does not match this bundle release $expected"
 }
 
@@ -50,7 +49,7 @@ load_release_identity() {
   expected_arch=$(awk -F= '$1=="NLI_ARCH" {print $2; exit}' "$marker")
   expected_revision=$(awk -F= '$1=="SOURCE_REVISION" {print $2; exit}' "$marker")
   [[ $expected_version == 21.0.0 ]] || fail "invalid bundle version in RELEASE_ID: $expected_version"
-  [[ $expected_release =~ ^[1-9][0-9]*$ ]] || fail "invalid bundle release in RELEASE_ID: $expected_release"
+  [[ $expected_release =~ ^[1-9][0-9]*([.][0-9]+)*$ ]] || fail "invalid bundle release in RELEASE_ID: $expected_release"
   [[ $expected_arch == x86_64 ]] || fail "invalid bundle architecture in RELEASE_ID: $expected_arch"
   [[ $expected_revision =~ ^[0-9a-f]{40}$ ]] || fail 'invalid source revision in RELEASE_ID'
 }

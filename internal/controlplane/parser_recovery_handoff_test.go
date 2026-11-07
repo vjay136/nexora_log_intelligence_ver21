@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,7 +80,7 @@ func TestPublishedAssurancePackIsOnlyRuntimeBundleHandoff(t *testing.T) {
 		t.Fatalf("rollout bundle does not match inventory hash: %+v err=%v", storedBundle, err)
 	}
 
-	if err := f.server.storeQuarantineRecord(context.Background(), quarantineRecordInput{ID: "recovery-q", NodeID: "recovery-node", Status: "waiting"}, false); err != nil {
+	if err := f.server.storeQuarantineRecord(context.Background(), quarantineRecordInput{ID: "recovery-q", NodeID: "recovery-node", Status: "waiting", AttemptCount: 5}, false); err != nil {
 		t.Fatal(err)
 	}
 	f.login("admin", "Admin-password-12345!")
@@ -138,6 +139,67 @@ func TestPublishedAssurancePackIsOnlyRuntimeBundleHandoff(t *testing.T) {
 	response, body = f.request(http.MethodPost, "/api/v1/quarantine/reprocess", replayBody)
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("replay should open only after matching applied acknowledgement, got %d: %s", response.StatusCode, body)
+	}
+	record, _, err := f.server.getQuarantineRecord(context.Background(), "recovery-q")
+	if err != nil || record.AttemptCount != 5 || record.ReplayAttemptCount != 1 || record.LastReplayBundleHash != bundle.BundleHash {
+		t.Fatalf("five parser strategy attempts must not exhaust the governed replay budget: %+v, %v", record, err)
+	}
+
+	enableTestQuarantineRetention(t, f)
+	ctx := context.Background()
+	const exhaustedID = "recovery-exhausted"
+	if err := f.server.storeQuarantineRecord(ctx, quarantineRecordInput{
+		ID: exhaustedID, NodeID: "recovery-node", Status: "dead_letter", AttemptCount: 5, Raw: "retained exact sample",
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	exhausted, doc, err := f.server.getQuarantineRecord(ctx, exhaustedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayBody["record_ids"] = []string{exhaustedID}
+	response, body = f.request(http.MethodPost, "/api/v1/quarantine/reprocess", replayBody)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("legacy exhausted record without a known prior bundle cannot retry: %d %s", response.StatusCode, body)
+	}
+	exhausted.LastReplayBundleHash = bundle.BundleHash
+	if err := f.server.putQuarantineRecord(ctx, exhausted, doc.CreatedBy); err != nil {
+		t.Fatal(err)
+	}
+	response, body = f.request(http.MethodPost, "/api/v1/quarantine/reprocess", replayBody)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("exhausted record cannot retry the same bundle: %d %s", response.StatusCode, body)
+	}
+	exhausted.LastReplayBundleHash = strings.Repeat("a", 64)
+	if err := f.server.putQuarantineRecord(ctx, exhausted, doc.CreatedBy); err != nil {
+		t.Fatal(err)
+	}
+	replayBody["expected_bundle_hash"] = exhausted.LastReplayBundleHash
+	response, body = f.request(http.MethodPost, "/api/v1/quarantine/reprocess", replayBody)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("stale wizard bundle cannot request replay: %d %s", response.StatusCode, body)
+	}
+	replayBody["expected_bundle_hash"] = bundle.BundleHash
+	response, body = f.request(http.MethodPost, "/api/v1/quarantine/reprocess", replayBody)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("exhausted record should get one recovery on a changed acknowledged bundle: %d %s", response.StatusCode, body)
+	}
+	exhausted, doc, err = f.server.getQuarantineRecord(ctx, exhaustedID)
+	if err != nil || exhausted.ReplayAttemptCount != quarantineReplayLimit+1 || !exhausted.RecoveryReplayUsed {
+		t.Fatalf("recovery must consume the one extra attempt: %+v, %v", exhausted, err)
+	}
+	f.server.recordQuarantineReplayResult(ctx, exhausted.ReplayRolloutID, exhausted.NodeID, rolloutStatusFailed, "")
+	exhausted, doc, err = f.server.getQuarantineRecord(ctx, exhaustedID)
+	if err != nil || exhausted.Status != "dead_letter" {
+		t.Fatalf("failed recovery must remain visible as exhausted: %+v, %v", exhausted, err)
+	}
+	exhausted.LastReplayBundleHash = strings.Repeat("b", 64)
+	if err := f.server.putQuarantineRecord(ctx, exhausted, doc.CreatedBy); err != nil {
+		t.Fatal(err)
+	}
+	response, body = f.request(http.MethodPost, "/api/v1/quarantine/reprocess", replayBody)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("a second recovery is never available: %d %s", response.StatusCode, body)
 	}
 }
 

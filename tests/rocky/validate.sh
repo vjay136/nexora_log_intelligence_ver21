@@ -27,8 +27,8 @@ if [[ -n $previous_client && -n $previous_controller ]]; then
   previous_controller_version=$(rpm -qp --qf '%{VERSION}' "$previous_controller")
   current_client_version=$(rpm -qp --qf '%{VERSION}' "$client")
   current_controller_version=$(rpm -qp --qf '%{VERSION}' "$controller")
-  [[ $previous_client_version == 21.0.0 ]] || fail "previous client must be the genuine Ver21 R9 RPM"
-  [[ $previous_controller_version == 21.0.0 ]] || fail "previous controller must be the genuine Ver21 R9 RPM"
+  [[ $previous_client_version == 21.0.0 ]] || fail "previous client must be the genuine Ver21 R10 RPM"
+  [[ $previous_controller_version == 21.0.0 ]] || fail "previous controller must be the genuine Ver21 R10 RPM"
   [[ $current_client_version == 21.0.0 ]] || fail "release client must be Ver21"
   [[ $current_controller_version == 21.0.0 ]] || fail "release controller must be Ver21"
   previous_client_nevra=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$previous_client")
@@ -41,8 +41,8 @@ if [[ -n $previous_client && -n $previous_controller ]]; then
   previous_controller_release=$(rpm -qp --qf '%{RELEASE}' "$previous_controller")
   current_client_release=$(rpm -qp --qf '%{RELEASE}' "$client")
   current_controller_release=$(rpm -qp --qf '%{RELEASE}' "$controller")
-  [[ ${previous_client_release%%.*} == 9 && ${current_client_release%%.*} == 10 ]] || fail "client lifecycle baseline is not Ver21 R9 to Ver21 R10"
-  [[ ${previous_controller_release%%.*} == 9 && ${current_controller_release%%.*} == 10 ]] || fail "controller lifecycle baseline is not Ver21 R9 to Ver21 R10"
+  [[ $previous_client_release =~ ^10([.]el[0-9]+)?$ && $current_client_release =~ ^10[.]1([.]el[0-9]+)?$ ]] || fail "client lifecycle baseline is not Ver21 R10 to R10.1"
+  [[ $previous_controller_release =~ ^10([.]el[0-9]+)?$ && $current_controller_release =~ ^10[.]1([.]el[0-9]+)?$ ]] || fail "controller lifecycle baseline is not Ver21 R10 to R10.1"
   dnf -y install "$previous_client" "$previous_controller"
   install -d -o nli -g nli -m 0750 /var/lib/nli /var/lib/nli-controller
   echo pre-upgrade-client >/var/lib/nli/release-test.marker
@@ -60,10 +60,10 @@ fi
 release_marker="$ARTIFACT_DIR/RELEASE_ID"
 [[ -s $release_marker ]] || fail "RELEASE_ID is missing"
 expected_release=$(sed -n 's/^NLI_RELEASE=//p' "$release_marker")
-[[ $expected_release =~ ^[1-9][0-9]*$ ]] || fail "RELEASE_ID has an invalid NLI_RELEASE: $expected_release"
+[[ $expected_release =~ ^[1-9][0-9]*([.][0-9]+)*$ ]] || fail "RELEASE_ID has an invalid NLI_RELEASE: $expected_release"
 for package in nli-client nli-controller-agent; do
   package_release=$(rpm -q --qf '%{RELEASE}' "$package")
-  [[ $package_release == "$expected_release" || $package_release == "$expected_release".* ]] || fail "$package release does not match RELEASE_ID $expected_release (with optional distro suffix): $package_release"
+  [[ $package_release == "$expected_release" || $package_release =~ ^${expected_release//./[.]}[.]el[0-9]+$ ]] || fail "$package release does not match RELEASE_ID $expected_release (with optional distro suffix): $package_release"
 done
 verification=$(rpm -V nli-client nli-controller-agent || true)
 unexpected_verification=$(printf '%s\n' "$verification" | grep -vE '/etc/nli/controller\.env$' || true)
