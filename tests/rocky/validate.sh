@@ -60,7 +60,7 @@ fi
 release_marker="$ARTIFACT_DIR/RELEASE_ID"
 [[ -s $release_marker ]] || fail "RELEASE_ID is missing"
 expected_release=$(sed -n 's/^NLI_RELEASE=//p' "$release_marker")
-[[ $expected_release =~ ^[1-9][0-9]*([.][0-9]+)*$ ]] || fail "RELEASE_ID has an invalid NLI_RELEASE: $expected_release"
+[[ $expected_release =~ ^(0|[1-9][0-9]*)([.][0-9]+)*$ ]] || fail "RELEASE_ID has an invalid NLI_RELEASE: $expected_release"
 for package in nli-client nli-controller-agent; do
   package_release=$(rpm -q --qf '%{RELEASE}' "$package")
   [[ $package_release == "$expected_release" || $package_release =~ ^${expected_release//./[.]}[.]el[0-9]+$ ]] || fail "$package release does not match RELEASE_ID $expected_release (with optional distro suffix): $package_release"
