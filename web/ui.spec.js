@@ -212,6 +212,32 @@ test('R9 dynamic tail keeps future keys in verified JSON and out of fixed projec
  expect(plan.fields[0]).toMatchObject({method:'kv_all',source:'9',source_end:'',unit:'token',output_policy:'flatten',assignment_separators:['='],require_complete:true});expect(parser.fields).toEqual([]);expect(parser.field_mapping).toEqual({});expect(parser.output_schema.fields).toEqual([]);expect(parser.mapping_plan.fields[0]).toMatchObject({method:'kv_all',output_policy:'flatten'});expect(JSON.parse(await page.locator('#nfi-cases-json').inputValue())[0].desired.future_key).toBe('preserved');
 });
 
+test('bracket preset previews three literal edits and supports hash replacement', async ({page}) => {
+  await mockController(page);
+  let plan;
+  await page.route('**/api/v1/assurance/mapping-preview',async route=>{
+    plan=route.request().postDataJSON().plan;
+    await route.fulfill({json:{passed:true,actual:{status:'failed',reason:'notneeded',server:'cloud'},errors:[]}});
+  });
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  await page.locator('#nfi-raw').fill('20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg [status:failed][reason;notneeded][server=cloud#]');
+  await page.getByRole('button',{name:'Add dynamic KV tail',exact:true}).click();
+  const row=page.locator('[data-qrw-row]');
+  await expect(row.getByText('Extraction method',{exact:true})).toBeVisible();
+  await row.getByText('Replace and split KV input',{exact:true}).click();
+  await row.getByRole('button',{name:'Set up adjacent [key:value] pairs',exact:true}).click();
+  await row.getByRole('button',{name:'Add literal replacement',exact:true}).click();
+  await row.getByLabel('Find literal text',{exact:true}).last().fill('#');
+  await row.getByRole('button',{name:'Preview',exact:true}).click();
+  await expect.poll(()=>plan.fields[0]).toMatchObject({
+    method:'kv_all',source:'9',kv_profile:'configured',require_complete:true,kv_pair_separators:['|'],
+    assignment_separators:[':', ';', '='],
+    kv_input_edits:[{action:'replace',find:'][',replace:'|'},{action:'strip_prefix',find:'['},
+      {action:'strip_suffix',find:']'},{action:'replace',find:'#',replace:''}]
+  });
+});
+
 test('R10 KV row preview reuses the tail and applies an inspected grammar', async ({page}) => {
   await mockController(page);
   const raw='20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg |status:failed|reason:notneeded|server:cloud';
@@ -249,7 +275,7 @@ test('R10 KV row preview reuses the tail and applies an inspected grammar', asyn
   await expect(row.locator('[data-qrw-key=kv_profile]')).toHaveValue('configured');
   await expect(row.locator('[data-qrw-key=assignment_separators]')).toHaveValue('[":"]');
   await expect.poll(()=>plan.fields[0]).toMatchObject({kv_profile:'configured',assignment_separators:[':'],pair_delimiters:'|'});
-  await row.locator('details.nfi-extended > summary').click();
+  await row.getByText('Replace and split KV input',{exact:true}).click();
   await row.locator('[data-qrw-key=kv_pair_separators]').fill('["||"]');
   await expect.poll(()=>plan.fields[0].kv_pair_separators).toEqual(['||']);
   await row.getByText('Edit individual KV output fields',{exact:true}).click();

@@ -1558,11 +1558,14 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 			}
 		}
 	}
-	requiresKVEdits := parserBundle != nil && parserBundleRequiresKVEdits(*parserBundle)
+	var minimumKVRelease string
+	if parserBundle != nil {
+		minimumKVRelease = parserBundleMinimumKVRelease(*parserBundle)
+	}
 	targets := interfaceStrings(proposal["target_nodes"])
 	if len(targets) == 0 {
 		for _, node := range s.fleet.All() {
-			if node.Status != fleet.StatusOffline && (!requiresKVEdits || parserClientSupportsKVEdits(node.Version)) {
+			if node.Status != fleet.StatusOffline && parserClientSupportsKVRelease(node.Version, minimumKVRelease) {
 				targets = append(targets, node.ID)
 			}
 		}
@@ -1585,8 +1588,8 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 			jsonError(w, "rollout contains a missing, offline, or duplicate target", http.StatusConflict)
 			return
 		}
-		if requiresKVEdits && !parserClientSupportsKVEdits(node.Version) {
-			jsonError(w, "KV field edits require v22.1.0-0 on client "+target, http.StatusConflict)
+		if !parserClientSupportsKVRelease(node.Version, minimumKVRelease) {
+			jsonError(w, fmt.Sprintf("the bundle's KV edits require v%s on client %s", minimumKVRelease, target), http.StatusConflict)
 			return
 		}
 		if inputProfile["requires_ver22"] == true && !inputPathClientSupportsV22(node.Version) {

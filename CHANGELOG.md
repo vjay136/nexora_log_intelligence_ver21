@@ -1,5 +1,10 @@
 # Changelog
 
+## [22.2.0-0]
+
+- Add direct literal Replace and Split controls in field mappings.
+- Prepare selected key/value input before extraction and document the bracketed mail example.
+
 ## [22.1.0-0]
 
 - Reconcile parser delivery acknowledgements and simplify targeted replay.

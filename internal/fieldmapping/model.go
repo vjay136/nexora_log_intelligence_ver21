@@ -101,6 +101,7 @@ type Field struct {
 	KVRejectEmpty    bool               `json:"kv_reject_empty,omitempty"`
 	KVNestedObjects  bool               `json:"kv_nested_objects,omitempty"`
 	KeyValueEdits    []KeyValueEdit     `json:"key_value_edits,omitempty"`
+	KVInputEdits     []KVInputEdit      `json:"kv_input_edits,omitempty"`
 	EndOfLine        bool               `json:"end_of_line,omitempty"`
 	EmptyPolicy      string             `json:"empty_policy,omitempty"`
 	CustomType       string             `json:"custom_type,omitempty"`
@@ -114,6 +115,12 @@ type Field struct {
 	Preview    string `json:"preview,omitempty"`
 	Evidence   string `json:"evidence,omitempty"`
 	Confidence string `json:"confidence,omitempty"`
+}
+
+type KVInputEdit struct {
+	Action  string `json:"action"`
+	Find    string `json:"find"`
+	Replace string `json:"replace,omitempty"`
 }
 
 type Operation struct {

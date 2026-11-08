@@ -319,3 +319,15 @@ button[data-qrw-action-step="9"] { outline-color: var(--green); }
 .review-actions button {
   margin: 0.15rem;
 }
+.nfi-visible-label {
+  display: block;
+  color: var(--muted);
+  font-size: .75rem;
+  margin-top: .35rem;
+}
+.nfi-operation > label[hidden] {
+  display: none;
+}
+.nfi-operation-shortcuts {
+  margin-block: .35rem;
+}

@@ -232,7 +232,41 @@
   }
   const table = (headers, rows, emptyMessage = 'No records have been created yet.') => rows.length ? `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>` : empty(emptyMessage);
   function addInputGuidance(root=page) {
-    root.querySelectorAll('label.field').forEach(label=>{const control=label.querySelector('input,textarea,select');if(!control||['checkbox','radio','hidden'].includes(control.type)||label.querySelector('.input-help'))return;const name=control.name||control.id||'value',placeholder=control.getAttribute('placeholder'),explicit=control.getAttribute('title');const descriptions={raw:'Paste a representative log record or multiline sample. Redact credentials and tokens.',desired:'Enter valid JSON with the exact output fields you expect. Extra fields will be reported.',mapping:'Enter a JSON object mapping source keys to canonical output field names.',priority:'Lower values are evaluated earlier. Use a positive integer.',id:'Use a stable identifier with letters, digits, hyphens, or underscores.',targets:'Enter exact enrolled client IDs, separated by commas.',config:'Enter a valid declarative JSON object. Executable code is rejected.',file:'Choose a representative sample file. Size and archive limits are enforced by the controller.'};const tip=explicit||descriptions[name]||(placeholder?`Example: ${placeholder}`:`Enter ${name.replaceAll('_',' ')}. The controller validates this value before applying the change.`);const icon=document.createElement('span');icon.className='input-help';icon.textContent='ⓘ';icon.title=tip;icon.setAttribute('aria-hidden','true');label.insertBefore(icon,control);});
+    const guidance={
+      raw:'Paste one line to test a single record, or several lines to test a multiline record. Remove credentials first.',
+      desired:'Enter the exact expected JSON, for example {"status":"failed"} or {"retry_count":2}.',
+      mapping:'Map source keys to output names, for example {"src":"source_ip"} or {"user":"actor"}.',
+      priority:'Lower values are tried first. A rule at priority 10 runs before a rule at 20.',
+      id:'Use a stable ID such as mail-parser or client-02.',
+      targets:'Enter one enrolled client ID, such as client-02, or several separated by commas.',
+      config:'Enter valid JSON. For example, use {"enabled":true} when this configuration accepts an enabled flag.',
+      file:'Choose a representative log file or a supported archive. A one-line file is useful for checking a single pattern.'
+    };
+    for(const label of root.querySelectorAll('label.field')){
+      const control=label.querySelector('input,textarea,select');
+      if(!control||['checkbox','radio','hidden'].includes(control.type)||label.querySelector('.input-help'))continue;
+      const name=control.name||control.id||'value';
+      const tip=control.title||guidance[name]||(control.placeholder?'Example: '+control.placeholder:'Enter '+name.replaceAll('_',' ')+' and check the validation message before submitting.');
+      const icon=document.createElement('button');
+      icon.type='button';
+      icon.className='input-help';
+      icon.textContent='ⓘ';
+      icon.title=tip;
+      icon.setAttribute('aria-label','Show input help');
+      icon.setAttribute('aria-expanded','false');
+      const explanation=document.createElement('span');
+      explanation.className='input-help-example';
+      explanation.hidden=true;
+      explanation.textContent=tip;
+      const visibleName=label.firstChild?.textContent?.trim();
+      if(visibleName&&!control.hasAttribute('aria-label')&&!control.hasAttribute('aria-labelledby'))control.setAttribute('aria-label',visibleName);
+      icon.addEventListener('click',event=>{
+        event.preventDefault();
+        explanation.hidden=!explanation.hidden;
+        icon.setAttribute('aria-expanded',String(!explanation.hidden));
+      });
+      control.before(icon,explanation);
+    }
   }
   const QRW_RESERVED=new Set(['raw','nli','meta','source','envelope','parser_id','attempt_count','ordered_attempts','parse_telemetry','__proto__','prototype','constructor']);
   function qrwNormalizeSuggestions(fields){const used=new Set();return fields.map(field=>{let base=String(field.name||'field').replace(/[^A-Za-z0-9_]/g,'_');if(!/^[A-Za-z]/.test(base))base='field'+base;if(QRW_RESERVED.has(base.toLowerCase()))base+='_value';base=base.slice(0,58);let name=base,index=2;while(used.has(name))name=base+'_'+index++;used.add(name);return {...field,name,label:field.label||name.replaceAll('_',' ')};});}
@@ -240,11 +274,12 @@
   const NFI_JSON_KEYS=['indices','token_separators','assignment_separators','kv_pair_separators','kv_brackets','key_aliases','key_include','key_exclude','key_value_edits'];
   const NFI_ADVANCED_KEYS=['boundary_start','boundary_end','occurrence','occurrence_index','preserve_boundary','direction','count','unit','indices','token_mode','token_separators','token_pattern','assignment_separators','key_aliases','key_include','key_exclude','key_prefix','key_suffix','output_policy','end_of_line','require_complete','empty_policy','custom_type','custom_pattern','kv_profile','kv_start','kv_pair_separators','kv_quotes','kv_escape','kv_brackets','kv_key_pattern','kv_reject_empty','kv_nested_objects','key_value_edits'];
   const NFI_PARAMETER_OPTIONS={occurrence:['first','last','nth','all'],direction:['left','right'],unit:['character','byte','word','token','line'],token_mode:['whitespace','delimiter','mixed','regex'],output_policy:['include','flatten','omit','intermediate'],empty_policy:['preserve','missing','null','reject'],condition_operator:['exists','equals','not_empty'],algorithm:['sha256','sha512']};
-  function renderFieldSenseParameters(value,operation=false){const strategy=operation?value.op:value.method,groups={before:['boundary_start'],after:['boundary_start'],between:['boundary_start','boundary_end'],first:['count','unit'],last:['count','unit'],range:['unit','indices'],count:['unit','token_mode','token_separators','token_pattern'],word:['indices','token_mode','token_separators','token_pattern'],token:['indices','token_mode','token_separators','token_pattern'],token_match:['occurrence','occurrence_index','token_mode','token_separators','token_pattern'],tokenize:['token_mode','token_separators','token_pattern'],split:['direction','count','limit','preserve_delimiter'],split_regex:['direction','count','limit','preserve_delimiter'],split_characters:['count','limit'],split_words:['count','limit','token_mode','token_separators','token_pattern'],split_tokens:['count','limit','token_mode','token_separators','token_pattern'],conditional_merge:['condition_field','condition_operator','condition_value','else_value','remove_sources'],merge:['remove_sources'],join:['remove_sources'],hash:['algorithm'],regex_all:['occurrence','occurrence_index'],regex_groups:[]},kv=['assignment_separators','key_aliases','key_include','key_exclude','key_prefix','key_suffix'];let keys=[...(groups[strategy]||[])];if(['before','after','between'].includes(strategy))keys.push('occurrence','occurrence_index','preserve_boundary');if(['key_value','kv_all','kv_eol'].includes(strategy))keys.push(...kv.filter(key=>key!=='assignment_separators'));if(strategy==='key_value')keys.push('kv_start','source_end','unit','end_of_line');
+  function renderFieldSenseParameters(value,operation=false){const strategy=operation?value.op:value.method,groups={before:['boundary_start'],after:['boundary_start'],between:['boundary_start','boundary_end'],first:['count','unit'],last:['count','unit'],range:['unit','indices'],count:['unit','token_mode','token_separators','token_pattern'],word:['indices','token_mode','token_separators','token_pattern'],token:['indices','token_mode','token_separators','token_pattern'],token_match:['occurrence','occurrence_index','token_mode','token_separators','token_pattern'],tokenize:['token_mode','token_separators','token_pattern'],split:['direction','count','limit','preserve_delimiter'],split_regex:['direction','count','limit','preserve_delimiter'],split_characters:['count','limit'],split_words:['count','limit','token_mode','token_separators','token_pattern'],split_tokens:['count','limit','token_mode','token_separators','token_pattern'],conditional_merge:['condition_field','condition_operator','condition_value','else_value','remove_sources'],merge:['remove_sources'],join:['remove_sources'],hash:['algorithm'],regex_all:['occurrence','occurrence_index'],regex_groups:[]},kv=['assignment_separators','key_aliases','key_include','key_exclude','key_prefix','key_suffix'];let keys=[...(groups[strategy]||[])];if(operation&&strategy==='key_value')keys.push('assignment_separators');if(['before','after','between'].includes(strategy))keys.push('occurrence','occurrence_index','preserve_boundary');if(['key_value','kv_all','kv_eol'].includes(strategy))keys.push(...kv.filter(key=>key!=='assignment_separators'));if(strategy==='key_value')keys.push('kv_start','source_end','unit','end_of_line');
     if(!operation&&['key_value','kv_all','kv_eol'].includes(strategy)){
-      keys.push('kv_pair_separators','kv_quotes','kv_escape','kv_brackets','kv_key_pattern','kv_reject_empty');
+      if(strategy==='key_value')keys.push('kv_pair_separators');
+      keys.push('kv_quotes','kv_escape','kv_brackets','kv_key_pattern','kv_reject_empty');
       if(strategy!=='key_value'||value.type==='object')keys.push('kv_nested_objects');
-    }if(['kv_all','kv_eol'].includes(strategy))keys.push('unit','require_complete');if(strategy==='kv_all')keys.push('end_of_line');if(!operation){keys.push('empty_policy');if(value.type==='custom')keys.push('custom_type','custom_pattern');}return `<details class="nfi-extended"><summary>Advanced FieldSense parameters</summary><div class="nfi-parameter-grid">${keys.map(key=>{const attr=operation?'data-qrw-op-key':'data-qrw-key',current=value[key],label=key==='empty_policy'&&['kv_all','kv_eol'].includes(strategy)?'Empty object policy (empty pair values are preserved)':key.replaceAll('_',' '),options=NFI_PARAMETER_OPTIONS[key],isBool=['preserve_boundary','preserve_delimiter','remove_sources','require_complete','end_of_line','kv_reject_empty','kv_nested_objects'].includes(key);return `<label>${esc(label)}${isBool?`<input type="checkbox" ${attr}="${key}" ${current?'checked':''}>`:options?`<select ${attr}="${key}">${qrwOption('',current||'')}${options.map(option=>qrwOption(option,current)).join('')}</select>`:`<input ${attr}="${key}" ${NFI_NUMBER_KEYS.includes(key)?'type="number" min="0"':''} value="${esc(NFI_JSON_KEYS.includes(key)?current===undefined?'':JSON.stringify(current):current??'')}" placeholder="${NFI_JSON_KEYS.includes(key)?key==='key_aliases'?'JSON object {&quot;src&quot;:&quot;source_ip&quot;}':key==='assignment_separators'?'JSON array, e.g. [&quot;=&quot;,&quot;:&quot;]':'JSON array, e.g. [1,3]':'optional'}">`}</label>`;}).join('')}</div></details>`;}
+    }if(['kv_all','kv_eol'].includes(strategy))keys.push('unit','require_complete');if(strategy==='kv_all')keys.push('end_of_line');if(!operation){keys.push('empty_policy');if(value.type==='custom')keys.push('custom_type','custom_pattern');}return keys.length?`<details class="nfi-extended"><summary>Advanced options for ${esc(strategy.replaceAll('_',' '))}</summary><div class="nfi-parameter-grid">${keys.map(key=>{const attr=operation?'data-qrw-op-key':'data-qrw-key',current=value[key],label=key==='empty_policy'&&['kv_all','kv_eol'].includes(strategy)?'Empty object policy (empty pair values are preserved)':key.replaceAll('_',' '),options=NFI_PARAMETER_OPTIONS[key],isBool=['preserve_boundary','preserve_delimiter','remove_sources','require_complete','end_of_line','kv_reject_empty','kv_nested_objects'].includes(key);return `<label>${esc(label)}${isBool?`<input type="checkbox" ${attr}="${key}" ${current?'checked':''}>`:options?`<select ${attr}="${key}">${qrwOption('',current||'')}${options.map(option=>qrwOption(option,current)).join('')}</select>`:`<input ${attr}="${key}" ${NFI_NUMBER_KEYS.includes(key)?'type="number" min="0"':''} value="${esc(NFI_JSON_KEYS.includes(key)?current===undefined?'':JSON.stringify(current):current??'')}" placeholder="${NFI_JSON_KEYS.includes(key)?key==='key_aliases'?'JSON object {&quot;src&quot;:&quot;source_ip&quot;}':key==='assignment_separators'?'JSON array, e.g. [&quot;=&quot;,&quot;:&quot;]':'JSON array, e.g. [1,3]':'optional'}">`}</label>`;}).join('')}</div></details>`:'';}
   const QRW_TYPES=['string','integer','number','boolean','timestamp','ip','port','object','array','float','date','datetime','ipv6','email','url','uuid','null','custom'];
   const QRW_POLICIES=['required','optional','nullable','default','derived','unresolved'];
   const QRW_METHODS=['position','delimiter','key_value','kv_eol','character','byte','line','regex','json_path','derived','constant','raw','field','word','token','token_match','before','after','between','count','kv_all','regex_all','regex_groups'];
@@ -292,7 +327,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     for(const old of existingFields||[]){if(!used.has(old.id)&&!/^token_\d+$/.test(old.name||'')&&base.length<128){const {id:discarded,...copy}=old;base.push(qrwField(copy));}}return qrwNormalizeSuggestions(base.slice(0,128));
   }
   function qrwMergeControllerSuggestions(suggestions,existing=[]){const used=new Set(),same=(left,right)=>left.method===right.method&&String(left.source??'')===String(right.source??'')&&String(left.source_end??'')===String(right.source_end??'')&&(left.method!=='delimiter'||left.delimiter===right.delimiter&&String(left.part)===String(right.part));const fields=suggestions.map(suggestion=>{const old=existing.find(item=>!used.has(item.id)&&same(item,suggestion));if(old&&!/^(?:token_\d+(?:_part_\d+)?|column_\d+|field_\d+)$/.test(old.name||'')){used.add(old.id);return qrwField(JSON.parse(JSON.stringify(old)));}if(old)used.add(old.id);return qrwField({...suggestion,status:suggestion.method==='delimiter'&&!suggestion.confirmed?'needs_confirmation':'unresolved'});});for(const old of existing)if(!used.has(old.id)&&fields.length<128&&!/^(?:token_\d+(?:_part_\d+)?|column_\d+|field_\d+)$/.test(old.name||''))fields.push(qrwField(JSON.parse(JSON.stringify(old))));return qrwNormalizeSuggestions(fields.slice(0,128));}
-  function qrwOption(value,current){return `<option value="${esc(value)}" ${value===current?'selected':''}>${esc(value==='kv_eol'?'Key value EOL — End of line':value==='kv_all'?'All key values · configured range':value.replaceAll('_',' '))}</option>`;}
+  function qrwOption(value,current){return `<option value="${esc(value)}" ${value===current?'selected':''}>${esc(value==='kv_eol'?'Key value EOL — End of line':value==='kv_all'?'All key values · configured range':({position:'Token position',field:'Earlier mapped field',raw:'Whole raw record',regex_groups:'Regex named groups',intermediate:'Intermediate (hide from output)',include:'Include in output',flatten:'Flatten into top-level keys'})[value]||value.replaceAll('_',' '))}</option>`;}
   function qrwPlan(){
     const keys=['description','example','name','label','type','policy','method','source','source_end','delimiter','part','confirmed','transform','timestamp_format','timezone','default_value','validation','null_policy','quote_aware','timezone_name','kv_separator','pair_delimiters','duplicate_policy','join_separator','operations'];
     return {version:1,fields:state.qrwFields.map(original=>{
@@ -302,7 +337,8 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         (key!=='key_value_edits'||field.method==='kv_all'));
       return Object.fromEntries([
         ...keys.map(key=>[key,field[key]??(key==='operations'?[]:'')]),
-        ...advanced.map(key=>[key,field[key]])
+        ...advanced.map(key=>[key,field[key]]),
+        ...(field.method==='kv_all'&&field.kv_input_edits?.length?[['kv_input_edits',field.kv_input_edits]]:[])
       ]);
     })};
   }
@@ -325,6 +361,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       <option value="configured" ${profile==='configured'?'selected':''}>Configured separators</option>
     </select></label>
     <label>Assignment operators<input data-qrw-key="assignment_separators" value="${esc(JSON.stringify(operators))}" placeholder='[":"]'></label>
+    ${isKVTail(field)?renderKVInputTools(field):''}
     <p class="hint">Pipe example <code>|status:failed|reason:notneeded|server:cloud</code> uses assignment <code>:</code> and pair separator <code>|</code>. Choose AutoSense or inspect the sample to compare grammars.</p>
     ${['kv_all','kv_eol'].includes(field.method)?`<details><summary>Edit individual KV output fields</summary>
       <div data-kv-edit-rows>${renderKVEditRows(field.key_value_edits)}</div>
@@ -332,6 +369,25 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       <p class="hint">Use the exact output key after aliases, prefix and suffix. Omit removes it, blank keeps it as an empty string, and replace sets literal text. An edit applies when the key is present.</p>
       <details><summary>Paste or edit rules as JSON</summary><label>Key edits (JSON list)<textarea rows="4" data-qrw-key="key_value_edits" placeholder='[{"key":"reason","action":"blank"}]'>${esc(field.key_value_edits?.length?pretty(field.key_value_edits):'')}</textarea></label></details>
       <p class="hint">Example: choose key <code>reason</code> and action <code>blank</code> to output <code>"reason": ""</code>. Preview the row to verify the result.</p></details>`:''}`;
+  }
+  function renderKVInputTools(field){
+    const edits=field.kv_input_edits||[];
+    return `<details class="nfi-extended" ${edits.length?'open':''}><summary>Replace and split KV input</summary>
+      <p class="hint">Choose <b>raw</b> in Start position for the whole line, or enter a position to edit only that range. Replace uses literal text, including spaces, Unicode, brackets and symbols such as <code>#</code>, <code>\\</code> and <code>*</code>.</p>
+      <div class="actions">
+        <button type="button" class="secondary small" data-action="kv-bracket-preset" data-id="${esc(field.id)}">Set up adjacent [key:value] pairs</button>
+        <button type="button" class="secondary small" data-action="kv-input-add" data-id="${esc(field.id)}">Add literal replacement</button>
+      </div>
+      <p class="hint"><code>[status:failed][reason;notneeded][server=cloud]</code> becomes <code>status:failed|reason;notneeded|server=cloud</code>. For other layouts, enter the text to split on below.</p>
+      <label>Split into pairs on (literal separators)<input data-qrw-key="kv_pair_separators" value="${esc(field.kv_pair_separators?.length?JSON.stringify(field.kv_pair_separators):'')}" placeholder='["|", "||"]'></label>
+      ${edits.map((edit,index)=>`<div class="nfi-parameter-grid" data-kv-input-index="${index}">
+        <label>Edit type<select data-kv-input-key="action"><option value="replace" ${edit.action==='replace'?'selected':''}>Replace all occurrences</option><option value="strip_prefix" ${edit.action==='strip_prefix'?'selected':''}>Remove from start</option><option value="strip_suffix" ${edit.action==='strip_suffix'?'selected':''}>Remove from end</option></select></label>
+        <label>Find literal text<input aria-label="Find literal text" data-kv-input-key="find" value="${esc(edit.find)}" maxlength="1024"></label>
+        ${edit.action==='replace'?`<label>Replace with (blank removes it)<input aria-label="Replace with" data-kv-input-key="replace" value="${esc(edit.replace||'')}" maxlength="1024"></label>`:''}
+        <button type="button" class="danger small" data-action="kv-input-remove" data-id="${esc(field.id)}" data-index="${index}">Remove edit</button>
+      </div>`).join('')}
+      <p class="hint">The controller previews the edited range and validates all pairs. To rename a key in the output, use Key Aliases. To change a key’s value, use Edit individual KV output fields.</p>
+    </details>`;
   }
   function kvInspectorIsCurrent(snapshot) {
     return snapshot?.signature === JSON.stringify({raw:qrwRaw(),plan:qrwPlan()})
@@ -346,6 +402,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       return `<article class="nfi-kv-profile">
         <h5>${esc(profile.family || profile.name || `Grammar ${index+1}`)}</h5>
         <p>Assignments <code>${esc(JSON.stringify(profile.assignment_separators))}</code> · Pair separators <code>${esc(JSON.stringify(profile.pair_delimiters))}</code> · ${values.length} observed pair(s)</p>
+        ${profile.kv_input_edits?.length?'<p class="hint">This grammar includes literal edits to remove the observed wrappers. Apply it and check the extracted keys in Preview.</p>':''}
         <ul>${observations}</ul>
         <button type="button" class="secondary small" data-action="kv-apply-profile" data-index="${index}">Apply grammar ${index+1}</button>
       </article>`;
@@ -360,6 +417,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   }
   async function inspectKVField(field) {
     if(!isKVTail(field))throw new Error('Select a key/value tail to inspect.');
+    if(field.kv_input_edits?.length)return qrwVerifyController();
     qrwValidateInputs();
     const raw=qrwRaw(),plan=qrwPlan(),host=el('kvie-inspector');
     if(!raw.trim()||!host)throw new Error('Paste or inspect a raw record before using KV AutoSense.');
@@ -388,6 +446,8 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const exclusions=field.output_policy==='flatten'?state.qrwFields.filter(item=>item.method==='key_value'&&observed.has(item.source)).map(item=>item.source):[];
     Object.assign(field,{kv_profile:'configured',assignment_separators:profile.assignment_separators,pair_delimiters:profile.pair_delimiters,
       key_exclude:[...new Set([...(field.key_exclude||[]),...exclusions])]});
+    if(profile.kv_input_edits?.length)Object.assign(field,{kv_input_edits:profile.kv_input_edits,
+      kv_pair_separators:[profile.pair_delimiters],require_complete:true});
     for(const key of ['kv_pair_separators','kv_quotes','kv_escape','kv_brackets','kv_key_pattern','kv_reject_empty'])delete field[key];
     el('qrw-field-rows').innerHTML=renderQRWFieldRows();
     nfiScheduleLive();
@@ -1943,7 +2003,74 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     key_suffix:['Suffix output keys','Add text after every extracted output key. The final names must follow the parser field naming rules.','_raw changes reason to reason_raw.'],
     source:['Source reference','For position/word/token, enter a 1-based index. For field, enter an earlier field name. KV uses a key; regex uses a Go RE2 expression.','mailnode smtp 3692 → token 2 = smtp. End positions are inclusive.'],source_end:['Inclusive end','Use a range for character, byte, line, word or token extraction. UTF-8 byte positions differ from Unicode characters.','α beta → character 1 = α; bytes 1–2 = α. Cutting byte 1 alone is invalid.'],delimiter:['Delimiter split','Choose a literal delimiter; quoted values protect embedded delimiters by default. Empty delimiter is invalid.','Note;DeliveryEvent with delimiter ; and part 2 → DeliveryEvent.'],part:['Part / capture','Split parts are 1-based; operation part 0 retains an array. Regex part selects the capture group.','a|b|c, split |, part 2 → b.'],method:['Extraction strategy','Select a source strategy, configure its parameters, then preview and verify. Advanced regex and native operations run on the bounded controller.','before/after/between use literal boundaries and explicit occurrence settings.'],kv_separator:['KV assignment','The symbol between a key and value; pair delimiters separate assignments only before another key.','status=failed;reason=not needed → status: failed, reason: not needed.'],pair_delimiters:['KV pair boundaries','List separator characters. Whitespace remains a boundary before key assignments. Quoted values preserve embedded separators.','Use | for |status:failed|reason:notneeded|server:cloud. Use ; for status=failed;reason=not needed.'],pattern:['Go RE2 expression','Use supported Go RE2 groups, classes, quantifiers and anchors. Lookbehind and backreferences are unsupported. Verify on controller for actual matches.','(?P<level>Note);(?P<event>[^ ]+) → named groups for Note;DeliveryEvent.'],boundary_start:['Boundary start','Literal boundary for before/after/between. Choose occurrence first, last, nth or all; preserve_boundary controls inclusion.','before = on a=b=c returns a; last occurrence returns a=b.'],boundary_end:['Boundary end','The closing literal boundary for between. Empty unmatched boundaries are reported as missing according to presence policy.','between [ and ] in user=[alice] → alice.'],occurrence:['Repeated occurrences','Choose first, last, nth or all. For nth, set occurrence index starting at 1; all returns an array.','a=1 a=2, last matching boundary selects the later occurrence.'],indices:['Multiple selections','JSON array of positive 1-based word/token indexes. The selected values remain ordered.','[1,3] selects alpha and gamma from alpha beta gamma.'],token_mode:['Tokenization','Whitespace preserves original spans. Delimiter uses explicit separators, mixed accepts several, regex uses bounded Go RE2.','token separators [";","|"] supports a;b|c.'],assignment_separators:['Multiple assignments','JSON string array of literal key/value assignment separators. Combine with pair boundaries and quote protection.','[":"] handles pipe-delimited colon pairs. [":",";"] with whitespace pairs handles status:failed reason;notneeded server;cloud.'],key_aliases:['KV aliases','JSON object maps observed keys to desired names for all-key extraction. Include/exclude and prefix/suffix remain explicit.','{"src":"source_ip"} renames src in the extracted object.'],output_policy:['Output inclusion','Include emits the field. Intermediate keeps it available to later fields and removes it from final JSON. Omit excludes output; it never discards the raw log.','first,last intermediate → full_name included.'],empty_policy:['Empty values','Preserve retains "". Missing applies presence/default/null policy. Null emits null; reject fails validation.','reason= is present and empty; it is different from an absent reason key.'],fields:['Merge references','JSON pipeline references earlier mapped fields. Join separator controls concatenation; conditional_merge has an explicit condition and fallback.','first=Alice last=Lee with separator space → Alice Lee.'],condition_field:['Conditional merge','Reference an earlier field, choose exists/equals/not_empty and condition value. else_value is the explicit fallback.','status equals ok → merge first,last; otherwise use unknown.'],algorithm:['Hash algorithm','Choose sha256 or sha512. Hashing is deterministic; raw evidence remains governed by retention.','hash(email) yields a digest; mask/redact can produce visible placeholders instead.'],remove_sources:['Remove merged inputs','When explicitly enabled, successful merging removes referenced original fields from final output. Source evidence remains retained.','first,last → full_name only after successful merge.'],policy:['Presence policy','Required fails on absence. Optional omits, nullable emits null, default uses an explicit value. Invalid quotes and types still fail.','missing reason with optional → no reason key.'],type:['Output type','Native conversion validates the observed value. Identifiers with leading zeros or large integers should remain strings.','007 remains "007"; invalid integer abc never becomes 0.'],timestamp_format:['Timestamp layout','Use Go time layouts or native compact_mail / epoch formats. Set an IANA timezone for configured local-time handling.','compact_mail parses 20250811 080053105+0100; verify the exact input layout.']};
   Object.assign(NFI_HELP,{name:['Output field name','Choose any unique non-reserved name of up to 64 letters, digits and underscores, starting with a letter. Rename freely; duplicate collisions fail explicitly.','hostname → mail_server_hostname; source/raw/nli are reserved metadata names.'],label:['Display label','A readable label for operators; the JSON key comes from Output field name.','mail_server_hostname may display Mail server hostname.'],description:['Description','Document why this field exists and how consumers should use it. This metadata is preserved with the native plan.','Source SMTP hostname from the third header token.'],example:['Example','Record a representative expected value for reviewers; this does not create a default or fabricate a value.','mailnode.example is an example; extraction still reads actual evidence.'],default_value:['Explicit fallback / constant','Constants always use this value. Default presence policy uses it only when the source is absent. Empty string is an explicit permitted fallback.','missing reason → unknown when default=unknown; invalid integers still fail.'],null_policy:['Null and missing policy','Omit permits optional absence. Preserve null emits null; reject fails unless an explicit default applies.','missing optional client: omit the key or emit null by explicit policy.'],transform:['Final transformation','Apply none, trim, lowercase or uppercase after the ordered operation chain, before native conversion.','  WARN  with trim → WARN.'],timezone:['Timezone policy','Preserve keeps input zone semantics. UTC normalizes. Configured requires an IANA timezone name.','Asia/Kolkata resolves a configured local wall-clock timestamp; verify controller output.'],timezone_name:['IANA timezone','Used only with timezone policy configured. Enter a valid IANA database name; offsets are not timezone names.','Asia/Kolkata; America/New_York.'],validation:['Bounded validation','Comma-separated min/max, min_length/max_length, or one_of. Values never silently become zero or false.','min=0,max=65535 for a port; one_of=ok|failed for status.'],quote_aware:['Quoted delimiter protection','Checked respects matching quotes and escapes during splitting. Uncheck only when quotation marks are literal data.','"west,region",007 with comma split keeps west,region as one value.'],confirmed:['Confirm interpretation','Explicitly review ambiguous compound splits. Confirmation verifies your intended structure; it does not approve publication.','Review Note;DeliveryEvent before mapping its two parts.'],duplicate_policy:['Repeated keys','Reject is safest. First or last chooses the explicit occurrence; array retains every value.','tag=a:tag=b → [a,b] when array is selected.'],join_separator:['Join separator','Literal text inserted between earlier field references. Source fields remain available unless remove_sources is explicitly set.','a=mail,b=node with - → mail-node.'],occurrence_index:['Nth occurrence index','Positive 1-based occurrence used with occurrence=nth. First occurrence is 1.','third : in a:b:c:d selects boundary before d.'],preserve_boundary:['Preserve boundary text','Checked includes matching boundary characters in before/after/between extraction. Default removes them from the selected fragment.','[alice] between [ and ] → alice; preserving boundaries → [alice].'],direction:['Split direction','Left is the normal order. Right applies splitting limits from the final occurrence.','a:b:c split from right with one cut → a:b and c.'],count:['Count / width','For first/last use N items; chunk splits use a positive chunk width. Delimiter split count bounds cuts.','first 3 characters of abcdef → abc; chunk width 2 → ab,cd,ef.'],unit:['Position / count unit','Choose character, byte, word, token or line. Characters are Unicode code points; bytes are UTF-8 and must not cut an encoded character.','α occupies one character and two UTF-8 bytes.'],token_separators:['Token separator list','JSON string array of literal separators for delimiter/mixed tokenization. Empty separators are invalid.','[";","|"] splits a;b|c into a,b,c.'],token_pattern:['Token RE2 pattern','Go RE2 controls regex tokenization/matching. Unsupported PCRE constructs are rejected by the controller.','[A-Za-z]+ matches letter runs; no lookbehind or backreferences.'],key_include:['Include keys','JSON string array selecting keys from all-key extraction. Empty list leaves the default selected object unchanged.','["status","reason"] extracts only those keys.'],key_exclude:['Exclude keys','JSON string array of keys to exclude from all-key extraction. This removes output properties, not the original log evidence.','["password"] prevents password from entering the extracted KV object.'],key_prefix:['Key prefix','Literal prefix applied to emitted all-KV object keys after explicit alias mapping.','net_ + src → net_src.'],key_suffix:['Key suffix','Literal suffix for emitted all-KV object keys. Check collisions after aliases and prefix/suffix changes.','_value + status → status_value.'],custom_type:['Custom type label','A descriptive type label accompanied by custom_pattern for actual bounded validation. It does not execute scripts.','order_code validated by ^[A-Z]{2}-[0-9]{6}$.'],custom_pattern:['Custom type RE2 validator','Go RE2 validation condition for custom string types. Use anchors when the entire value must match.','^[A-Z]{2}-[0-9]{6}$ accepts AB-123456 and rejects arbitrary text.'],limit:['Output limit','Positive bounded maximum outputs for splitting; remaining source is preserved according to native split semantics.','limit 2 on a:b:c retains a and b:c rather than losing the remainder.'],preserve_delimiter:['Preserve delimiters','Checked retains separator text in split output fragments; use when downstream fields need the original boundary.','a:b split on : may retain the boundary explicitly.'],condition_operator:['Condition operator','exists checks presence, not_empty checks observed content, equals compares to condition_value.','status equals ok selects the configured merge; otherwise else_value.'],condition_value:['Condition value','Explicit comparison value for equals. This does not overwrite the referenced source field.','ok matches the observed status=ok.'],else_value:['Conditional fallback','Literal result when the conditional merge does not match. Fallback is explicit and remains subject to type/validation policies.','unknown when status is not ok.'],value:['Literal value','The literal used by prefix/suffix/add, masking/redaction, or nested key_value key selection; operation determines its meaning.','prefix user: plus alice → user:alice; nested key_value reason selects reason.'],find:['Find literal','Exact literal for replace/remove. Empty find is rejected to prevent unintended expansion.','Find ; in Note;Event and replace with a space.'],replace:['Replacement literal','Replacement text for literal replace, or Go-compatible replacement for regex_replace. Regex runs on the controller.','Replace cloud with archive; source evidence remains retained.'],separator:['Operation separator','Join separator for merge; nested key_value uses pair separators here. Assignment separator for nested KV is delimiter.','nested action;keep|geo;US uses delimiter ; and separator |.'],group:['Capture group','Named group or numeric capture selector as supported by the native operation. Group 0 means the complete match.','(?P<id>[0-9]+): group id selects the digits.'],start:['Start position','Positive 1-based start position. End is inclusive; the chosen unit determines character/byte/word/token semantics.','start 2,end 4 on abcdef → bcd.'],end:['Inclusive end','Use a positive inclusive end; operation end 0 means through the end where supported. Do not confuse Unicode and UTF-8 bytes.','start 2,end 0 on abcdef → bcdef.'],'nfi-service':['Service scope','auto infers a reviewed service; comma-separated explicit names scope an override to those services. Wildcard stays fallback unless a guarded global override is authorized.','smtp,imap targets those services and preserves unrelated parser behavior.'],'nfi-mapping-priority':['Mapping priority','Integer 0–1000 orders reviewed native mapping tiers. A cloned repair increments priority while keeping the original parser as fallback.','repair priority 3 precedes the original priority 2; rollback reveals the original.'],'nfi-scope-pattern':['Scope RE2 condition','Optional bounded match condition restricts which records enter the reviewed mapping. Maximum 1024 UTF-8 bytes.','^PREFIX restricts a custom mapping to records beginning PREFIX.'],'nfi-global-scope':['Global override authorization','Explicit global override requires a reviewed RE2 match condition. It remains a draft until server validation and authorized approval.','Use a narrow ^AUDIT pattern with wildcard scope only when deliberately covering several services.']});
-  function nfiHelpFor(control){const key=control.dataset.qrwKey||control.dataset.qrwOpKey||control.id,label=control.getAttribute('aria-label')||control.closest('label')?.childNodes[0]?.textContent?.trim()||key,entry=NFI_HELP[key]||NFI_HELP[key.includes('pattern')?'pattern':key.includes('separator')?'delimiter':key.includes('token')?'token_mode':key.includes('key_')?'key_aliases':key.includes('boundary')?'boundary_start':'method'];return {title:label||entry[0],description:entry[1],example:entry[2]};}
+  function nfiHelpFor(control){
+    const key=control.dataset.qrwKey||control.dataset.qrwOpKey||control.dataset.kvInputKey||control.id;
+    const label=control.getAttribute('aria-label')||control.closest('label')?.childNodes[0]?.textContent?.trim()||key;
+    const examples={
+      find:['Type exactly what you want to change. The text is literal, so punctuation and spaces have their usual meaning.','Use # to find a hash, ][ to find adjacent wrappers, or a single space to find spaces.'],
+      replace:['Type the replacement text. An empty value removes every match.','Replace ][ with | to keep a boundary between pairs, or leave it blank to delete a stray #.'],
+      action:['Choose whether to edit every match or remove text only at one edge of the selected range.','Use Remove from start for an opening bracket and Remove from end for its closing bracket.'],
+    };
+    if(Object.hasOwn(examples,key))return {title:label,description:examples[key][0],example:examples[key][1]};
+    const entry=NFI_HELP[key]||NFI_HELP[key.includes('pattern')?'pattern':key.includes('separator')?'delimiter':key.includes('token')?'token_mode':key.includes('key_')?'key_aliases':key.includes('boundary')?'boundary_start':'method'];
+    return {title:label||entry[0],description:entry[1],example:entry[2]};
+  }
+  const mappingLabels={name:'Field name',label:'Display label',type:'Field type',policy:'Presence policy',null_policy:'Missing value policy',
+    method:'Extraction method',source_end:'Inclusive end (optional)',transform:'Transform',timestamp_format:'Timestamp format',
+    timezone:'Timezone policy',timezone_name:'IANA timezone',default_value:'Default value',validation:'Validation rule'};
+  const operationInputs={
+    split:['delimiter','part','quote_aware'],replace:['find','replace'],remove:['find'],
+    strip_prefix:['value'],strip_suffix:['value'],prefix:['value'],suffix:['value'],add:['value'],
+    regex_extract:['pattern','group'],regex_replace:['pattern','replace'],split_regex:['pattern','part','quote_aware'],
+    key_value:['value','delimiter','separator'],select:['part'],substring:['start','end'],character:['start','end'],
+    byte:['start','end'],line:['start','end'],join:['fields','separator'],merge:['fields','separator'],
+    conditional_merge:['fields','separator'],copy:['fields'],trim:[],lowercase:[],uppercase:[],omit:[],exclude:[],hash:[]
+  };
+  function labelMappingControls(editor){
+    for(const row of editor.querySelectorAll('[data-qrw-row]')){
+      const method=row.querySelector('[data-qrw-key="method"]')?.value;
+      const sourceLabel={field:'Earlier field name',raw:'Raw source',regex:'RE2 pattern',regex_groups:'RE2 pattern with named groups',
+        regex_all:'RE2 pattern',key_value:'Key to extract',json_path:'JSON path',delimiter:'Source token or raw'}[method]||'Start position (1-based, or raw for KV)';
+      for(const control of row.querySelectorAll('[data-qrw-key]')){
+        if(control.closest('label')||control.previousElementSibling?.classList.contains('nfi-visible-label'))continue;
+        const key=control.dataset.qrwKey;
+        const title=key==='source'?sourceLabel:key==='delimiter'?'Split delimiter':key==='part'?(method==='delimiter'?'Split part number':'Regex capture group'):mappingLabels[key];
+        if(!title)continue;
+        const label=document.createElement('label');
+        label.className='nfi-visible-label';
+        control.id||=row.dataset.qrwRow+'-'+key;
+        label.htmlFor=control.id;
+        label.textContent=title;
+        control.before(label);
+      }
+      const operations=row.querySelector('.nfi-operations');
+      if(!operations)continue;
+      operations.querySelector('summary').textContent='Field operations ('+operations.querySelectorAll('[data-qrw-op]').length+')';
+      if(!operations.previousElementSibling?.classList.contains('nfi-operation-shortcuts')){
+        const tools=document.createElement('div');
+        tools.className='actions nfi-operation-shortcuts';
+        for(const [action,label] of [['replace','Replace text'],['split','Split value']]){
+          const button=document.createElement('button');
+          button.type='button';button.className='secondary small';button.dataset.action='qrw-operation-add';
+          button.dataset.id=row.dataset.qrwRow;button.dataset.operation=action;button.textContent=label;
+          tools.append(button);
+        }
+        operations.before(tools);
+      }
+      for(const operation of operations.querySelectorAll('[data-qrw-op]')){
+        const kind=operation.querySelector('[data-qrw-op-key="op"]').value;
+        if(!Object.hasOwn(operationInputs,kind))continue;
+        for(const input of operation.querySelectorAll(':scope > label > input[data-qrw-op-key]')){
+          input.closest('label').hidden=!operationInputs[kind].includes(input.dataset.qrwOpKey);
+        }
+        if(kind==='key_value'){
+          for(const [key,label] of [['value','Key to extract'],['delimiter','Assignment operator'],['separator','Pair separators']]){
+            operation.querySelector('[data-qrw-op-key="'+key+'"]').parentElement.firstChild.textContent=label;
+          }
+        }
+      }
+    }
+  }
   function mappingAIControls(mapping=false){return `<section class="nfi-import wide" data-ai-mapping-host data-ai-mapping-editor="${mapping?'true':'false'}"><h4>Optional AI mapping proposal · separate from native suggestions</h4><p>Suggest with AI explicitly sends masked evidence and bounded approved parser context to a configured controller provider. Native suggestions and manual edits are preserved. A proposal is ephemeral and cannot save, approve, publish or deploy itself.</p><div class="actions"><button type="button" class="secondary" data-action="mapping-ai-readiness">Check AI readiness</button><button type="button" class="secondary" data-action="mapping-ai-suggest">Suggest with AI</button></div><div data-ai-mapping-status role="status"></div><div data-ai-mapping-proposal hidden><pre class="json-output" data-ai-mapping-json></pre><div class="actions"><button type="button" class="secondary" data-action="mapping-ai-import">${mapping?'Import proposed mapping':'Open proposed mapping in FieldSense'}</button><button type="button" class="secondary" data-action="mapping-ai-dismiss">Dismiss proposal</button></div></div></section>`;}
   function mappingAIRaw(host){if(host.dataset.aiMappingEditor==='true')return qrwRaw();return host.closest('form')?.querySelector('[name=samples]')?.value||host.querySelector('[data-ai-mapping-raw]')?.value||'';}
   function setupMappingAIControls(){
@@ -1951,7 +2078,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     for(const form of page.querySelectorAll('#parser-helper-form,#gprs-parser-helper-form,#parser-workspace-form'))if(!form.querySelector('[data-ai-mapping-host]'))form.insertAdjacentHTML('beforeend',mappingAIControls(false));
     if(['studio','regex'].includes(state.page)&&!page.querySelector('[data-ai-mapping-host]')){page.insertAdjacentHTML('beforeend',mappingAIControls(false));const host=page.querySelector('[data-ai-mapping-host]');host.insertAdjacentHTML('afterbegin','<label class="field">Exact raw log for optional AI mapping proposal<textarea data-ai-mapping-raw rows="3" placeholder="Paste an authorized raw record; existing regex/template settings are preserved."></textarea></label>');}
   }
-  function nfiDecorate(){setupMappingAIControls();if(!el('qrw-field-rows'))return;if(state.page==='field-mapping'){const count=page.querySelectorAll('.grid.cols-4 .metric-value')[1];if(count)count.textContent=number(state.qrwFields.length);}for(const control of page.querySelectorAll('.qrw-field-editor input,.qrw-field-editor select,.nfi-operation input,.nfi-operation select')){if(control.dataset.nfiHelp)continue;control.dataset.nfiHelp='true';const help=nfiHelpFor(control),button=document.createElement('button');button.type='button';button.className='nfi-info';button.dataset.action='nfi-help';button.dataset.helpKey=control.dataset.qrwKey||control.dataset.qrwOpKey||control.id;button.dataset.helpTitle=help.title;button.dataset.helpDescription=help.description;button.dataset.helpExample=help.example;button.title=`${help.title}: ${help.description} Example: ${help.example}`;button.setAttribute('aria-label',`Information: ${help.title}`);button.setAttribute('aria-description',button.title);button.dataset.tooltip=button.title;button.textContent='ⓘ';control.insertAdjacentElement('afterend',button);}nfiGuideRefresh();}
+  function nfiDecorate(){setupMappingAIControls();if(!el('qrw-field-rows'))return;labelMappingControls(page);if(state.page==='field-mapping'){const count=page.querySelectorAll('.grid.cols-4 .metric-value')[1];if(count)count.textContent=number(state.qrwFields.length);}for(const control of page.querySelectorAll('.qrw-field-editor input,.qrw-field-editor select,.nfi-operation input,.nfi-operation select')){if(control.dataset.nfiHelp)continue;control.dataset.nfiHelp='true';const help=nfiHelpFor(control),button=document.createElement('button');button.type='button';button.className='nfi-info';button.dataset.action='nfi-help';button.dataset.helpKey=control.dataset.qrwKey||control.dataset.qrwOpKey||control.id;button.dataset.helpTitle=help.title;button.dataset.helpDescription=help.description;button.dataset.helpExample=help.example;button.title=`${help.title}: ${help.description} Example: ${help.example}`;button.setAttribute('aria-label',`Information: ${help.title}`);button.setAttribute('aria-description',button.title);button.dataset.tooltip=button.title;button.textContent='ⓘ';control.insertAdjacentElement('afterend',button);}nfiGuideRefresh();}
   let nfiLiveTimer;
   function nfiScheduleLive() {
     if(state.page==='quarantine-wizard'||state.page==='assurance')state.gprsPreview=null;
@@ -2292,7 +2419,30 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       case 'qrw-controller-preview': {await qrwVerifyController();break;}
       case 'qrw-token-field': {if(state.qrwFields.length>=128)throw new Error('A mapping can contain at most 128 fields');const token=Number(button.dataset.token),item=qrwTokens(qrwRaw())[token-1];if(!item)throw new Error('Token is no longer present');state.qrwFields.push(qrwField({name:`token_${token}_custom`,label:`Token ${token}`,method:'position',source:String(token),policy:'required',preview:item.value,status:'unresolved'}));el('qrw-field-rows').innerHTML=renderQRWFieldRows();break;}
       case 'qrw-selection-field': {const selection=window.getSelection(),anchor=selection?.anchorNode?.parentElement,focus=selection?.focusNode?.parentElement,host=el('nfi-raw-selection');if(!selection||!selection.toString()||!host||!host.contains(anchor)||!host.contains(focus))throw new Error('Select text inside the raw evidence explorer first.');const range=selection.getRangeAt(0),prefix=range.cloneRange();prefix.selectNodeContents(host);prefix.setEnd(range.startContainer,range.startOffset);const start=[...prefix.toString()].length+1,end=start+[...range.toString()].length-1;if(state.qrwFields.length>=128)throw new Error('A mapping can contain at most 128 fields');state.qrwFields.push(qrwField({name:`characters_${start}_${end}`,label:'Selected raw characters',method:'character',source:String(start),source_end:String(end),policy:'required',preview:range.toString(),status:'unresolved'}));el('qrw-field-rows').innerHTML=renderQRWFieldRows();break;}
-      case 'qrw-operation-add': {const field=state.qrwFields.find(item=>item.id===id);if(!field)throw new Error('Field no longer present');field.operations=field.operations||[];if(field.operations.length>=16)throw new Error('A field supports at most 16 operations');field.operations.push({op:'split',delimiter:';',part:1,start:1,end:0,value:'',find:'',replace:'',pattern:'',group:'',fields:[],separator:' '});field.status='unresolved';el('qrw-field-rows').innerHTML=renderQRWFieldRows();page.querySelector(`[data-qrw-row="${CSS.escape(id)}"] .nfi-operations`)?.setAttribute('open','');break;}
+      case 'kv-bracket-preset':
+      case 'kv-input-add':
+      case 'kv-input-remove': {
+        const field=state.qrwFields.find(item=>item.id===id);
+        if(!field||!isKVTail(field))throw new Error('Choose a dynamic KV row first');
+        const edits=field.kv_input_edits||[];
+        if(button.dataset.action==='kv-bracket-preset'){
+          Object.assign(field,{kv_input_edits:[{action:'replace',find:'][',replace:'|'},{action:'strip_prefix',find:'['},{action:'strip_suffix',find:']'}],
+            kv_pair_separators:['|'],pair_delimiters:'|',assignment_separators:[':', ';', '=']});
+        }else if(button.dataset.action==='kv-input-add'){
+          if(edits.length>=16)throw new Error('A KV row supports up to 16 input edits');
+          field.kv_input_edits=[...edits,{action:'replace',find:'',replace:''}];
+        }else{
+          field.kv_input_edits=edits.filter((_,index)=>index!==Number(button.dataset.index));
+        }
+        Object.assign(field,{kv_profile:'configured',require_complete:true,status:'unresolved'});
+        qrwControllerPreview=null;
+        el('qrw-field-rows').innerHTML=renderQRWFieldRows();
+        nfiScheduleLive();
+        nfiDecorate();
+        if(button.dataset.action==='kv-input-add')page.querySelector(`[data-qrw-row="${CSS.escape(id)}"] [data-kv-input-index]:last-of-type [data-kv-input-key=find]`)?.focus();
+        break;
+      }
+      case 'qrw-operation-add': {const field=state.qrwFields.find(item=>item.id===id);if(!field)throw new Error('Field no longer present');field.operations=field.operations||[];if(field.operations.length>=16)throw new Error('A field supports at most 16 operations');field.operations.push({op:button.dataset.operation||'split',delimiter:';',part:1,start:1,end:0,value:'',find:'',replace:'',pattern:'',group:'',fields:[],separator:' '});field.status='unresolved';qrwControllerPreview=null;el('qrw-field-rows').innerHTML=renderQRWFieldRows();page.querySelector(`[data-qrw-row="${CSS.escape(id)}"] .nfi-operations`)?.setAttribute('open','');nfiScheduleLive();break;}
       case 'qrw-operation-delete': case 'qrw-operation-up': {const field=state.qrwFields.find(item=>item.id===id),index=Number(button.dataset.index);if(!field?.operations?.[index])throw new Error('Operation no longer present');if(button.dataset.action==='qrw-operation-delete')field.operations.splice(index,1);else if(index>0)[field.operations[index-1],field.operations[index]]=[field.operations[index],field.operations[index-1]];field.status='unresolved';el('qrw-field-rows').innerHTML=renderQRWFieldRows();page.querySelector(`[data-qrw-row="${CSS.escape(id)}"] .nfi-operations`)?.setAttribute('open','');break;}
       case 'qrw-export-plan': {downloadJSON('nli-v21-native-field-mapping.json',{...qrwPlan(),...qrwScope()});break;}
       case 'qrw-import-plan': {const envelope=parseJSON(el('nfi-plan-import').value,'Native mapping plan'),plan=envelope.mapping_plan||envelope;state.nfiService=Array.isArray(envelope.service_scope)?envelope.service_scope.join(','):envelope.service_scope||state.nfiService||'auto';state.nfiMappingPriority=Number(envelope.mapping_priority)||0;const priorityControl=el('nfi-mapping-priority');if(priorityControl)priorityControl.value=state.nfiMappingPriority;state.nfiScopePattern=envelope.scope_pattern||'';state.nfiGlobalScope=envelope.reviewed_global_scope===true;const serviceControl=el('nfi-service'),patternControl=el('nfi-scope-pattern'),globalControl=el('nfi-global-scope');if(serviceControl)serviceControl.value=state.nfiService;if(patternControl)patternControl.value=state.nfiScopePattern;if(globalControl)globalControl.checked=state.nfiGlobalScope;if(plan?.version!==1||!Array.isArray(plan.fields)||!plan.fields.length||plan.fields.length>128)throw new Error('Import a version 1 mapping plan with 1–128 fields.');if(plan.fields.some(field=>!field||typeof field!=='object'||Array.isArray(field)||!QRW_METHODS.includes(field.method)||!Array.isArray(field.operations||[])||(field.operations||[]).length>16))throw new Error('Mapping plan contains an unsupported field or operation count');state.qrwFields=plan.fields.map(field=>qrwField({...field,preview:'',status:'unresolved',confidence:'imported',evidence:'Imported mapping needs verification'}));qrwControllerPreview=null;el('qrw-field-rows').innerHTML=renderQRWFieldRows();toast('Mapping imported for review; no parser activated');break;}
@@ -2344,7 +2494,9 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
           break;
         }
         if(state.qrwFields.length>=128)throw new Error('A mapping can contain at most 128 fields.');
-        const guessed=qrwTokens(raw).findIndex(token=>/^[|;]*[\p{L}_][\p{L}\p{N}_.-]*[=:]/u.test(token.value));
+        const guessed=qrwTokens(raw).findIndex(({value})=>
+          /^[|;]*[\p{L}_][\p{L}\p{N}_.-]*[=:]/u.test(value)||
+          /^[\[\{(<][\p{L}_][\p{L}\p{N}_.-]*[=:;]/u.test(value));
         const names=new Set(state.qrwFields.map(field=>field.name));
         let name='tail_fields';
         for(let suffix=2;names.has(name);suffix++)name=`tail_fields_${suffix}`;
@@ -2501,7 +2653,21 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     if(['nfi-service','nfi-scope-pattern','nfi-global-scope','nfi-mapping-priority'].includes(event.target.id)){state.nfiMappingPriority=Number(el('nfi-mapping-priority')?.value)||0;state.nfiService=el('nfi-service')?.value||'auto';state.nfiScopePattern=el('nfi-scope-pattern')?.value||'';state.nfiGlobalScope=el('nfi-global-scope')?.checked===true;nfiScheduleLive();return;}
     if(['nfi-parser-json','nfi-cases-json'].includes(event.target.id)){state.nfiCandidateValidated=null;page.dataset.dirty='true';const status=el('nfi-candidate-status');if(status)status.textContent='Expert JSON edited; exact parser validation is pending. Import a changed mapping plan to update the visual editor.';nfiGuideRefresh();return;}
     if(event.target.id==='nfi-corpus'){state.nfiCorpus=event.target.value;return;}
-    const opControl=event.target.closest('[data-qrw-op-key]'),control=event.target.closest('[data-qrw-key]'),row=(opControl||control)?.closest('[data-qrw-row]');if(!row)return;const field=state.qrwFields.find(item=>item.id===row.dataset.qrwRow);if(!field)return;
+    const kvInput=event.target.closest('[data-kv-input-key]'),opControl=event.target.closest('[data-qrw-op-key]'),control=event.target.closest('[data-qrw-key]'),row=(kvInput||opControl||control)?.closest('[data-qrw-row]');if(!row)return;const field=state.qrwFields.find(item=>item.id===row.dataset.qrwRow);if(!field)return;
+    if(kvInput){
+      const edit=field.kv_input_edits?.[Number(kvInput.closest('[data-kv-input-index]').dataset.kvInputIndex)];
+      if(!edit)return;
+      edit[kvInput.dataset.kvInputKey]=kvInput.value;
+      field.status='unresolved';
+      qrwControllerPreview=null;
+      if(kvInput.dataset.kvInputKey==='action'){
+        if(edit.action!=='replace')delete edit.replace;
+        el('qrw-field-rows').innerHTML=renderQRWFieldRows();
+        nfiDecorate();
+      }
+      nfiScheduleLive();
+      return;
+    }
     if(opControl){const operation=field.operations?.[Number(opControl.closest('[data-qrw-op]').dataset.qrwOp)];if(!operation)return;const key=opControl.dataset.qrwOpKey;try{operation[key]=opControl.type==='checkbox'?opControl.checked:key==='fields'?opControl.value.split(',').map(value=>value.trim()).filter(Boolean):NFI_NUMBER_KEYS.includes(key)?Number(opControl.value):NFI_JSON_KEYS.includes(key)?JSON.parse(opControl.value||'null'):opControl.value;opControl.setCustomValidity('');}catch{opControl.setCustomValidity('Enter valid JSON for this list or alias map.');return;}}
     else {const key=control.dataset.qrwKey,previousMethod=field.method;try{field[key]=control.type==='checkbox'?control.checked:NFI_NUMBER_KEYS.includes(key)?Number(control.value):NFI_JSON_KEYS.includes(key)?JSON.parse(control.value||'null'):key==='pair_delimiters'?control.value.replaceAll('\\t','\t').replaceAll('\\r','\r').replaceAll('\\n','\n'):control.value;}catch{control.setCustomValidity('Enter valid JSON for this list or alias map.');return;}control.setCustomValidity('');
       if(['assignment_separators','pair_delimiters','kv_pair_separators','kv_quotes','kv_escape','kv_brackets','kv_key_pattern','kv_reject_empty'].includes(key)&&(isKVTail(field)||field.method==='key_value')){
@@ -2545,7 +2711,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     }
     qrwControllerPreview=null;field.status=field.method==='delimiter'&&!field.confirmed?'needs_confirmation':'unresolved';field.preview='';field.evidence='Mapping changed; test or verify the current draft';const preview=row.querySelector('[data-qrw-preview]');if(preview)preview.textContent='Unverified change';
     nfiScheduleLive();
-    if(['method','type'].includes(control?.dataset.qrwKey)||opControl?.dataset.qrwOpKey==='op'){el('qrw-field-rows').innerHTML=renderQRWFieldRows();}
+    if(['method','type'].includes(control?.dataset.qrwKey)||opControl?.dataset.qrwOpKey==='op'){const open=opControl!=null;el('qrw-field-rows').innerHTML=renderQRWFieldRows();if(open)page.querySelector('[data-qrw-row="'+CSS.escape(field.id)+'"] .nfi-operations')?.setAttribute('open','');nfiDecorate();}
   });
   function updateKVEditRows(row, mutate, {focusNew=false,preserveEditor=false}={}) {
     const field=state.qrwFields.find(item=>item.id===row.dataset.qrwRow);

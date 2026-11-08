@@ -18,6 +18,7 @@ import (
 var ErrIncompleteKV = errors.New("incomplete_structured_tail")
 
 var kvieHeader = regexp.MustCompile(`^\|?[ \t]*[A-Za-z_][A-Za-z0-9_.-]*[ \t]*[=:;]`)
+var wrappedKVPair = regexp.MustCompile(`^([\[\{(<])([A-Za-z_][A-Za-z0-9_.-]*[ \t]*[:;=][^\[\]{}()<>\r\n|]+)([\]\})>])`)
 
 // KVProfile describes a complete observed extraction. Observations carry
 // half-open UTF-8 byte spans in the original record.
@@ -25,6 +26,7 @@ type KVProfile struct {
 	AssignmentSeparators []string              `json:"assignment_separators"`
 	PairDelimiters       string                `json:"pair_delimiters"`
 	Observations         []KeyValueObservation `json:"observations"`
+	InputEdits           []KVInputEdit         `json:"kv_input_edits,omitempty"`
 }
 
 type kvieProfile struct {
@@ -305,7 +307,77 @@ func InspectKeyValues(ctx context.Context, raw string, field Field) ([]KVProfile
 	if !found {
 		return nil, fmt.Errorf("key/value source position is absent from this record")
 	}
+	if len(field.KVInputEdits) > 0 {
+		return nil, fmt.Errorf("preview the KV row to verify its configured separators and input edits")
+	}
+	if profile, ok := InspectWrappedKeyValues(selected, start); ok {
+		return []KVProfile{profile}, nil
+	}
 	return detectKVIE(ctx, selected, start)
+}
+
+// InspectWrappedKeyValues recognizes only complete adjacent groups. Restrict
+// their interiors so a suggested wrapper edit cannot consume nested data.
+func InspectWrappedKeyValues(text string, offset int) (KVProfile, bool) {
+	profile := KVProfile{AssignmentSeparators: []string{":", ";", "="}, PairDelimiters: "|"}
+	if len(text) == 0 || !strings.ContainsRune("[{(<", rune(text[0])) {
+		return profile, false
+	}
+	parser := kvieProfiles[len(kvieProfiles)-1]
+	seen, boundaries := map[string]bool{}, map[string]bool{}
+	var first, previous byte
+	for pos := 0; pos < len(text); {
+		match := wrappedKVPair.FindStringSubmatchIndex(text[pos:])
+		if match == nil || len(profile.Observations) >= MaxFields {
+			return KVProfile{}, false
+		}
+		open, close := text[pos+match[2]], text[pos+match[6]]
+		if strings.IndexByte("[{(<", open) != strings.IndexByte("]})>", close) {
+			return KVProfile{}, false
+		}
+		values, err := parser.observe(text[pos+match[4]:pos+match[5]], offset+pos+match[4])
+		if err != nil || len(values) != 1 || seen[values[0].Key] {
+			return KVProfile{}, false
+		}
+		seen[values[0].Key] = true
+		profile.Observations = append(profile.Observations, values[0])
+		if pos == 0 {
+			first = open
+		} else {
+			boundary := string([]byte{previous, open})
+			if !boundaries[boundary] {
+				if len(profile.InputEdits) >= 14 {
+					return KVProfile{}, false
+				}
+				boundaries[boundary] = true
+				profile.InputEdits = append(profile.InputEdits, KVInputEdit{Action: "replace", Find: boundary, Replace: "|"})
+			}
+		}
+		previous = close
+		pos += match[1]
+	}
+	profile.InputEdits = append(profile.InputEdits,
+		KVInputEdit{Action: "strip_prefix", Find: string(first)},
+		KVInputEdit{Action: "strip_suffix", Find: string(previous)})
+	return profile, true
+}
+
+func editKVInput(text string, edits []KVInputEdit) (string, error) {
+	for _, edit := range edits {
+		switch edit.Action {
+		case "replace":
+			value, err := applyOperation(text, Operation{Op: "replace", Find: edit.Find, Replace: edit.Replace}, nil, nil)
+			if err != nil {
+				return "", err
+			}
+			text = value.(string)
+		case "strip_prefix":
+			text = strings.TrimPrefix(text, edit.Find)
+		case "strip_suffix":
+			text = strings.TrimSuffix(text, edit.Find)
+		}
+	}
+	return text, nil
 }
 
 func (r *record) extractKVIE(cf compiledField, evidence Evidence) (any, Evidence, bool, error) {
@@ -327,7 +399,16 @@ func (r *record) extractKVIE(cf compiledField, evidence Evidence) (any, Evidence
 	if !cached {
 		var observations []KeyValueObservation
 		if cf.kvie != nil {
-			observations, scan.err = cf.kvie.observe(selected, start)
+			cleaned, err := editKVInput(selected, f.KVInputEdits)
+			if err != nil {
+				return nil, evidence, false, fmt.Errorf("%w: %w", ErrIncompleteKV, err)
+			}
+			observations, scan.err = cf.kvie.observe(cleaned, start)
+			if cleaned != selected {
+				for i := range observations {
+					observations[i].Start, observations[i].End = start, end
+				}
+			}
 			if scan.err != nil && !errors.Is(scan.err, ErrIncompleteKV) && kvieHeader.MatchString(strings.TrimLeft(selected, " \t\r\n")) {
 				scan.err = fmt.Errorf("%w: %w", ErrIncompleteKV, scan.err)
 			}

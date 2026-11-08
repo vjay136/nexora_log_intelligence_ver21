@@ -134,20 +134,20 @@ if "REQUIRE_PREVIOUS=0" in workflow:
 
 rocky_validation = (root / "tests/rocky/validate.sh").read_text(encoding="utf-8")
 for marker in (
-    "previous client must be the genuine Ver22 22.0.0-2 RPM",
-    "previous controller must be the genuine Ver22 22.0.0-2 RPM",
-    "$previous_client_release =~ ^2([.]el[0-9]+)?$ && $current_client_release =~ ^0([.]el[0-9]+)?$",
-    "$previous_controller_release =~ ^2([.]el[0-9]+)?$ && $current_controller_release =~ ^0([.]el[0-9]+)?$",
+    "previous client must be the genuine Ver22 22.1.0-0 RPM",
+    "previous controller must be the genuine Ver22 22.1.0-0 RPM",
+    "$previous_client_release =~ ^0([.]el[0-9]+)?$ && $current_client_release =~ ^0([.]el[0-9]+)?$",
+    "$previous_controller_release =~ ^0([.]el[0-9]+)?$ && $current_controller_release =~ ^0([.]el[0-9]+)?$",
 ):
     if marker not in rocky_validation:
         fail(f"Rocky lifecycle validation is missing previous-release gate {marker!r}")
-if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v22.0.0-2' }}" not in workflow:
-    fail("Ver22 lifecycle validation does not use the published Ver22 22.0.0-2 baseline")
-if "name: nli-v22-unsigned-release" not in workflow or "--notes-file docs/V22_1_RELEASE_NOTES.md" not in workflow:
-    fail("Ver22 lifecycle workflow does not publish R10 artifacts and release notes")
+if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v22.1.0-0' }}" not in workflow:
+    fail("Ver22 lifecycle validation does not use the published Ver22 22.1.0-0 baseline")
+if "name: nli-v22-unsigned-release" not in workflow or "--notes-file docs/V22_2_RELEASE_NOTES.md" not in workflow:
+    fail("Ver22 lifecycle workflow does not publish Ver22.2 artifacts and release notes")
 release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-if "NLI_VERSION=22.1.0" not in release_env or "NLI_RELEASE=0" not in release_env.splitlines():
-    fail("Ver22 release identity is not 22.1.0-0")
+if "NLI_VERSION=22.2.0" not in release_env or "NLI_RELEASE=0" not in release_env.splitlines():
+    fail("Ver22 release identity is not 22.2.0-0")
 if "PREVIOUS_RELEASE_REPO: ${{ github.repository }}" not in workflow:
     fail("Ver22 lifecycle validation does not use the current published repository")
 

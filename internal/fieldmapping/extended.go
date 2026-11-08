@@ -1,6 +1,7 @@
 package fieldmapping
 
 import (
+	"encoding/json"
 	"crypto/sha256"
 	"crypto/sha512"
 	"fmt"
@@ -137,6 +138,18 @@ func compileExtended(cf *compiledField, seen map[string]bool) error {
 		return fmt.Errorf("kv_profile requires key/value extraction and must be auto or configured")
 	}
 	namedProfile := f.Method == "key_value" && f.KVProfile != ""
+	if len(f.KVInputEdits) > 0 {
+		if f.Method != "kv_all" || f.KVProfile != "configured" || !f.RequireComplete || len(f.KVInputEdits) > 16 {
+			return fmt.Errorf("KV input edits require a configured dynamic KV field with complete coverage and at most 16 edits")
+		}
+		for _, edit := range f.KVInputEdits {
+			if !contains([]string{"replace", "strip_prefix", "strip_suffix"}, edit.Action) || edit.Find == "" ||
+				len(edit.Find) > 4096 || len(edit.Replace) > 4096 || edit.Action != "replace" && edit.Replace != "" {
+				return fmt.Errorf("invalid KV input edit: provide literal text and choose replace, strip prefix, or strip suffix")
+			}
+		}
+		f.KVInputEdits = append([]KVInputEdit(nil), f.KVInputEdits...)
+	}
 	if f.KVNestedObjects && (f.KVProfile == "" || f.Method == "key_value" && f.Type != "object") {
 		return fmt.Errorf("nested KV objects require a KV profile and object output for a named key")
 	}
@@ -168,6 +181,10 @@ func compileExtended(cf *compiledField, seen map[string]bool) error {
 	if f.KVProfile == "configured" {
 		assignments, delimiters := keySettings(*f)
 		cf.kvie, err = compileKVIEProfile(assignments, delimiters, *f)
+		if err == nil && len(f.KVInputEdits) > 0 {
+			encoded, _ := json.Marshal(f.KVInputEdits)
+			cf.kvie.signature += string(encoded)
+		}
 		if err != nil {
 			return err
 		}

@@ -418,9 +418,15 @@ func (s *Server) readMaterializedParserBundleHash() (string, error) {
 	return hash, nil
 }
 
+const (
+	kvOutputEditsMinimumRelease = "22.1.0-0"
+	kvInputEditsMinimumRelease  = "22.2.0-0"
+)
+
 // Inspect native stage content so imported packs cannot bypass the release
 // requirement by omitting their informational minimum_client_release metadata.
-func parserBundleRequiresKVEdits(bundle parserAssetBundle) bool {
+func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
+	minimum := ""
 	for _, asset := range bundle.Assets {
 		if asset.AssetClass != "parser-packs" {
 			continue
@@ -431,7 +437,8 @@ func parserBundleRequiresKVEdits(bundle parserAssetBundle) bool {
 					Type   string `json:"type"`
 					Config struct {
 						Fields []struct {
-							Edits []json.RawMessage `json:"key_value_edits"`
+							InputEdits  []json.RawMessage `json:"kv_input_edits"`
+							OutputEdits []json.RawMessage `json:"key_value_edits"`
 						} `json:"fields"`
 					} `json:"config"`
 				} `json:"stages"`
@@ -444,21 +451,35 @@ func parserBundleRequiresKVEdits(bundle parserAssetBundle) bool {
 					continue
 				}
 				for _, field := range stage.Config.Fields {
-					if len(field.Edits) > 0 {
-						return true
+					if len(field.InputEdits) > 0 {
+						return kvInputEditsMinimumRelease
+					}
+					if len(field.OutputEdits) > 0 {
+						minimum = kvOutputEditsMinimumRelease
 					}
 				}
 			}
 		}
 	}
-	return false
+	return minimum
 }
 
-func parserClientSupportsKVEdits(version string) bool {
+func parserClientSupportsKVRelease(version, minimumRelease string) bool {
+	if minimumRelease == "" {
+		return true
+	}
 	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
 	base, _, _ := strings.Cut(version, "-")
-	comparison, err := protocol.CompareSemver(base, "22.1.0")
+	minimum, _, _ := strings.Cut(minimumRelease, "-")
+	comparison, err := protocol.CompareSemver(base, minimum)
 	return err == nil && comparison >= 0
+}
+
+func parserSyncClientBlocker(node *fleet.Node, minimumRelease string, acknowledged bool, state map[string]any) (string, string) {
+	if !parserClientSupportsKVRelease(node.Version, minimumRelease) {
+		return "client_upgrade_required", fmt.Sprintf("Upgrade this client to v%s or newer to apply the bundle's KV edits.", minimumRelease)
+	}
+	return parserSyncBlocker(acknowledged, node.Status == fleet.StatusOffline, state)
 }
 
 func (s *Server) startParserBundleRollout(ctx context.Context, actor, name string, bundle parserAssetBundle, targetIDs []string) (*rolloutRecord, error) {
@@ -469,10 +490,10 @@ func (s *Server) startParserBundleRollout(ctx context.Context, actor, name strin
 			}
 		}
 	}
-	if parserBundleRequiresKVEdits(bundle) {
+	if minimum := parserBundleMinimumKVRelease(bundle); minimum != "" {
 		compatible := make([]string, 0, len(targetIDs))
 		for _, target := range targetIDs {
-			if node, ok := s.fleet.Get(target); ok && node != nil && parserClientSupportsKVEdits(node.Version) {
+			if node, ok := s.fleet.Get(target); ok && node != nil && parserClientSupportsKVRelease(node.Version, minimum) {
 				compatible = append(compatible, target)
 			}
 		}
@@ -510,9 +531,9 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 		return metastore.Document{}, errors.New("target_mode must be all_eligible, selected, or origin")
 	}
 	eligible := map[string]bool{}
-	requiresKVEdits := parserBundleRequiresKVEdits(bundle)
+	minimum := parserBundleMinimumKVRelease(bundle)
 	for _, node := range s.fleet.All() {
-		if node.Status != fleet.StatusOffline && (!requiresKVEdits || parserClientSupportsKVEdits(node.Version)) {
+		if node.Status != fleet.StatusOffline && parserClientSupportsKVRelease(node.Version, minimum) {
 			eligible[node.ID] = true
 		}
 	}
@@ -528,8 +549,8 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 	seen := map[string]bool{}
 	for _, id := range targetIDs {
 		if !eligible[id] || seen[id] {
-			if node, ok := s.fleet.Get(id); requiresKVEdits && ok && node != nil && !parserClientSupportsKVEdits(node.Version) {
-				return metastore.Document{}, fmt.Errorf("parser sync target %q must be upgraded to v22.1.0-0 for KV field edits", id)
+			if node, ok := s.fleet.Get(id); ok && node != nil && !parserClientSupportsKVRelease(node.Version, minimum) {
+				return metastore.Document{}, fmt.Errorf("parser sync target %q must be upgraded to v%s for the bundle's KV edits", id, minimum)
 			}
 			return metastore.Document{}, fmt.Errorf("parser sync target %q is not an eligible enrolled client", id)
 		}
@@ -878,6 +899,7 @@ func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		clients := []map[string]any{}
+		minimumKVRelease := parserBundleMinimumKVRelease(bundle)
 		for _, node := range s.fleet.All() {
 			if len(selected) > 0 && !selected[node.ID] {
 				continue
@@ -892,7 +914,7 @@ func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {
 			} else if active != "<nil>" && active != "" {
 				status = "drifted"
 			}
-			code, next := parserSyncBlocker(acknowledged, node.Status == fleet.StatusOffline, state)
+			code, next := parserSyncClientBlocker(node, minimumKVRelease, acknowledged, state)
 			clients = append(clients, map[string]any{"node_id": node.ID, "expected_hash": bundle.BundleHash, "desired_hash": desired, "acknowledged_hash": active, "applied_hash": active, "status": status, "exact_acknowledgement": acknowledged, "blocking_code": code, "next_action": next, "runtime_inventory": state["runtime_inventory"], "error": state["asset_sync_error"]})
 		}
 		jsonOK(w, map[string]any{"desired_hash": bundle.BundleHash, "controller_applied_hash": controllerHash, "controller_status": controllerStatus, "client_acknowledgements": clients, "verified_at": time.Now().UTC(), "assets": bundle.Assets})
@@ -1086,6 +1108,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	clients := []map[string]any{}
+	minimumKVRelease := parserBundleMinimumKVRelease(bundle)
 	totalClients, onlineClients, exactClients := 0, 0, 0
 	pendingClients, driftedClients, failedClients, offlineClients := 0, 0, 0, 0
 	for _, node := range s.fleet.All() {
@@ -1116,7 +1139,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 		} else {
 			pendingClients++
 		}
-		code, next := parserSyncBlocker(acknowledged, node.Status == fleet.StatusOffline, state)
+		code, next := parserSyncClientBlocker(node, minimumKVRelease, acknowledged, state)
 		clients = append(clients, map[string]any{"blocking_code": code, "next_action": next, "runtime_inventory": state["runtime_inventory"], "node_id": node.ID, "hostname": node.Hostname, "desired_revision": bundleRevisionMap(bundle), "desired_hash": desired, "applied_revision": state["active_asset_revisions"], "applied_hash": applied, "acknowledged_bundle_hash": applied, "exact_acknowledgement": acknowledged, "last_seen": state["last_seen"], "status": status, "drifted": drift, "error": state["asset_sync_error"]})
 	}
 	sort.Slice(clients, func(i, j int) bool { return fmt.Sprint(clients[i]["node_id"]) < fmt.Sprint(clients[j]["node_id"]) })

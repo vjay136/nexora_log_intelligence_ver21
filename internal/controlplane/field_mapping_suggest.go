@@ -294,6 +294,9 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 		return "", nil, fmt.Errorf("sample violates the bounded UTF-8 input contract")
 	}
 	trimmed := strings.TrimSpace(raw)
+	if profile, ok := fieldmapping.InspectWrappedKeyValues(trimmed, 0); ok {
+		return "bracketed-key-value", []fieldmapping.Field{nfiWrappedKVField("raw", profile)}, nil
+	}
 	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
 		return nfiSuggestJSON(ctx, raw)
 	}
@@ -343,6 +346,9 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 	discoveryRaw := raw
 	if mail && len(tokens) > 8 {
 		discoveryRaw = strings.TrimSpace(raw[len(nfiSuggestMailHeader.FindString(raw)):])
+		if profile, ok := fieldmapping.InspectWrappedKeyValues(discoveryRaw, 0); ok {
+			return family + "/bracketed-kv", append(fields, nfiWrappedKVField("9", profile)), nil
+		}
 	}
 	observations, scanErr := fieldmapping.ScanKeyValues(discoveryRaw, assignments, ":;,| \t\r\n", false)
 	if scanErr != nil {
@@ -350,7 +356,7 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 	}
 	if mail && len(tokens) > 8 && len(observations) == 0 {
 		profiles, err := fieldmapping.InspectKeyValues(ctx, raw, fieldmapping.Field{Name: "tail_fields", Type: "object", Method: "kv_all", Source: "9", EndOfLine: true})
-		if err == nil && len(profiles) > 0 {
+		if err == nil && len(profiles) == 1 {
 			return family, nfiKVIEFields(fields, profiles[0]), nil
 		}
 	}
@@ -438,6 +444,17 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 		fields = append(fields, nfiSuggestedField("token_"+strconv.Itoa(i+1), "position", strconv.Itoa(i+1), token))
 	}
 	return "unstructured-tokens", fields, nil
+}
+
+func nfiWrappedKVField(start string, profile fieldmapping.KVProfile) fieldmapping.Field {
+	field := nfiSuggestedField("tail_fields", "kv_all", start, "")
+	field.Type, field.OutputPolicy, field.KVProfile = "object", "flatten", "configured"
+	field.EndOfLine, field.RequireComplete = true, true
+	field.AssignmentSeparators = profile.AssignmentSeparators
+	field.KVPairSeparators = []string{profile.PairDelimiters}
+	field.KVInputEdits = profile.InputEdits
+	field.Evidence = "Native inspection recognized all adjacent bracketed pairs in this sample"
+	return field
 }
 
 func nfiKVIEFields(fields []fieldmapping.Field, profile fieldmapping.KVProfile) []fieldmapping.Field {

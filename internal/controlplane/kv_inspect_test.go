@@ -11,7 +11,69 @@ import (
 
 	"nexora.local/nli-v20/internal/adapter"
 	"nexora.local/nli-v20/internal/engine"
+	"nexora.local/nli-v20/internal/fleet"
 )
+
+func TestKVInputEditsPreviewAndClientCompatibility(t *testing.T) {
+	f := newAPIFixture(t)
+	definition, desired := nfiExampleDefinition()
+	raw := strings.Split(nfiExample, "status=")[0] + "[status:failed][reason;notneeded][server=cloud]"
+	plan := definition["mapping_plan"].(map[string]any)
+	tail := map[string]any{
+		"name": "tail", "method": "kv_all", "type": "object", "source": "9",
+		"end_of_line": true, "output_policy": "flatten", "kv_profile": "configured",
+		"require_complete": true, "assignment_separators": []string{":", ";", "="},
+		"kv_pair_separators": []string{"|"},
+		"kv_input_edits": []map[string]string{
+			{"action": "replace", "find": "][", "replace": "|"},
+			{"action": "strip_prefix", "find": "["},
+			{"action": "strip_suffix", "find": "]"},
+		},
+	}
+	plan["fields"] = append(plan["fields"].([]any)[:9:9], tail)
+	response, body := f.request(http.MethodPost, "/api/v1/assurance/mapping-preview", map[string]any{"raw": raw, "plan": plan})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("preview: %d %s", response.StatusCode, body)
+	}
+	preview := decodeMap(t, body)
+	if preview["passed"] != true {
+		t.Fatalf("preview failed: %s", body)
+	}
+	actual, ok := preview["actual"].(map[string]any)
+	if !ok {
+		t.Fatalf("preview is missing mapped fields: %s", body)
+	}
+	if diff, _ := structuralDiff(actual, desired); len(diff) != 0 {
+		t.Fatalf("preview differs from expected output: %v", diff)
+	}
+	pack, err := assuranceMappingRuntimePack("kv-input-edits", "1.0.0", "admin", definition,
+		[]assuranceRequest{{Raw: raw, Service: "smtp", Desired: desired}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pack.Metadata["minimum_client_release"] != kvInputEditsMinimumRelease {
+		t.Fatalf("candidate metadata = %v", pack.Metadata)
+	}
+	delete(pack.Metadata, "minimum_client_release")
+	payload, err := json.Marshal(pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := parserAssetBundle{Assets: []parserBundleAsset{{AssetClass: "parser-packs", Payload: payload}}}
+	if minimum := parserBundleMinimumKVRelease(bundle); minimum != kvInputEditsMinimumRelease {
+		t.Fatalf("imported bundle release floor = %q", minimum)
+	}
+	f.server.fleet.Register(&fleet.Node{ID: "old-kv-client", Hostname: "old-kv-client", Version: "22.1.0"})
+	_, err = f.server.proposeParserBundleRollout(context.Background(), "admin", "KV edits", "test compatibility", "selected", bundle, []string{"old-kv-client"})
+	if err == nil || !strings.Contains(err.Error(), kvInputEditsMinimumRelease) {
+		t.Fatalf("old client proposal: %v", err)
+	}
+	bundle.Assets[0].Payload = json.RawMessage(`{"rules":[{"stages":[{"type":"mapping","config":{"fields":[{"key_value_edits":[{"key":"status","action":"blank"}]}]}}]}]}`)
+	minimum := parserBundleMinimumKVRelease(bundle)
+	if minimum != kvOutputEditsMinimumRelease || !parserClientSupportsKVRelease("22.1.0", minimum) {
+		t.Fatalf("old output-only edits release floor = %q", minimum)
+	}
+}
 
 func TestKVIEInspectAndPublishOnePackForBothReportedTails(t *testing.T) {
 	f := newAPIFixture(t)

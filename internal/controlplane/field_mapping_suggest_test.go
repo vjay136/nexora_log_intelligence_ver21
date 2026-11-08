@@ -57,6 +57,27 @@ func TestNFISuggestionsRequestedColonSampleAndVariants(t *testing.T) {
 	}
 }
 
+func TestNFISuggestionsWrappedPairsUseOneDynamicMapping(t *testing.T) {
+	const prefix = "20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg "
+	for _, tail := range []string{
+		"[status:failed][reason;notneeded][server=cloud#]",
+		"{status:failed}(reason;notneeded)<server=cloud#>",
+	} {
+		profiles, _ := nfiSuggestCorpus(context.Background(), []string{prefix + tail, prefix + "status=ok"}, "")
+		if len(profiles) != 2 {
+			t.Fatalf("different source layouts were grouped: %v", profiles)
+		}
+		fields := profiles[0].Fields
+		if len(fields) != 10 || len(fields[9].KVInputEdits) == 0 {
+			t.Fatalf("wrapped pairs did not produce one dynamic mapping: %v", fields)
+		}
+		values := executeNFISuggestedFields(t, fields, prefix+tail)
+		if values["status"] != "failed" || values["reason"] != "notneeded" || values["server"] != "cloud#" {
+			t.Fatalf("wrong extracted values: %v", values)
+		}
+	}
+}
+
 func TestNFISuggestionsCorpusProfilesOptionalAndQuotedValues(t *testing.T) {
 	samples := []string{
 		`2031-01-02 01:02:03+0000 agent="Example Client status=fake" session="" duration="3"`,
