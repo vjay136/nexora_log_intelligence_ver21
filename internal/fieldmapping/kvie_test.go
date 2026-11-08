@@ -205,3 +205,34 @@ func TestKVIEDiagnosticPointsToOriginalMalformedSource(t *testing.T) {
 		t.Fatalf("unrelated source classified as structured: %v", err)
 	}
 }
+
+func TestKVIEKeyValueEditsPreserveCoverage(t *testing.T) {
+	field := Field{
+		Name: "tail", Method: "kv_all", Type: "object", Source: "9",
+		EndOfLine: true, OutputPolicy: "flatten", KVProfile: "auto",
+		KeyOptions: KeyOptions{RequireComplete: true, KeyAliases: map[string]string{"server": "backend"}, KeyPrefix: "kv_"},
+		KeyValueEdits: []KeyValueEdit{
+			{Key: "kv_status", Action: "omit"},
+			{Key: "kv_reason", Action: "blank"},
+			{Key: "kv_backend", Action: "replace", Value: "redacted"},
+			{Key: "kv_absent", Action: "replace", Value: "must not be emitted"},
+		},
+	}
+	raw := kvieMailHeader + "status:failed,reason:notneeded,server:cloud,result:ok"
+	plan, err := Compile(Plan{Version: 1, Fields: []Field{field}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := plan.Execute(context.Background(), raw)
+	want := map[string]any{"kv_reason": "", "kv_backend": "redacted", "kv_result": "ok"}
+	if err != nil || !reflect.DeepEqual(result.Values, want) {
+		t.Fatalf("execute: %+v, %v", result.Values, err)
+	}
+	if err := plan.ValidateComplete(raw, result); err != nil {
+		t.Fatal(err)
+	}
+	field.KeyValueEdits = append(field.KeyValueEdits, KeyValueEdit{Key: "kv_status", Action: "blank"})
+	if _, err := Compile(Plan{Version: 1, Fields: []Field{field}}); err == nil {
+		t.Fatal("duplicate edit should be rejected")
+	}
+}

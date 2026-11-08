@@ -50,7 +50,24 @@ type Metrics struct {
 	UPESDiscoveryPending        uint64  `json:"upes_discovery_pending,omitempty"`
 }
 
+// InputRuntimeInventory reports configured inputs and file metadata, never log contents.
+type InputRuntimeInventory struct {
+	ConfigPath   string             `json:"config_path"`
+	ManagedFiles *[]string          `json:"managed_files,omitempty"`
+	Inputs       []InputRuntimeFile `json:"inputs"`
+	Truncated    bool               `json:"truncated,omitempty"`
+}
+
+type InputRuntimeFile struct {
+	Path     string `json:"path"`
+	Service  string `json:"service"`
+	Disabled bool   `json:"disabled"`
+	State    string `json:"state"`
+}
+
 type HeartbeatRequest struct {
+	InputInventory        *InputRuntimeInventory          `json:"input_inventory,omitempty"`
+	AgentStatus           string                          `json:"agent_status,omitempty"`
 	RuntimeInventory      *ParserRuntimeInventory         `json:"runtime_inventory,omitempty"`
 	NodeID                string                          `json:"node_id"`
 	Version               string                          `json:"version"`

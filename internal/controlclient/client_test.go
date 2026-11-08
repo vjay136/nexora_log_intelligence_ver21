@@ -876,6 +876,39 @@ func TestClientAcceptsCanonicalR6BundleAfterJSONNumericNormalization(t *testing.
 	}
 }
 
+func TestInputRuntimeInventoryReportsConfiguredFilesOnly(t *testing.T) {
+	root := t.TempDir()
+	present := filepath.Join(root, "present.log")
+	missing := filepath.Join(root, "missing.log")
+	if err := os.WriteFile(present, []byte("private log contents"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "nli.json")
+	data, err := json.Marshal(map[string]any{"inputs": []map[string]any{
+		{"path": present, "service": "auto"},
+		{"path": missing, "service": "smtp-in", "disabled": true},
+		{"path": filepath.Join(root, "*.log")},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0640); err != nil {
+		t.Fatal(err)
+	}
+	hash, inventory := inputRuntimeInventory(path)
+	if hash != fileSHA256(path) || inventory == nil || inventory.ConfigPath != path || len(inventory.Inputs) != 3 {
+		t.Fatalf("unexpected input inventory %q %#v", hash, inventory)
+	}
+	for i, want := range []string{"present", "missing", "pattern"} {
+		if got := inventory.Inputs[i].State; got != want {
+			t.Errorf("input %d state %q; want %q", i, got, want)
+		}
+	}
+	if !inventory.Inputs[1].Disabled || inventory.Inputs[1].Service != "smtp-in" {
+		t.Fatalf("input metadata lost: %#v", inventory.Inputs[1])
+	}
+}
+
 func TestClientRestoresConfigurationWhenRestartFails(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "nli.json")

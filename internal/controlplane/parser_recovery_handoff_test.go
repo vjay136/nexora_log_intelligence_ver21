@@ -17,6 +17,71 @@ import (
 	"nexora.local/nli-v20/telemetry"
 )
 
+func TestDottedClientHeartbeatPreservesAndRecoversParserAcknowledgement(t *testing.T) {
+	f := newAPIFixture(t)
+	ctx := context.Background()
+	const node = "ip-172-31-37-151.ap-southeast-2.compute.internal-client"
+	f.server.fleet.Register(&fleet.Node{ID: node, Hostname: node})
+	bundle, err := f.server.buildActiveParserBundle(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []protocol.ParserFileDigest{}
+	for _, asset := range bundle.Assets {
+		if asset.AssetClass == "parser-packs" {
+			files = append(files, protocol.ParserFileDigest{ID: asset.AssetID, SHA256: asset.SHA256})
+		}
+	}
+	heartbeat := protocol.HeartbeatRequest{
+		NodeID:                node,
+		ActiveAssetBundleHash: bundle.BundleHash,
+		RuntimeInventory: &protocol.ParserRuntimeInventory{
+			BundleHash:         bundle.BundleHash,
+			ManagedFilesDigest: protocol.ManagedParserFilesDigest(files),
+		},
+	}
+	report := func() map[string]any {
+		t.Helper()
+		f.server.updateSyncFromHeartbeat(heartbeat)
+		doc, err := f.server.metadata.Get(ctx, "fleet-sync", safeID(node), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var state map[string]any
+		if err := json.Unmarshal(doc.Payload, &state); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	if state := report(); parserBundleAcknowledged(state, bundle.BundleHash) {
+		t.Fatalf("unapproved client report must not authorize parser delivery: %+v", state)
+	}
+	job, err := f.server.startParserBundleRollout(ctx, "operator", "Dotted client rollout", bundle, []string{node})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state := report(); !parserBundleAcknowledged(state, bundle.BundleHash) {
+		t.Fatalf("heartbeat erased desired state for dotted client: %+v", state)
+	}
+
+	// Simulate the legacy heartbeat overwriting the desired bundle record.
+	if _, err := f.server.metadata.Put(ctx, metastore.Document{
+		Collection: "fleet-sync", ID: safeID(node), State: "reported",
+		Payload: json.RawMessage(`{"asset_sync_status":"drifted"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if state := report(); parserBundleAcknowledged(state, bundle.BundleHash) {
+		t.Fatalf("legacy state must remain gated until there is a completed delivery: %+v", state)
+	}
+	if err := f.server.rollouts.RecordNodeResult(job.ID, node, rolloutStatusCompleted, "applied"); err != nil {
+		t.Fatal(err)
+	}
+	if state := report(); !parserBundleAcknowledged(state, bundle.BundleHash) {
+		t.Fatalf("completed exact delivery did not repair legacy state: %+v", state)
+	}
+}
+
 func TestPublishedAssurancePackIsOnlyRuntimeBundleHandoff(t *testing.T) {
 	f := newAPIFixture(t)
 	definition := map[string]any{"pattern_type": "regex", "pattern": `status=(?P<status>\w+)`, "fields": []any{map[string]any{"name": "status", "source": "group:status", "type": "string"}}}

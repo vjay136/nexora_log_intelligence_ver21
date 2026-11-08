@@ -181,7 +181,7 @@ for secret_spec in "audit HMAC:$audit_key" "CSRF HMAC:$csrf_key" "Assurance encr
   valid_env_secret "$secret_value" || fail "$secret_label key is not safe for a systemd EnvironmentFile"
 done
 
-printf '\nNLI v21 controller first-run setup\n'
+printf '\nNLI Ver22 controller first-run setup\n'
 printf '  1) Local administration through SSH tunnel (secure default)\n'
 printf '  2) Private-network TLS for separate controller/client nodes\n\n'
 printf '  3) Public DNS + Nginx + ACME certificate (automated)\n'
@@ -1068,7 +1068,7 @@ if [[ $mode == 4 ]]; then
   rm -f "$token_tmp"
   cat >/etc/systemd/system/nli-cloudflared.service <<EOF
 [Unit]
-Description=NLI Ver21 Cloudflare Tunnel connector
+Description=NLI Ver22 Cloudflare Tunnel connector
 After=network-online.target
 Wants=network-online.target
 
@@ -1250,7 +1250,7 @@ rm -f "$env_tmp"
 # without exposing credentials in terminal output or process arguments.
 credential_tmp=$(mktemp "${CREDENTIAL_FILE}.XXXXXX")
 cat >"$credential_tmp" <<EOF
-# NLI Ver21 controller credentials. Root only. Do not copy to clients.
+# NLI Ver22 controller credentials. Root only. Do not copy to clients.
 NLI_ENROLLMENT_TOKEN=$enrollment_token
 NLI_AUDIT_HMAC_KEY=$audit_key
 NLI_CSRF_HMAC_KEY=$csrf_key

@@ -14,7 +14,7 @@ Cloudflare Pages:  https://nli.example.com
 
 ## Git-connected deployment
 
-1. Create a Cloudflare Pages project from the private Ver21 GitHub repository.
+1. Create a Cloudflare Pages project from the private Ver22 GitHub repository.
 2. Set the production branch to `main`.
 3. Use build command `node scripts/build-webapp.mjs` and output directory
    `build/web-public`. Keep the repository root as the root directory.
@@ -46,7 +46,7 @@ curl -fsS https://nli.example.com/api/v1/health
 
 The Pages response must include `X-NLI-Upstream: controller` and
 `X-NLI-Controller: v20`. The `v20` value is the stable API compatibility
-contract used by Ver21 and is not the product release number. A redirect,
+contract used by Ver22 and is not the product release number. A redirect,
 Cloudflare Access login page, 403, or HTML response means the Pages Function
 cannot reach the API contract. Configure an
 approved Cloudflare route that permits the server-to-server proxy while NLI's

@@ -418,6 +418,49 @@ func (s *Server) readMaterializedParserBundleHash() (string, error) {
 	return hash, nil
 }
 
+// Inspect native stage content so imported packs cannot bypass the release
+// requirement by omitting their informational minimum_client_release metadata.
+func parserBundleRequiresKVEdits(bundle parserAssetBundle) bool {
+	for _, asset := range bundle.Assets {
+		if asset.AssetClass != "parser-packs" {
+			continue
+		}
+		var pack struct {
+			Rules []struct {
+				Stages []struct {
+					Type   string `json:"type"`
+					Config struct {
+						Fields []struct {
+							Edits []json.RawMessage `json:"key_value_edits"`
+						} `json:"fields"`
+					} `json:"config"`
+				} `json:"stages"`
+			} `json:"rules"`
+		}
+		_ = json.Unmarshal(asset.Payload, &pack)
+		for _, rule := range pack.Rules {
+			for _, stage := range rule.Stages {
+				if stage.Type != "mapping" {
+					continue
+				}
+				for _, field := range stage.Config.Fields {
+					if len(field.Edits) > 0 {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func parserClientSupportsKVEdits(version string) bool {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	base, _, _ := strings.Cut(version, "-")
+	comparison, err := protocol.CompareSemver(base, "22.1.0")
+	return err == nil && comparison >= 0
+}
+
 func (s *Server) startParserBundleRollout(ctx context.Context, actor, name string, bundle parserAssetBundle, targetIDs []string) (*rolloutRecord, error) {
 	if len(targetIDs) == 0 {
 		for _, node := range s.fleet.All() {
@@ -425,6 +468,15 @@ func (s *Server) startParserBundleRollout(ctx context.Context, actor, name strin
 				targetIDs = append(targetIDs, node.ID)
 			}
 		}
+	}
+	if parserBundleRequiresKVEdits(bundle) {
+		compatible := make([]string, 0, len(targetIDs))
+		for _, target := range targetIDs {
+			if node, ok := s.fleet.Get(target); ok && node != nil && parserClientSupportsKVEdits(node.Version) {
+				compatible = append(compatible, target)
+			}
+		}
+		targetIDs = compatible
 	}
 	if len(targetIDs) == 0 {
 		return nil, nil
@@ -458,8 +510,9 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 		return metastore.Document{}, errors.New("target_mode must be all_eligible, selected, or origin")
 	}
 	eligible := map[string]bool{}
+	requiresKVEdits := parserBundleRequiresKVEdits(bundle)
 	for _, node := range s.fleet.All() {
-		if node.Status != fleet.StatusOffline {
+		if node.Status != fleet.StatusOffline && (!requiresKVEdits || parserClientSupportsKVEdits(node.Version)) {
 			eligible[node.ID] = true
 		}
 	}
@@ -475,6 +528,9 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 	seen := map[string]bool{}
 	for _, id := range targetIDs {
 		if !eligible[id] || seen[id] {
+			if node, ok := s.fleet.Get(id); requiresKVEdits && ok && node != nil && !parserClientSupportsKVEdits(node.Version) {
+				return metastore.Document{}, fmt.Errorf("parser sync target %q must be upgraded to v22.1.0-0 for KV field edits", id)
+			}
 			return metastore.Document{}, fmt.Errorf("parser sync target %q is not an eligible enrolled client", id)
 		}
 		seen[id] = true
@@ -506,8 +562,12 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 		if existingMode == "" || existingMode == "<nil>" {
 			existingMode = "all_eligible"
 		}
-		if strings.EqualFold(strings.TrimSpace(fmt.Sprint(existingPayload["bundle_hash"])), bundle.BundleHash) && existingMode == targetMode && equalStringSlices(existingTargets, targetIDs) {
-			return existing, nil
+		if strings.EqualFold(strings.TrimSpace(fmt.Sprint(existingPayload["bundle_hash"])), bundle.BundleHash) {
+			if existingMode == targetMode && equalStringSlices(existingTargets, targetIDs) {
+				return existing, nil
+			}
+			// A targeted repair must not withdraw another client’s current approval.
+			continue
 		}
 		superseded = append(superseded, existing)
 	}
@@ -556,6 +616,29 @@ func equalStringSlices(left, right []string) bool {
 		}
 	}
 	return true
+}
+
+// hasCompletedParserDelivery recovers desired state lost by older heartbeat
+// writers. The reported hash alone cannot establish that delivery was approved.
+func (m *rolloutStateManager) hasCompletedParserDelivery(nodeID, hash string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, item := range m.items {
+		if item.Type != rolloutTypeParserSync {
+			continue
+		}
+		result := item.NodeResults[nodeID]
+		if result == nil || result.Status != rolloutStatusCompleted {
+			continue
+		}
+		var delivery struct {
+			BundleHash string `json:"bundle_hash"`
+		}
+		if json.Unmarshal(item.Payload, &delivery) == nil && delivery.BundleHash == hash {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) updateDesiredNodeAssetSync(ctx context.Context, nodeID string, bundle parserAssetBundle) {
@@ -899,6 +982,16 @@ func (s *Server) handleParserAssetTransition(w http.ResponseWriter, r *http.Requ
 		state = "active"
 		payload["published_by"] = principal.Username
 		payload["published_at"] = time.Now().UTC()
+	case "revoke":
+		if collection != "known-keys" || (state != "active" && state != "revoked") {
+			jsonError(w, "only active known-key assets can be revoked", http.StatusConflict)
+			return
+		}
+		if state == "active" {
+			state = "revoked"
+			payload["revoked_by"] = principal.Username
+			payload["revoked_at"] = time.Now().UTC()
+		}
 	default:
 		jsonError(w, "unknown asset transition", http.StatusNotFound)
 		return
@@ -909,13 +1002,16 @@ func (s *Server) handleParserAssetTransition(w http.ResponseWriter, r *http.Requ
 		jsonError(w, "asset transition failed", http.StatusInternalServerError)
 		return
 	}
-	saved, err := s.metadata.Put(r.Context(), metastore.Document{Collection: collection, ID: id, State: state, Payload: encoded, CreatedBy: doc.CreatedBy})
-	if err != nil {
-		jsonError(w, "asset transition persistence failed", http.StatusInternalServerError)
-		return
+	saved := doc
+	if doc.State != state {
+		saved, err = s.metadata.Put(r.Context(), metastore.Document{Collection: collection, ID: id, State: state, Payload: encoded, CreatedBy: doc.CreatedBy})
+		if err != nil {
+			jsonError(w, "asset transition persistence failed", http.StatusInternalServerError)
+			return
+		}
 	}
 	response := map[string]any{"asset": documentView(saved), "state": state}
-	if action == "publish" && isParserAssetCollection(collection) {
+	if (action == "publish" || action == "revoke") && isParserAssetCollection(collection) {
 		bundle, buildErr := s.buildActiveParserBundle(r.Context())
 		if buildErr != nil {
 			jsonError(w, "published asset bundle could not be built", http.StatusServiceUnavailable)
@@ -930,9 +1026,9 @@ func (s *Server) handleParserAssetTransition(w http.ResponseWriter, r *http.Requ
 		controllerState := map[string]any{"desired_hash": bundle.BundleHash, "applied_hash": appliedHash, "applied_at": now, "status": "controller_applied_pending_fleet_approval", "assets": bundleRevisionMap(bundle)}
 		stateBytes, _ := json.Marshal(controllerState)
 		_, _ = s.metadata.Put(r.Context(), metastore.Document{Collection: "parser-sync-state", ID: "controller", State: "applied", Payload: stateBytes, CreatedBy: principal.Username})
-		proposal, proposalErr := s.proposeParserBundleRollout(r.Context(), principal.Username, "Publish parser asset bundle", "Parser asset publication requires independent fleet rollout approval.", "all_eligible", bundle, nil)
+		proposal, proposalErr := s.proposeParserBundleRollout(r.Context(), principal.Username, "Synchronize parser asset bundle", "Parser asset changes require fleet rollout approval.", "all_eligible", bundle, nil)
 		if proposalErr != nil {
-			jsonError(w, "asset published and controller applied, but rollout proposal could not be created: "+proposalErr.Error(), http.StatusServiceUnavailable)
+			jsonError(w, "asset changed and controller applied, but rollout proposal could not be created: "+proposalErr.Error(), http.StatusServiceUnavailable)
 			return
 		}
 		response["bundle_hash"] = bundle.BundleHash

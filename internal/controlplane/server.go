@@ -950,7 +950,7 @@ func (s *Server) handleNodeCommandResult(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "unauthorized or inconsistent command result", http.StatusUnauthorized)
 		return
 	}
-	if err := s.rollouts.RecordNodeResult(commandID, result.NodeID, result.Status, result.Message); err != nil {
+	if err := s.rollouts.RecordNodeResult(commandID, result.NodeID, result.Status, result.Message, result.ConfigHash); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -1,5 +1,11 @@
 # Changelog
 
+## [22.1.0-0]
+
+- Reconcile parser delivery acknowledgements and simplify targeted replay.
+- Expand fleet visibility, input path verification and field projection controls.
+- Ship Ver22 installation assets and versioned release documentation.
+
 ## [22.0.0-2] - 2026-11-08
 
 - Align quarantine replay eligibility with the controller's exact bundle acknowledgement and expose rejection details.

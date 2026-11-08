@@ -135,6 +135,7 @@ func (s *Server) handleFieldMappingStatus(w http.ResponseWriter, r *http.Request
 		"limits":                              map[string]int{"max_input_bytes": fieldmapping.MaxInputBytes, "max_fields": fieldmapping.MaxFields, "max_operations_per_field": fieldmapping.MaxOperations, "max_learning_samples": 100},
 		"minimum_client_release":              "21.0.0-7",
 		"dynamic_tail_minimum_client_release": "21.0.0-9",
+		"kv_edits_minimum_client_release":     "22.1.0-0",
 		"execution":                           "The same bounded native plan runs in controller preview and enrolled clients. Legacy dynamic EOL plans require R9; KVIE profiles require R10. Saved drafts require validation, approval and exact-bundle acknowledgement before replay.",
 		"learning":                            "Deterministic structural suggestions from operator samples; ambiguous meanings require operator labels. No external AI calls or automatic parser activation.",
 	})
@@ -323,6 +324,12 @@ func assuranceMappingRuntimePack(id, version, author string, definition map[stri
 	for _, field := range plan.Fields {
 		if field.KVNestedObjects {
 			minimumClient = "22.0.0-1"
+			break
+		}
+	}
+	for _, field := range plan.Fields {
+		if len(field.KeyValueEdits) > 0 {
+			minimumClient = "22.1.0-0"
 			break
 		}
 	}

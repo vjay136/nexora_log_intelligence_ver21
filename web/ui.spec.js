@@ -128,7 +128,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
     if (path === '/api/v1/fleet/sync') return fulfill({ nodes: parserSyncMockClients().map(client=>({node:{id:client.node_id,hostname:client.hostname||client.node_id,status:client.status||'online',last_seen:'2026-10-17T05:00:00Z'},sync:{drifted:!!client.drifted}})) });
     if (path === '/api/v1/parser-sync' && request.method() === 'GET') { const assets=(currentQRWSyncAssets || [{ asset_class: 'regex', asset_id: 'nginx-access', name: 'Nginx access pattern', desired: { revision: 3, sha256: 'a'.repeat(64), state: 'published' }, controller: { revision: 3, sha256: 'a'.repeat(64), status: 'applied' }, auto_rollout: { enabled: true, status: 'enabled' }, rollout: { id: 'rollout-1', status: 'complete', total_nodes: 1, done_nodes: 1, failed_nodes: 0, errors: [] } }]).map(({clients,...asset})=>asset),clients=parserSyncMockClients();return fulfill({ bundle: qrwSyncAssets ? { desired_hash: currentBundleHash, parser_ids: currentQRWParsers.filter(item=>item.state==='published').map(item=>item.id), revision: 2 } : undefined, count: assets.length, assets, clients, telemetry:{total_clients:clients.length,online_clients:clients.filter(item=>item.status==='online').length,offline_clients:clients.filter(item=>item.status!=='online').length,exact_acknowledged_clients:clients.filter(item=>!item.drifted&&item.applied_hash===item.desired_hash).length,pending_clients:clients.filter(item=>!item.applied_hash).length,drifted_clients:clients.filter(item=>item.drifted).length,failed_clients:0,acknowledgement_pct:clients.length?100*clients.filter(item=>!item.drifted&&item.applied_hash===item.desired_hash).length/clients.length:0,desired_bundle_hash:currentBundleHash,controller_status:'ready',target_limit:10000} }); }
     if (path === '/api/v1/parser-sync/rollout' && request.method() === 'POST') { const body=request.postDataJSON(),proposal={id:`qrw-rollout-${qrwRolloutRequests.length+1}`,revision:1,created_by:'test-operator',state:'pending_approval',payload:{type:'parser_sync',name:'Parser bundle rollout',target_mode:body.target_mode,target_nodes:body.target_mode==='all_eligible'?parserSyncMockClients().map(item=>item.node_id):[body.origin_node_id],bundle_hash:body.bundle_hash}};qrwRolloutRequests.push(body);rolloutProposals.push(proposal);return fulfill({proposal},201); }
-    if (path === '/api/v1/parser-sync/verify' && request.method() === 'POST') { const body=request.postDataJSON();qrwSyncVerifications.push(body);const origin=parserSyncMockClients().find(item=>item.node_id===(body.node_id||'node-1'));if(origin){origin.applied_hash=origin.desired_hash;origin.drifted=false;}return fulfill({ verified: true, message: 'Reported state refreshed' }); }
+    if (path === '/api/v1/parser-sync/verify' && request.method() === 'POST') { const body=request.postDataJSON();qrwSyncVerifications.push(body);const origin=parserSyncMockClients().find(item=>item.node_id===(body.node_ids?.[0]||body.node_id||'node-1'));if(origin){origin.applied_hash=origin.desired_hash;origin.drifted=false;}return fulfill({ verified: true, message: 'Reported state refreshed', client_acknowledgements:origin?[{node_id:origin.node_id,exact_acknowledgement:true}]:[] }); }
     if (path === '/api/v1/parser-sync/retry' && request.method() === 'POST') return fulfill({ proposal_id: 'proposal-1', state: 'pending_approval', message: 'Rollout proposal created; independent approval is required.' });
     if (path.match(/^\/api\/v1\/parser-packs\/[^/]+\/(submit|approve|reject|activate|repair)$/) && request.method() === 'POST') { const [,id,action]=path.match(/^\/api\/v1\/parser-packs\/([^/]+)\/(submit|approve|reject|activate|repair)$/),doc=currentManagedParsers.find(item=>item.id===id);if(!doc)return fulfill({error:'not found'},404);doc.state=({submit:'in_review',approve:'approved',reject:'rejected',activate:'published',repair:'rejected'})[action];doc.runtime_sync=action==='repair'?{status:'not_published'}:doc.runtime_sync;return fulfill(doc); }
     if (path === '/api/v1/parser-packs') return fulfill({ parser_packs: currentManagedParsers });
@@ -252,6 +252,20 @@ test('R10 KV row preview reuses the tail and applies an inspected grammar', asyn
   await row.locator('details.nfi-extended > summary').click();
   await row.locator('[data-qrw-key=kv_pair_separators]').fill('["||"]');
   await expect.poll(()=>plan.fields[0].kv_pair_separators).toEqual(['||']);
+  await row.getByText('Edit individual KV output fields',{exact:true}).click();
+  await row.getByRole('button',{name:'Add key edit',exact:true}).click();
+  await row.getByLabel('Output key',{exact:true}).fill('reason');
+  await row.getByLabel('Output key',{exact:true}).blur();
+  await row.getByLabel('Key edit action',{exact:true}).selectOption('replace');
+  await row.getByLabel('Replacement text',{exact:true}).fill('redacted');
+  await row.getByLabel('Replacement text',{exact:true}).blur();
+  await expect.poll(()=>plan.fields[0].key_value_edits).toEqual([{key:'reason',action:'replace',value:'redacted'}]);
+  await row.getByLabel('Key edit action',{exact:true}).selectOption('blank');
+  await expect(row.getByLabel('Replacement text',{exact:true})).toHaveCount(0);
+  await expect.poll(()=>plan.fields[0].key_value_edits).toEqual([{key:'reason',action:'blank'}]);
+  await row.getByRole('button',{name:'Remove key edit 1',exact:true}).click();
+  await expect.poll(()=>plan.fields[0].key_value_edits).toBeNull();
+
 });
 
 test('KV mode switch clears named-only state and shows native evidence coverage',async({page})=>{
@@ -939,11 +953,13 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   await expect(page.locator('.qrw-next-action')).toContainText('Create the origin-client rollout proposal');
   await expect(page.getByRole('button',{name:/Request targeted replay/})).toBeDisabled();
   await expect(page.locator('#gprs-replay-form [name=record_ids] option[value="q-1"]')).toHaveAttribute('disabled','');
-  await expect(page.getByTestId('qrw-deployment-status')).toContainText('Published bundle available');
-  await expect(page.getByTestId('qrw-deployment-status')).toContainText('Origin rollout proposed');
+  await expect(page.getByTestId('qrw-deployment-status')).toContainText('Step 8 · Deploy and replay');
+  await page.getByText('Deployment details and fleet controls',{exact:true}).click();
+  await expect(page.getByRole('list',{name:'Deployment and replay checklist'})).toContainText('Published bundle available');
   await page.getByRole('button',{name:'Propose to all eligible clients'}).click();
   await expect.poll(()=>mock.qrwRolloutRequests).toHaveLength(1);
   expect(mock.qrwRolloutRequests[0]).toEqual({target_mode:'all_eligible',origin_node_id:'node-1',node_ids:[],bundle_hash:checksum});
+  await page.getByText('Deployment details and fleet controls',{exact:true}).click();
   const rolloutRow=page.locator('#page tr').filter({hasText:'qrw-rollout-1'});
   await expect(rolloutRow).toContainText('all_eligible · 2 client(s)');
   await expect(rolloutRow.getByRole('button',{name:'Administrator approve exact bundle'})).toBeEnabled();
@@ -957,7 +973,7 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   await expect(page.locator('.qrw-next-action')).toContainText('Verify the origin client acknowledgement');
   await page.locator('.qrw-next-action').getByRole('button',{name:/Verify origin acknowledgement/}).click();
   await expect.poll(()=>mock.qrwSyncVerifications).toHaveLength(1);
-  expect(mock.qrwSyncVerifications[0]).toEqual({asset_class:'parser',asset_id:'qr-candidate'});
+  expect(mock.qrwSyncVerifications[0]).toEqual({bundle_hash:checksum,node_ids:['node-1']});
   await page.getByTestId('nav-quarantine-wizard').click();
   await expect(lifecycle).toContainText('2/2 clients acknowledged');
   await expect(page.locator('[data-gprs-record="q-1"]').locator('xpath=ancestor::tr/following-sibling::tr[1]')).toContainText('Exact published bundle acknowledged by this client');
@@ -1010,22 +1026,22 @@ test('QRW restores saved candidate validation before rendering review after a br
   await expect(candidate.getByRole('button',{name:'Publish',exact:true})).toBeVisible();
 });
 
-test('QRW targets the origin when other clients have a rollout and blocks replay without the current bundle hash', async ({ page }) => {
+test('QRW retries the drifted origin after a completed rollout and blocks replay without the current bundle hash', async ({ page }) => {
   const hash='a'.repeat(64);
-  await mockController(page,{
+  const mock=await mockController(page,{
     qrwParsers:[{id:'origin-parser',revision:2,state:'published',payload:{source_quarantine_record_id:'q-1',artifact_checksum:hash,validation_passed:true,activated:true}}],
     qrwRecords:[{id:'q-1',node_id:'node-1',status:'waiting',raw_available:true,attempt_count:0}],
-    qrwSyncAssets:[{asset_class:'parser',asset_id:'origin-parser',desired:{sha256:hash},clients:[{node_id:'node-1',desired_hash:hash,applied_hash:'b'.repeat(64),drifted:true,status:'online'}]}],
-    rolloutSeed:[{id:'other-client',state:'approved',payload:{type:'parser_sync',bundle_hash:hash,target_mode:'all_eligible',target_nodes:['node-2']}}]
+    qrwSyncAssets:[{asset_class:'parser',asset_id:'origin-parser',desired:{sha256:hash},clients:[{node_id:'node-1',desired_hash:hash,applied_hash:hash,drifted:true,status:'online'}]}],
+    rolloutSeed:[{id:'other-client',state:'approved',payload:{type:'parser_sync',bundle_hash:hash,target_mode:'all_eligible',target_nodes:['node-2']}},{id:'completed-origin',state:'active',payload:{type:'parser_sync',bundle_hash:hash,target_mode:'origin',target_nodes:['node-1'],live_rollout_id:'done-job'}}]
   });
+  await page.route('**/api/v1/rollouts',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({proposals:mock.rolloutProposals,live:[{id:'done-job',type:'parser_sync',status:'completed'}]})}));
   await login(page);
   await page.getByTestId('nav-quarantine-wizard').click();
   await page.getByRole('button',{name:'Inspect',exact:true}).click();
   await page.getByTestId('nav-quarantine-wizard').click();
   await expect(page.locator('.qrw-next-action')).toContainText('Create the origin-client rollout proposal');
   await page.locator('[data-wizard-step="8"] button').click();
-  await expect(page.getByRole('button',{name:'Propose to origin client',exact:true})).toBeEnabled();
-  await expect(page.getByRole('button',{name:/Refresh origin acknowledgement/})).toBeVisible();
+  await expect(page.getByRole('button',{name:/Deploy to origin client/})).toBeEnabled();
   await page.route('**/api/v1/parser-sync',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({assets:[{asset_class:'parser',asset_id:'origin-parser'}],clients:[{node_id:'node-1',desired_hash:hash,applied_hash:hash,drifted:false}]})}));
   await page.getByTestId('nav-quarantine-wizard').click();
   await expect(page.getByRole('button',{name:/Request targeted replay/})).toBeDisabled();
@@ -1050,24 +1066,22 @@ test('Assurance repair keeps deployment, approval, retry, replay and refresh ins
   };
   await studio.getByRole('button',{name:'Inspect',exact:true}).click();
   await studio.locator('[data-wizard-step="8"] button').click();
-  await studio.getByRole('button',{name:'Propose to origin client',exact:true}).click();
+  await studio.getByRole('button',{name:/Deploy to origin client/}).click();
   await expect.poll(()=>mock.qrwRolloutRequests).toHaveLength(1);
   await expectStudio();
+  await studio.getByText('Deployment details and fleet controls',{exact:true}).click();
   await studio.locator('tr').filter({hasText:'qrw-rollout-1'}).locator('[data-action="rollout-cancel"]').click();
   await expectStudio();
   await expect.poll(()=>mock.rolloutProposals[0].state).toBe('cancelled');
-  await studio.getByRole('button',{name:'Propose to origin client',exact:true}).click();
+  await studio.getByRole('button',{name:/Deploy to origin client/}).click();
   await expect.poll(()=>mock.qrwRolloutRequests).toHaveLength(2);
   await expectStudio();
-  const rolloutRow=studio.locator('tr').filter({hasText:'qrw-rollout-2'});
+  const rolloutRow=studio.locator('.qrw-next-action');
   await rolloutRow.locator('[data-rollout-reason]').fill('Administrator reviewed this exact studio deployment');
   await rolloutRow.locator('[data-action="rollout-approve"]').click();
   await expect.poll(()=>mock.rolloutApprovalRequests).toHaveLength(1);
   await expectStudio();
-  await studio.getByRole('button',{name:'Create retry proposal',exact:true}).click();
-  await expect.poll(()=>mock.observed.includes('POST /api/v1/parser-sync/retry')).toBe(true);
-  await expectStudio();
-  await studio.getByRole('button',{name:/Refresh origin acknowledgement/}).click();
+  await studio.locator('.qrw-next-action').getByRole('button',{name:/Verify origin acknowledgement/}).click();
   await expect.poll(()=>mock.qrwSyncVerifications).toHaveLength(1);
   await expectStudio();
   const replay=studio.locator('#gprs-replay-form');

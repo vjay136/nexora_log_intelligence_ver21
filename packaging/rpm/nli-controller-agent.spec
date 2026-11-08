@@ -1,9 +1,9 @@
-%{!?nli_version:%global nli_version 22.0.0}
-%{!?nli_release:%global nli_release 2}
+%{!?nli_version:%global nli_version 22.1.0}
+%{!?nli_release:%global nli_release 0}
 Name:           nli-controller-agent
 Version:        %{nli_version}
 Release:        %{nli_release}%{?dist}
-Summary:        Nexora Log Intelligence Ver21 controller and Web console
+Summary:        Nexora Log Intelligence Ver22 controller and Web console
 License:        LicenseRef-Proprietary
 URL:            https://github.com/vjay136/nexora_log_intelligence_ver21.git
 Source0:        %{name}-%{version}.tar.gz
@@ -44,7 +44,7 @@ cp -a web/. %{buildroot}%{_datadir}/nli/webview_ver21/
 find %{buildroot}%{_datadir}/nli/webview_ver21 -type d -exec chmod 0755 {} +
 find %{buildroot}%{_datadir}/nli/webview_ver21 -type f -exec chmod 0644 {} +
 install -m 0644 README.md %{buildroot}%{_docdir}/%{name}/README.md
-install -m 0644 All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
+install -m 0644 V22_1_RELEASE_NOTES.md All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md %{buildroot}%{_docdir}/%{name}/
 install -m 0644 metrics/README.md metrics/metric-catalog.json metrics/prometheus-scrape.yml metrics/grafana-dashboard.json %{buildroot}%{_datadir}/nli/metrics/
 
 %pre
@@ -132,8 +132,12 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %doc %{_docdir}/%{name}/V21_R10_MANAGER_DEMO.md
 %doc %{_docdir}/%{name}/nli-output-audit.py
 %doc %{_docdir}/%{name}/VER21_IMPLEMENTATION_PLAN.md
+%doc %{_docdir}/%{name}/V22_1_RELEASE_NOTES.md
 
 %changelog
+* Sun Nov 08 2026 Nexora Engineering <engineering@nexora.local> - 22.1.0-0
+- Qualify Ver22.1 runtime and fleet operations.
+
 * Sat Nov 07 2026 Nexora Engineering <engineering@nexora.local> - 21.0.0-10
 - Add KV Intelligence Engine authoring and release evidence.
 

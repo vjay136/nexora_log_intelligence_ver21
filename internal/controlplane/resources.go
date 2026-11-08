@@ -486,6 +486,19 @@ func (s *Server) handleConfiguration(w http.ResponseWriter, r *http.Request, col
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if collection == "known-keys" {
+			active, err := s.listParserSyncDocuments(r.Context(), collection, "active", parserSyncTargetLimit)
+			if err != nil {
+				jsonError(w, "active known key catalog could not be checked", http.StatusServiceUnavailable)
+				return
+			}
+			for _, document := range active {
+				if document.ID == safeID(input.ID) && !document.Deleted {
+					jsonError(w, "copy this active definition into a new draft ID before editing", http.StatusConflict)
+					return
+				}
+			}
+		}
 		payload, _ := json.Marshal(map[string]any{"name": input.Name, "config": input.Config})
 		saved, err := s.metadata.Put(r.Context(), metastore.Document{Collection: collection, ID: safeID(input.ID), State: "draft", Payload: payload, CreatedBy: principal.Username})
 		if err != nil {
@@ -530,14 +543,14 @@ func (s *Server) handleConfigurationResource(w http.ResponseWriter, r *http.Requ
 	if len(parts) > 2 {
 		action = parts[2]
 	}
-	if len(parts) > 3 || (action != "" && action != "download" && action != "submit" && action != "approve" && action != "publish" && action != "rollout") {
+	if len(parts) > 3 || (action != "" && action != "download" && action != "submit" && action != "approve" && action != "publish" && action != "rollout" && !(action == "revoke" && collection == "known-keys")) {
 		jsonError(w, "unknown configuration asset action", http.StatusNotFound)
 		return
 	}
 	permission := middleware.PermissionReadParsers
 	if action == "approve" {
 		permission = middleware.PermissionReviewParsers
-	} else if action == "publish" {
+	} else if action == "publish" || action == "revoke" {
 		permission = middleware.PermissionTriggerRollout
 	} else if action == "rollout" {
 		permission = middleware.PermissionReadFleet
@@ -1379,6 +1392,10 @@ func (s *Server) handleRollouts(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "invalid rollout proposal", http.StatusBadRequest)
 			return
 		}
+		if proposal["input_path_profile"] != nil {
+			jsonError(w, "use the input path profile rollout endpoint", http.StatusBadRequest)
+			return
+		}
 		s.createRolloutProposal(w, r, principal, proposal)
 	default:
 		jsonError(w, "GET or POST required", http.StatusMethodNotAllowed)
@@ -1387,10 +1404,35 @@ func (s *Server) handleRollouts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createRolloutProposal(w http.ResponseWriter, r *http.Request, principal *middleware.SecurityContext, proposal map[string]any) {
 	name := strings.TrimSpace(fmt.Sprint(proposal["name"]))
 	kind := fmt.Sprint(proposal["type"])
-	allowed := map[string]bool{rolloutTypeConfigPush: true, rolloutTypePackageUpdate: true, rolloutTypeParserSync: true, rolloutTypeRestart: true, rolloutTypeReplay: true}
+	allowed := map[string]bool{rolloutTypeConfigPush: true, rolloutTypePackageUpdate: true, rolloutTypeParserSync: true, rolloutTypeRestart: true, rolloutTypeReplay: true, protocol.ManagedInputFileCommand: true}
 	if name == "" || !allowed[kind] {
 		jsonError(w, "valid rollout name and type are required", http.StatusBadRequest)
 		return
+	}
+	if kind == protocol.ManagedInputFileCommand {
+		var action protocol.ManagedInputFileRequest
+		targets := interfaceStrings(proposal["target_nodes"])
+		if json.Unmarshal(mustJSON(proposal["payload"]), &action) != nil || len(targets) == 0 || len(targets) > maxInputPathRolloutTargets {
+			jsonError(w, "managed file operation requires an action and 1–4096 explicit target clients", http.StatusBadRequest)
+			return
+		}
+		if err := action.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		for _, target := range targets {
+			node, ok := s.fleet.Get(target)
+			if !ok || !supportsManagedInputFiles(node.Version) {
+				jsonError(w, "managed file operations require a Ver22.1 or newer client: "+target, http.StatusConflict)
+				return
+			}
+		}
+		proposal["payload"] = action
+		if action.Action == "delete" {
+			proposal["name"] = "Delete managed log file " + action.Source
+		} else {
+			proposal["name"] = "Copy managed log file " + action.Source + " to " + action.Destination
+		}
 	}
 	proposal["status"] = "pending_approval"
 	proposal["created_by"] = principal.Username
@@ -1516,17 +1558,20 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 			}
 		}
 	}
+	requiresKVEdits := parserBundle != nil && parserBundleRequiresKVEdits(*parserBundle)
 	targets := interfaceStrings(proposal["target_nodes"])
 	if len(targets) == 0 {
 		for _, node := range s.fleet.All() {
-			if node.Status != fleet.StatusOffline {
+			if node.Status != fleet.StatusOffline && (!requiresKVEdits || parserClientSupportsKVEdits(node.Version)) {
 				targets = append(targets, node.ID)
 			}
 		}
 	}
 	inputProfile, _ := proposal["input_path_profile"].(map[string]any)
 	targetLimit := 1000
-	if inputProfile != nil && proposal["type"] == rolloutTypeConfigPush {
+	inputPathRollout := inputProfile != nil && proposal["type"] == rolloutTypeConfigPush
+	allowOffline := inputPathRollout || proposal["type"] == rolloutTypeRestart || proposal["type"] == protocol.ManagedInputFileCommand
+	if allowOffline {
 		targetLimit = maxInputPathRolloutTargets
 	}
 	if len(targets) > targetLimit {
@@ -1536,12 +1581,20 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 	seenTargets := map[string]bool{}
 	for _, target := range targets {
 		node, ok := s.fleet.Get(target)
-		if !ok || node == nil || node.Status == fleet.StatusOffline || seenTargets[target] {
+		if !ok || node == nil || (!allowOffline && node.Status == fleet.StatusOffline) || seenTargets[target] {
 			jsonError(w, "rollout contains a missing, offline, or duplicate target", http.StatusConflict)
+			return
+		}
+		if requiresKVEdits && !parserClientSupportsKVEdits(node.Version) {
+			jsonError(w, "KV field edits require v22.1.0-0 on client "+target, http.StatusConflict)
 			return
 		}
 		if inputProfile["requires_ver22"] == true && !inputPathClientSupportsV22(node.Version) {
 			jsonError(w, "disabled paths and empty profiles require a Ver22 client: "+target, http.StatusConflict)
+			return
+		}
+		if proposal["type"] == protocol.ManagedInputFileCommand && !supportsManagedInputFiles(node.Version) {
+			jsonError(w, "managed file operations require a Ver22.1 or newer client: "+target, http.StatusConflict)
 			return
 		}
 		seenTargets[target] = true
@@ -1618,7 +1671,8 @@ func (s *Server) cancelRollout(w http.ResponseWriter, r *http.Request, id string
 func (s *Server) updateSyncFromHeartbeat(request protocol.HeartbeatRequest) {
 	s.fleetSyncMu.Lock()
 	defer s.fleetSyncMu.Unlock()
-	doc, err := s.metadata.Get(context.Background(), "fleet-sync", request.NodeID, 0)
+	id := safeID(request.NodeID)
+	doc, err := s.metadata.Get(context.Background(), "fleet-sync", id, 0)
 	state := map[string]any{"node_id": request.NodeID}
 	creator := "node:" + request.NodeID
 	if err == nil {
@@ -1626,15 +1680,23 @@ func (s *Server) updateSyncFromHeartbeat(request protocol.HeartbeatRequest) {
 		creator = doc.CreatedBy
 	}
 	state["active_config_hash"] = request.ConfigHash
+	delete(state, "input_inventory")
+	if validInputInventory(request.InputInventory) {
+		state["input_inventory"] = request.InputInventory
+	}
+	delete(state, "agent_status")
+	if request.AgentStatus == "metrics_reporting" || request.AgentStatus == "metrics_unavailable" {
+		state["agent_status"] = request.AgentStatus
+	}
 	state["active_asset_bundle_hash"] = request.ActiveAssetBundleHash
 	state["active_asset_revisions"] = request.ActiveAssetRevisions
 	if validRuntimeInventory(request.RuntimeInventory) {
 		state["runtime_inventory"] = request.RuntimeInventory
 	}
 	state["last_seen"] = time.Now().UTC()
-	desired := fmt.Sprint(state["desired_config_hash"])
+	desired, _ := state["desired_config_hash"].(string)
 	state["drifted"] = desired != "" && desired != request.ConfigHash
-	desiredAssetHash := fmt.Sprint(state["desired_asset_bundle_hash"])
+	desiredAssetHash, _ := state["desired_asset_bundle_hash"].(string)
 	state["asset_drifted"] = desiredAssetHash != "" && desiredAssetHash != request.ActiveAssetBundleHash
 	if desiredAssetHash != "" {
 		if desiredAssetHash == request.ActiveAssetBundleHash {
@@ -1645,14 +1707,23 @@ func (s *Server) updateSyncFromHeartbeat(request protocol.HeartbeatRequest) {
 		}
 	}
 	if request.RuntimeInventory != nil {
-		if current, err := s.buildActiveParserBundle(context.Background()); err == nil && request.ActiveAssetBundleHash == current.BundleHash && !runtimeInventoryMatchesBundle(request.RuntimeInventory, current) {
-			state["asset_sync_status"] = "drifted"
-			state["asset_drifted"] = true
-			state["asset_sync_error"] = "client parser files differ from the acknowledged bundle; retry the current parser rollout"
+		if current, err := s.buildActiveParserBundle(context.Background()); err == nil && request.ActiveAssetBundleHash == current.BundleHash {
+			switch {
+			case !runtimeInventoryMatchesBundle(request.RuntimeInventory, current):
+				state["asset_sync_status"] = "drifted"
+				state["asset_drifted"] = true
+				state["asset_sync_error"] = "client parser files differ from the acknowledged bundle; retry the current parser rollout"
+			case desiredAssetHash == "" && s.rollouts.hasCompletedParserDelivery(request.NodeID, current.BundleHash):
+				state["desired_asset_bundle_hash"] = current.BundleHash
+				state["desired_asset_revisions"] = bundleRevisionMap(current)
+				state["asset_sync_status"] = "applied"
+				state["asset_drifted"] = false
+				state["asset_sync_error"] = ""
+			}
 		}
 	}
 	payload, _ := json.Marshal(state)
-	_, _ = s.metadata.Put(context.Background(), metastore.Document{Collection: "fleet-sync", ID: safeID(request.NodeID), State: "reported", Payload: payload, CreatedBy: creator})
+	_, _ = s.metadata.Put(context.Background(), metastore.Document{Collection: "fleet-sync", ID: id, State: "reported", Payload: payload, CreatedBy: creator})
 }
 func (s *Server) handleNodeState(w http.ResponseWriter, r *http.Request) {
 	s.fleetSyncMu.Lock()
@@ -1696,7 +1767,11 @@ func (s *Server) handleFleetSync(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "GET required", http.StatusMethodNotAllowed)
 		return
 	}
-	documents, _ := s.metadata.List(r.Context(), "fleet-sync", metastore.Query{Limit: 1000})
+	documents, err := s.listParserSyncDocuments(r.Context(), "fleet-sync", "", parserSyncTargetLimit)
+	if err != nil {
+		jsonError(w, "fleet reconciliation status unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	byID := map[string]any{}
 	for _, doc := range documents {
 		var state map[string]any
@@ -1713,6 +1788,7 @@ func (s *Server) handleFleetSync(w http.ResponseWriter, r *http.Request) {
 		for key, value := range inputStates[node.ID] {
 			state[key] = value
 		}
+		checkInputPathAcknowledgement(state, node)
 		out = append(out, map[string]any{"node": node, "sync": state})
 	}
 	jsonOK(w, map[string]any{"nodes": out, "count": len(out)})

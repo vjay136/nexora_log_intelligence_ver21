@@ -18,13 +18,13 @@ if grep -RInE "$bad_archive_pattern" "$ROOT/packaging" "$ROOT/scripts/release" "
 fi
 while IFS= read -r -d '' script; do bash -n "$script"; done < <(find "$ROOT/packaging" "$ROOT/scripts/release" "$ROOT/tests" -type f -name '*.sh' -print0)
 bash -n "$ROOT/scripts/setup-controller-rocky.sh" "$ROOT/scripts/setup-client-rocky.sh" "$ROOT/scripts/setup-supabase-rocky.sh" "$ROOT/scripts/reset-admin-rocky.sh" \
-  "$ROOT/scripts/install-controller-ver21.sh" "$ROOT/scripts/install-client-ver21.sh" \
-  "$ROOT/scripts/install-controller-aws-ver21.sh" "$ROOT/scripts/install-client-aws-ver21.sh" \
-  "$ROOT/scripts/install-controller-aws-cloudflare-ver21.sh" "$ROOT/scripts/aws-rhel-preflight-ver21.sh" \
-  "$ROOT/scripts/aws-security-group-plan-ver21.sh" "$ROOT/scripts/setup-cloudflare-tunnel-v21.sh" \
-  "$ROOT/scripts/verify-cloudflare-tunnel-v21.sh" "$ROOT/scripts/uninstall-cloudflare-tunnel-v21.sh" \
-  "$ROOT/scripts/cloudflare-quick-diagnosis-v21.sh" \
-  "$ROOT/scripts/uninstall-controller-ver21.sh" "$ROOT/scripts/uninstall-client-ver21.sh"
+  "$ROOT/scripts/install-controller-ver22.sh" "$ROOT/scripts/install-client-ver22.sh" \
+  "$ROOT/scripts/install-controller-aws-ver22.sh" "$ROOT/scripts/install-client-aws-ver22.sh" \
+  "$ROOT/scripts/install-controller-aws-cloudflare-ver22.sh" "$ROOT/scripts/aws-rhel-preflight-ver22.sh" \
+  "$ROOT/scripts/aws-security-group-plan-ver22.sh" "$ROOT/scripts/setup-cloudflare-tunnel-v22.sh" \
+  "$ROOT/scripts/verify-cloudflare-tunnel-v22.sh" "$ROOT/scripts/uninstall-cloudflare-tunnel-v22.sh" \
+  "$ROOT/scripts/cloudflare-quick-diagnosis-v22.sh" \
+  "$ROOT/scripts/uninstall-controller-ver22.sh" "$ROOT/scripts/uninstall-client-ver22.sh"
 for exposure in '3) Public DNS + Nginx + ACME certificate' '4) Cloudflare Tunnel token' '5) Operator-managed reverse proxy' '6) Corporate PKI certificate + direct HTTPS' '7) Offline private TLS (generated private CA' '8) Auto-detect a trusted server certificate/key' '9) Public DNS + Apache HTTP Server + ACME certificate' '10) Temporary Cloudflare Quick Tunnel'; do
   grep -Fq "$exposure" "$ROOT/scripts/setup-controller-rocky.sh" || { echo "controller setup exposure option missing: $exposure" >&2; exit 1; }
 done
@@ -44,17 +44,17 @@ python3 "$ROOT/tests/release/output_audit_test.py"
 python3 "$ROOT/tests/release/design_engine_packaging_test.py" "$ROOT"
 python3 "$ROOT/tests/release/controller_edge_selinux_test.py" "$ROOT"
 python3 "$ROOT/tests/release/aws_install_contract_test.py" "$ROOT"
-node --test "$ROOT/tests/cloudflare-tunnel-ver21.test.js" "$ROOT/tests/aws-cloudflare-orchestrator-ver21.test.js" "$ROOT/tests/vercel-preflight.test.js"
-for operator_script in install-controller-ver21.sh install-client-ver21.sh uninstall-controller-ver21.sh uninstall-client-ver21.sh; do
+node --test "$ROOT/tests/cloudflare-tunnel-ver22.test.js" "$ROOT/tests/aws-cloudflare-orchestrator-ver22.test.js" "$ROOT/tests/vercel-preflight.test.js"
+for operator_script in install-controller-ver22.sh install-client-ver22.sh uninstall-controller-ver22.sh uninstall-client-ver22.sh; do
   bash "$ROOT/scripts/$operator_script" --help | grep -Fq 'Usage:' || { echo "operator help failed: $operator_script" >&2; exit 1; }
 done
-grep -Fq "Log file path(s)" "$ROOT/scripts/install-client-ver21.sh" || { echo 'client installer does not collect real log paths' >&2; exit 1; }
-grep -Fq 'Select one or more destinations using commas' "$ROOT/scripts/install-client-ver21.sh" || { echo 'client installer does not support simultaneous destinations' >&2; exit 1; }
+grep -Fq "Log file path(s)" "$ROOT/scripts/install-client-ver22.sh" || { echo 'client installer does not collect real log paths' >&2; exit 1; }
+grep -Fq 'Select one or more destinations using commas' "$ROOT/scripts/install-client-ver22.sh" || { echo 'client installer does not support simultaneous destinations' >&2; exit 1; }
 for destination in file loki clickhouse; do
-  grep -Fq '"type": "'"$destination"'"' "$ROOT/scripts/install-client-ver21.sh" || { echo "client installer destination missing: $destination" >&2; exit 1; }
+  grep -Fq '"type": "'"$destination"'"' "$ROOT/scripts/install-client-ver22.sh" || { echo "client installer destination missing: $destination" >&2; exit 1; }
 done
-grep -Fq '"type": "telemetry"' "$ROOT/scripts/install-client-ver21.sh" || { echo 'client installer does not configure protected controller telemetry' >&2; exit 1; }
-! grep -Fq '"type": "controller"' "$ROOT/scripts/install-client-ver21.sh" || { echo 'client installer still exposes the legacy raw-event controller destination' >&2; exit 1; }
+grep -Fq '"type": "telemetry"' "$ROOT/scripts/install-client-ver22.sh" || { echo 'client installer does not configure protected controller telemetry' >&2; exit 1; }
+! grep -Fq '"type": "controller"' "$ROOT/scripts/install-client-ver22.sh" || { echo 'client installer still exposes the legacy raw-event controller destination' >&2; exit 1; }
 grep -Fq 'NLI_ADMIN_PASSWORD is required' "$ROOT/web/e2e.spec.js" || { echo 'WebView E2E must require an explicit password' >&2; exit 1; }
 ! grep -Fq 'Browser-admin-password-12345!' "$ROOT/web/e2e.spec.js" || { echo 'WebView E2E contains a fallback password' >&2; exit 1; }
 python3 - "$ROOT/scripts/setup-client-rocky.sh" <<'PY'

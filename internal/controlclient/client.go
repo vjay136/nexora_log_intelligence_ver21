@@ -405,6 +405,28 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		NodeID: c.nodeID, CommandID: command.ID, Status: rollout.StatusCompleted,
 		StartedAt: time.Now().UTC(),
 	}
+	if command.Type == protocol.ManagedInputFileCommand {
+		// A crash between changing the file and recording its result must not
+		// repeat a delete against a file recreated under the same name.
+		intent := result
+		intent.Status = rollout.StatusFailed
+		intent.FinishedAt = result.StartedAt
+		intent.Message = "Managed file operation was interrupted; inspect the client file inventory before retrying."
+		c.journal[command.ID] = intent
+		if err := c.saveJournal(); err != nil {
+			delete(c.journal, command.ID)
+			return err
+		}
+		dir, err := os.Open(filepath.Dir(c.cfg.JournalFile))
+		if err != nil {
+			return err
+		}
+		err = dir.Sync()
+		_ = dir.Close()
+		if err != nil {
+			return err
+		}
+	}
 	message, applyErr := c.apply(ctx, command)
 	result.FinishedAt = time.Now().UTC()
 	result.Message = message
@@ -551,13 +573,65 @@ func (c *Client) EnsureEnrollment(ctx context.Context) error {
 
 func (c *Client) heartbeat(ctx context.Context) error {
 	parsers := parserInventory(c.cfg.ParserDir)
-	metrics := readMetrics(c.cfg.MetricsURL)
+	metrics, metricsReachable := readMetricsStatus(c.cfg.MetricsURL)
+	agentStatus := "metrics_unavailable"
+	if metricsReachable {
+		agentStatus = "metrics_reporting"
+	}
+	configHash, inputs := inputRuntimeInventory(c.cfg.AgentConfigPath)
 	bundleHash, assetRevisions := activeAssetBundleStatus(filepath.Join(c.cfg.AssetDir, "bundle.json"))
 	request := protocol.HeartbeatRequest{
-		NodeID: c.nodeID, Version: engine.Version, ConfigHash: fileSHA256(c.cfg.AgentConfigPath),
+		NodeID: c.nodeID, Version: engine.Version, ConfigHash: configHash, InputInventory: inputs, AgentStatus: agentStatus,
 		RuntimeInventory: c.runtimeParserInventory(), Metrics: metrics, Health: "online", Parsers: parsers, ActiveAssetBundleHash: bundleHash, ActiveAssetRevisions: assetRevisions,
 	}
 	return c.requestJSON(ctx, http.MethodPost, "/api/v1/node/heartbeat", request, nil, nil)
+}
+
+func inputRuntimeInventory(path string) (string, *protocol.InputRuntimeInventory) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", nil
+	}
+	defer file.Close()
+	const configLimit = 1 << 20
+	data, err := io.ReadAll(io.LimitReader(file, configLimit+1))
+	if err != nil || len(data) > configLimit {
+		return fileSHA256(path), nil
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(data))
+	var config struct {
+		Inputs []agent.InputConfig `json:"inputs"`
+	}
+	if json.Unmarshal(data, &config) != nil || len(path) > 4096 {
+		return digest, nil
+	}
+	result := &protocol.InputRuntimeInventory{
+		ConfigPath: path, Inputs: []protocol.InputRuntimeFile{},
+	}
+	if files, ok := listManagedInputFiles(protocol.ManagedInputDirectory); ok {
+		result.ManagedFiles = &files
+	}
+	budget := 64 << 10
+	for _, input := range config.Inputs {
+		budget -= len(input.Path) + len(input.Service) + 128
+		if len(result.Inputs) >= 256 || budget < 0 || len(input.Path) > 4096 || len(input.Service) > 256 {
+			result.Truncated = true
+			break
+		}
+		state := "unavailable"
+		if strings.ContainsAny(input.Path, "*?[") {
+			state = "pattern"
+		} else if info, err := os.Stat(input.Path); os.IsNotExist(err) {
+			state = "missing"
+		} else if err == nil {
+			state = "other"
+			if info.Mode().IsRegular() {
+				state = "present"
+			}
+		}
+		result.Inputs = append(result.Inputs, protocol.InputRuntimeFile{Path: input.Path, Service: input.Service, Disabled: input.Disabled, State: state})
+	}
+	return digest, result
 }
 
 func (c *Client) sendStreamTelemetry(ctx context.Context) error {
@@ -644,7 +718,9 @@ func (c *Client) apply(ctx context.Context, command *protocol.Command) (string, 
 	case rollout.TypeParserSync:
 		return c.applyParsers(ctx, command.Payload)
 	case rollout.TypeRestart:
-		return "nli-agent restarted", c.executor.RestartAgent(ctx)
+		return "nli-agent restarted", c.restartAndVerifyAgent(ctx)
+	case protocol.ManagedInputFileCommand:
+		return c.applyManagedInputFile(command.Payload)
 	case rollout.TypeReplay:
 		var request struct {
 			RecordIDs               []string `json:"record_ids"`
@@ -712,9 +788,14 @@ func (c *Client) applyConfig(ctx context.Context, payload json.RawMessage) (stri
 	if err := backupAndWrite(c.cfg.AgentConfigPath, configBytes, 0640); err != nil {
 		return "", err
 	}
-	if err := c.executor.RestartAgent(ctx); err != nil {
-		_ = restoreBackup(c.cfg.AgentConfigPath)
-		return "", fmt.Errorf("restart failed; config restored: %w", err)
+	if err := c.restartAndVerifyAgent(ctx); err != nil {
+		if restoreErr := restoreBackup(c.cfg.AgentConfigPath); restoreErr != nil {
+			return "", fmt.Errorf("apply configuration: %w; restore previous config: %v", err, restoreErr)
+		}
+		if restartErr := c.restartAndVerifyAgent(ctx); restartErr != nil {
+			return "", fmt.Errorf("apply configuration: %w; restart previous config: %v", err, restartErr)
+		}
+		return "", fmt.Errorf("agent failed readiness; previous config restored: %w", err)
 	}
 	return "configuration validated, applied, and agent restarted", nil
 }
@@ -1412,16 +1493,24 @@ func (c *Client) saveJournal() error {
 }
 
 func readMetrics(endpoint string) protocol.Metrics {
+	metrics, _ := readMetricsStatus(endpoint)
+	return metrics
+}
+
+func readMetricsStatus(endpoint string) (protocol.Metrics, bool) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(endpoint)
 	if err != nil {
-		return protocol.Metrics{}
+		return protocol.Metrics{}, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return protocol.Metrics{}
+		return protocol.Metrics{}, false
 	}
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return protocol.Metrics{}, false
+	}
 	metrics := protocol.Metrics{}
 	var upesMetricsSeen uint8
 	for _, line := range strings.Split(string(data), "\n") {
@@ -1482,7 +1571,7 @@ func readMetrics(endpoint string) protocol.Metrics {
 		metrics.Load1, metrics.Load5, metrics.Load15 = host.load1, host.load5, host.load15
 		metrics.HostMetricsAvailable = true
 	}
-	return metrics
+	return metrics, true
 }
 
 func parseMetricUint(line, name string) (uint64, bool) {

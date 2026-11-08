@@ -111,6 +111,22 @@ func compileExtended(cf *compiledField, seen map[string]bool) error {
 	if f.KeyOptions, err = cloneKeys(f.KeyOptions); err != nil {
 		return err
 	}
+	if len(f.KeyValueEdits) > 0 {
+		if f.Method != "kv_all" || len(f.KeyValueEdits) > MaxFields {
+			return fmt.Errorf("key value edits require kv_all and must fit the field limit")
+		}
+		edited := make(map[string]bool, len(f.KeyValueEdits))
+		for _, edit := range f.KeyValueEdits {
+			if strings.TrimSpace(edit.Key) != edit.Key || len(edit.Key) == 0 || len(edit.Key) > 128 || edited[edit.Key] {
+				return fmt.Errorf("key value edits require distinct nonempty output key names")
+			}
+			if !contains([]string{"omit", "blank", "replace"}, edit.Action) || len(edit.Value) > 4096 || (edit.Action != "replace" && edit.Value != "") {
+				return fmt.Errorf("invalid key value edit for %q", edit.Key)
+			}
+			edited[edit.Key] = true
+		}
+		f.KeyValueEdits = append([]KeyValueEdit(nil), f.KeyValueEdits...)
+	}
 	if !contains([]string{"", "include", "omit", "intermediate", "flatten"}, f.OutputPolicy) || !contains([]string{"", "preserve", "missing", "null", "reject"}, f.EmptyPolicy) {
 		return fmt.Errorf("invalid output or empty policy")
 	}
@@ -463,6 +479,22 @@ func projectKeys(pairs map[string][]pair, f Field, e Evidence) (any, Evidence, b
 		out[f.KeyPrefix+key+f.KeySuffix] = v
 	}
 	return out, e, true, nil
+}
+
+func (f Field) editKeyValues(values map[string]any) {
+	for _, edit := range f.KeyValueEdits {
+		if _, found := values[edit.Key]; !found {
+			continue
+		}
+		switch edit.Action {
+		case "omit":
+			delete(values, edit.Key)
+		case "blank":
+			values[edit.Key] = ""
+		case "replace":
+			values[edit.Key] = edit.Value
+		}
+	}
 }
 
 func boundaries(text, method string, s Selection) (any, []Span, error) {

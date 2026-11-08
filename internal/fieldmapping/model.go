@@ -58,6 +58,12 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 	return json.Marshal(canonical)
 }
 
+type KeyValueEdit struct {
+	Key    string `json:"key"`
+	Action string `json:"action"`
+	Value  string `json:"value,omitempty"`
+}
+
 type Field struct {
 	Selection
 	KeyOptions
@@ -94,6 +100,7 @@ type Field struct {
 	KVKeyPattern     string             `json:"kv_key_pattern,omitempty"`
 	KVRejectEmpty    bool               `json:"kv_reject_empty,omitempty"`
 	KVNestedObjects  bool               `json:"kv_nested_objects,omitempty"`
+	KeyValueEdits    []KeyValueEdit     `json:"key_value_edits,omitempty"`
 	EndOfLine        bool               `json:"end_of_line,omitempty"`
 	EmptyPolicy      string             `json:"empty_policy,omitempty"`
 	CustomType       string             `json:"custom_type,omitempty"`
@@ -499,6 +506,9 @@ func (c *Compiled) execute(ctx context.Context, raw string, trace bool) (Result,
 			if omit {
 				continue
 			}
+		}
+		if values, ok := value.(map[string]any); ok && found {
+			f.field.editKeyValues(values)
 		}
 		omitField, operationsExecuted := false, 0
 		if trace {

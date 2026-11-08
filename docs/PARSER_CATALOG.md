@@ -1,4 +1,4 @@
-# NLI Ver21 client parser catalog
+# NLI Ver22 client parser catalog
 
 The client RPM bundles these eight reviewed ParserPacks in its parser catalog.
 The runtime embeds and enables all eight by default; selecting a family on an

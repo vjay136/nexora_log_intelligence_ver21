@@ -53,6 +53,28 @@ func TestInputPathSyncTracksLatestDesiredAndOnlySuccessfulApply(t *testing.T) {
 	}
 }
 
+func TestInputPathAcknowledgementTracksFreshClientConfig(t *testing.T) {
+	now := time.Now().UTC()
+	node := &fleet.Node{LastSeen: now.Add(-time.Second), ConfigHash: "old-config"}
+	state := map[string]any{"input_path_sync_status": "applied", "applied_input_config_hash": "new-config", "input_path_sync_updated_at": now}
+	checkInputPathAcknowledgement(state, node)
+	if state["input_path_sync_status"] != "awaiting_heartbeat" {
+		t.Fatalf("stale heartbeat accepted: %#v", state)
+	}
+	node.LastSeen = now.Add(time.Second)
+	state["input_path_sync_status"] = "applied"
+	checkInputPathAcknowledgement(state, node)
+	if state["input_path_sync_status"] != "config_changed" {
+		t.Fatalf("changed config not reported: %#v", state)
+	}
+	node.ConfigHash = "new-config"
+	state["input_path_sync_status"] = "applied"
+	checkInputPathAcknowledgement(state, node)
+	if state["input_path_sync_status"] != "applied" {
+		t.Fatalf("matching config was blocked: %#v", state)
+	}
+}
+
 func TestInputPathProfileAllows256AndRejects257Inputs(t *testing.T) {
 	inputs := make([]any, 256)
 	for i := range inputs {
@@ -226,5 +248,25 @@ func TestInputPathProfileRolloutSupportsExactOneAndExistingTargetModes(t *testin
 	response, data = f.request(http.MethodGet, "/api/v1/rollouts", nil)
 	if response.StatusCode != http.StatusOK || decodeMap(t, data)["pending_approval_count"] != float64(0) {
 		t.Fatalf("cancelled proposals remained pending: %d %s", response.StatusCode, data)
+	}
+
+	f.server.fleet.MarkStale(0)
+	response, data = f.request(http.MethodPost, "/api/v1/config/input-paths/mail-profile/rollout", map[string]any{"include_offline": true})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("offline-inclusive rollout %d: %s", response.StatusCode, data)
+	}
+	offlineProposal := decodeMap(t, data)
+	offlinePayload := offlineProposal["payload"].(map[string]any)
+	if len(offlinePayload["target_nodes"].([]any)) != 2 || offlinePayload["input_path_profile"].(map[string]any)["target_mode"] != "all_enrolled" {
+		t.Fatalf("offline nodes were omitted: %s", data)
+	}
+	f.login("path-reviewer", "Path-reviewer-password-12345!")
+	f.refreshCSRF()
+	response, data = f.request(http.MethodPost, "/api/v1/rollouts/"+offlineProposal["id"].(string)+"/approve", map[string]any{})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("offline-inclusive approval %d: %s", response.StatusCode, data)
+	}
+	if pending, ok := f.server.rollouts.NextForNode("path-node-2", time.Minute); !ok || pending.Type != rolloutTypeConfigPush {
+		t.Fatalf("no input config command remained queued for the offline client: %#v", pending)
 	}
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that the current Ver21 R10 release documents ship everywhere."""
+"""Verify that the Ver22.1 release documents ship everywhere."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ DOCUMENTS = {
 
 
 def fail(message: str) -> None:
-    raise SystemExit(f"Ver21 R10 release-doc packaging: FAIL: {message}")
+    raise SystemExit(f"Ver22.1 release-doc packaging: FAIL: {message}")
 
 
 def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
@@ -114,19 +114,19 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
                 fail(f"{relative} does not reference packaged artifact {name}")
 
     workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    for claim in ("NLI V22 release", "nli-v22-unsigned-release", "docs/V22_RELEASE_NOTES.md", "v21.0.0-10.1.1"):
+    for claim in ("NLI V22 release", "nli-v22-unsigned-release", "docs/V22_1_RELEASE_NOTES.md", "v22.0.0-2"):
         if claim not in workflow:
-            fail(f"release workflow does not identify the Ver22 workflow and Ver21 baseline: {claim!r}")
+            fail(f"release workflow does not identify the Ver22 workflow and Ver22 baseline: {claim!r}")
 
     release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-    if "NLI_VERSION=22.0.0" not in release_env or "NLI_RELEASE=2" not in release_env.splitlines():
-        fail("packaging release identity is not 22.0.0-2")
+    if "NLI_VERSION=22.1.0" not in release_env or "NLI_RELEASE=0" not in release_env.splitlines():
+        fail("packaging release identity is not 22.1.0-0")
 
     for relative in (
-        "README.md", "CHANGELOG.md", "docs/V21_R10_RELEASE_NOTES.md",
+        "README.md", "CHANGELOG.md", "docs/V22_1_RELEASE_NOTES.md",
         "packaging/rpm/nli-client.spec", "packaging/rpm/nli-controller-agent.spec",
     ):
-        if "21.0.0-10" not in (root / relative).read_text(encoding="utf-8"):
+        if "22.1.0-0" not in (root / relative).read_text(encoding="utf-8"):
             fail(f"{relative} does not identify the current release")
 
     # Historical source evidence remains available for compatibility and audit.
@@ -147,7 +147,7 @@ def main() -> None:
     parser.add_argument("--controller", required=True, type=Path)
     args = parser.parse_args()
     validate(args.root.resolve(), args.output.resolve(), args.client.resolve(), args.controller.resolve())
-    print("Ver21 R10 release-doc packaging: PASS")
+    print("Ver22.1 release-doc packaging: PASS")
 
 
 if __name__ == "__main__":

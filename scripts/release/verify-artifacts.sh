@@ -7,28 +7,28 @@ ROOT=${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 source "$ROOT/packaging/release.env"
 fail() { echo "artifact verification: $*" >&2; exit 1; }
 
-client="$ARTIFACT_DIR/nli_client_ver21.rpm"
-controller="$ARTIFACT_DIR/nli_controller_agent_ver21.rpm"
-web="$ARTIFACT_DIR/webview_ver21.zip"
-webapp="$ARTIFACT_DIR/webapp_ver21.zip"
+client="$ARTIFACT_DIR/nli_client_ver22.rpm"
+controller="$ARTIFACT_DIR/nli_controller_agent_ver22.rpm"
+web="$ARTIFACT_DIR/webview_ver22.zip"
+webapp="$ARTIFACT_DIR/webapp_ver22.zip"
 operator_files=(
-  "$ARTIFACT_DIR/install-controller-ver21.sh"
-  "$ARTIFACT_DIR/install-client-ver21.sh"
-  "$ARTIFACT_DIR/uninstall-controller-ver21.sh"
-  "$ARTIFACT_DIR/uninstall-client-ver21.sh"
+  "$ARTIFACT_DIR/install-controller-ver22.sh"
+  "$ARTIFACT_DIR/install-client-ver22.sh"
+  "$ARTIFACT_DIR/uninstall-controller-ver22.sh"
+  "$ARTIFACT_DIR/uninstall-client-ver22.sh"
 )
 aws_scripts=(
-  "$ARTIFACT_DIR/install-controller-aws-ver21.sh"
-  "$ARTIFACT_DIR/install-client-aws-ver21.sh"
-  "$ARTIFACT_DIR/install-controller-aws-cloudflare-ver21.sh"
-  "$ARTIFACT_DIR/aws-rhel-preflight-ver21.sh"
-  "$ARTIFACT_DIR/aws-security-group-plan-ver21.sh"
+  "$ARTIFACT_DIR/install-controller-aws-ver22.sh"
+  "$ARTIFACT_DIR/install-client-aws-ver22.sh"
+  "$ARTIFACT_DIR/install-controller-aws-cloudflare-ver22.sh"
+  "$ARTIFACT_DIR/aws-rhel-preflight-ver22.sh"
+  "$ARTIFACT_DIR/aws-security-group-plan-ver22.sh"
 )
 cloudflare_scripts=(
-  "$ARTIFACT_DIR/setup-cloudflare-tunnel-v21.sh"
-  "$ARTIFACT_DIR/verify-cloudflare-tunnel-v21.sh"
-  "$ARTIFACT_DIR/uninstall-cloudflare-tunnel-v21.sh"
-  "$ARTIFACT_DIR/cloudflare-quick-diagnosis-v21.sh"
+  "$ARTIFACT_DIR/setup-cloudflare-tunnel-v22.sh"
+  "$ARTIFACT_DIR/verify-cloudflare-tunnel-v22.sh"
+  "$ARTIFACT_DIR/uninstall-cloudflare-tunnel-v22.sh"
+  "$ARTIFACT_DIR/cloudflare-quick-diagnosis-v22.sh"
 )
 for file in "$webapp" "$client" "$controller" "$web" \
   "${aws_scripts[@]}" "${cloudflare_scripts[@]}" \
@@ -105,10 +105,10 @@ for rpm_file in "$client" "$controller"; do
 done
 
 # Exercise the exact operator path that previously rejected valid distro-suffixed
-# releases such as 2.el9. This verifies package identity, Ver21 version, release
+# releases such as 2.el9. This verifies package identity, Ver22 version, release
 # syntax, architecture, and the bundle checksum without changing the host.
-bash "$bundle_dir/install-controller-ver21.sh" --verify-only --rpm "$bundle_dir/nli_controller_agent_ver21.rpm"
-bash "$bundle_dir/install-client-ver21.sh" --verify-only --rpm "$bundle_dir/nli_client_ver21.rpm"
+bash "$bundle_dir/install-controller-ver22.sh" --verify-only --rpm "$bundle_dir/nli_controller_agent_ver22.rpm"
+bash "$bundle_dir/install-client-ver22.sh" --verify-only --rpm "$bundle_dir/nli_client_ver22.rpm"
 
 client_payload=$(rpm -qpl "$client")
 controller_payload=$(rpm -qpl "$controller")
@@ -136,7 +136,7 @@ for forbidden in e2e.spec.js package.json playwright.config.js; do
   ! grep -Fq "/usr/share/nli/webview_ver21/$forbidden" <<<"$controller_payload" || fail "controller RPM contains development-only asset $forbidden"
 done
 while read -r expected relative; do
-  zip_hash=$(unzip -p "$web" "webview_ver21/$relative" | sha256sum | awk '{print $1}')
+  zip_hash=$(unzip -p "$web" "webview_ver22/$relative" | sha256sum | awk '{print $1}')
   rpm_hash=$(rpm -qp --dump "$controller" | awk -v path="/usr/share/nli/webview_ver21/$relative" '$1==path {print $4}')
   [[ $expected == "$zip_hash" && $expected == "$rpm_hash" ]] || fail "WebView asset mismatch: $relative"
 done <"$ARTIFACT_DIR/WEBVIEW_SHA256SUMS"
@@ -181,7 +181,7 @@ assert_normalized_payload "$controller" /usr/sbin/nli-admin-reset "$ROOT/scripts
 assert_normalized_payload "$controller" /usr/lib/systemd/system/nli-controller-agent.service "$ROOT/packaging/systemd/nli-controller-agent.service"
 assert_normalized_payload "$controller" /usr/lib/systemd/system/nli-controller-bootstrap.service "$ROOT/packaging/systemd/nli-controller-bootstrap.service"
 
-for evidence in SHA256SUMS RELEASE_MANIFEST.json SBOM.spdx.json provenance.intoto.json SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS BENCHMARKS.txt INSTALLATION_AND_CONFIGURATION.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md SAMPLE_FIELD_ACCOUNTING.json RELEASE_ID; do
+for evidence in SHA256SUMS RELEASE_MANIFEST.json SBOM.spdx.json provenance.intoto.json SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS BENCHMARKS.txt INSTALLATION_AND_CONFIGURATION.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md V22_1_RELEASE_NOTES.md All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md SAMPLE_FIELD_ACCOUNTING.json RELEASE_ID; do
   [[ -s "$ARTIFACT_DIR/$evidence" ]] || fail "missing $evidence"
 done
 python3 - "$ARTIFACT_DIR/SAMPLE_FIELD_ACCOUNTING.json" <<'PY'

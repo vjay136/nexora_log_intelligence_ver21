@@ -11,6 +11,7 @@ import (
 
 	"nexora.local/nli-v20/internal/fleet"
 	"nexora.local/nli-v20/internal/middleware"
+	"nexora.local/nli-v20/internal/protocol"
 	metastore "nexora.local/nli-v20/internal/store"
 )
 
@@ -23,6 +24,16 @@ func inputPathRequiresV22(inputs []any) bool {
 		}
 	}
 	return len(inputs) == 0
+}
+
+func supportsManagedInputFiles(version string) bool {
+	parts := strings.Split(strings.TrimPrefix(version, "v"), ".")
+	if len(parts) < 2 {
+		return false
+	}
+	major, majorErr := strconv.Atoi(parts[0])
+	minor, minorErr := strconv.Atoi(parts[1])
+	return majorErr == nil && minorErr == nil && (major > 22 || major == 22 && minor >= 1)
 }
 
 func inputPathClientSupportsV22(version string) bool {
@@ -73,7 +84,8 @@ func (s *Server) handleInputPathProfileRollout(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var request struct {
-		NodeIDs []string `json:"node_ids"`
+		NodeIDs        []string `json:"node_ids"`
+		IncludeOffline bool     `json:"include_offline,omitempty"`
 	}
 	if err := decodeJSON(r, &request, 1<<20); err != nil || len(request.NodeIDs) > maxInputPathRolloutTargets {
 		jsonError(w, "invalid input path rollout request", http.StatusBadRequest)
@@ -107,8 +119,11 @@ func (s *Server) handleInputPathProfileRollout(w http.ResponseWriter, r *http.Re
 			targets = append(targets, nodeID)
 		}
 	} else {
+		if request.IncludeOffline {
+			mode = "all_enrolled"
+		}
 		for _, node := range s.fleet.All() {
-			if node.Status != fleet.StatusOffline && (!requiresV22 || inputPathClientSupportsV22(node.Version)) {
+			if (request.IncludeOffline || node.Status != fleet.StatusOffline) && (!requiresV22 || inputPathClientSupportsV22(node.Version)) {
 				targets = append(targets, node.ID)
 			}
 		}
@@ -177,6 +192,7 @@ func (s *Server) listInputPathRollouts(w http.ResponseWriter, r *http.Request, p
 			for key, value := range current {
 				state[key] = value
 			}
+			checkInputPathAcknowledgement(state, node)
 		}
 		clients = append(clients, map[string]any{"node_id": node.ID, "hostname": node.Hostname, "status": node.Status, "input_path_sync": state})
 	}
@@ -242,6 +258,7 @@ func (m *rolloutStateManager) inputPathSnapshot(includeHistory bool) (map[string
 			}
 			if result.Status == rolloutStatusCompleted && state["applied_input_path_profile"] == nil {
 				state["applied_input_path_profile"] = item.profile
+				state["applied_input_config_hash"] = result.ConfigHash
 			}
 		}
 		if includeHistory {
@@ -249,4 +266,48 @@ func (m *rolloutStateManager) inputPathSnapshot(includeHistory bool) (map[string
 		}
 	}
 	return rollouts, states
+}
+
+func validInputInventory(inventory *protocol.InputRuntimeInventory) bool {
+	if inventory == nil || inventory.ConfigPath == "" || len(inventory.ConfigPath) > 4096 || len(inventory.Inputs) > 256 {
+		return false
+	}
+	if inventory.ManagedFiles != nil {
+		if len(*inventory.ManagedFiles) > 256 {
+			return false
+		}
+		for _, name := range *inventory.ManagedFiles {
+			if (protocol.ManagedInputFileRequest{Action: "delete", Source: name}).Validate() != nil {
+				return false
+			}
+		}
+	}
+	budget := 64 << 10
+	for _, input := range inventory.Inputs {
+		budget -= len(input.Path) + len(input.Service) + 128
+		if input.Path == "" || len(input.Path) > 4096 || len(input.Service) > 256 || budget < 0 {
+			return false
+		}
+		switch input.State {
+		case "present", "missing", "pattern", "other", "unavailable":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func checkInputPathAcknowledgement(state map[string]any, node *fleet.Node) {
+	expected, _ := state["applied_input_config_hash"].(string)
+	if state["input_path_sync_status"] != "applied" || expected == "" {
+		return
+	}
+	acknowledgedAt, _ := state["input_path_sync_updated_at"].(time.Time)
+	if node.LastSeen.Before(acknowledgedAt) {
+		state["input_path_sync_status"] = "awaiting_heartbeat"
+		state["input_path_sync_message"] = "Configuration command succeeded. Waiting for the next client heartbeat."
+	} else if node.ConfigHash != expected {
+		state["input_path_sync_status"] = "config_changed"
+		state["input_path_sync_message"] = "The client now reports a different configuration hash. Compare its reported input paths with the profile."
+	}
 }

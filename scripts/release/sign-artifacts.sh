@@ -8,7 +8,7 @@ signed=0
 
 if [[ $PHASE == rpm && -n ${RPM_GPG_NAME:-} ]]; then
   command -v rpmsign >/dev/null || { echo 'rpmsign is required for RPM signing' >&2; exit 1; }
-  for rpm in "$ARTIFACT_DIR/nli_client_ver21.rpm" "$ARTIFACT_DIR/nli_controller_agent_ver21.rpm"; do
+  for rpm in "$ARTIFACT_DIR/nli_client_ver22.rpm" "$ARTIFACT_DIR/nli_controller_agent_ver22.rpm"; do
     rpmsign --define "_gpg_name $RPM_GPG_NAME" --addsign "$rpm"
   done
   signed=1

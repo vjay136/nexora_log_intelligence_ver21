@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast, platform-neutral Ver21 release invariants for the cached quick suite."""
+"""Fast, platform-neutral Ver22 release invariants for the cached quick suite."""
 
 from __future__ import annotations
 
@@ -16,19 +16,19 @@ def fail(message: str) -> None:
 root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).parents[2]).resolve()
 
 required = (
-    "scripts/install-controller-ver21.sh",
-    "scripts/install-client-ver21.sh",
-    "scripts/install-controller-aws-ver21.sh",
-    "scripts/install-client-aws-ver21.sh",
-    "scripts/install-controller-aws-cloudflare-ver21.sh",
-    "scripts/setup-cloudflare-tunnel-v21.sh",
-    "scripts/verify-cloudflare-tunnel-v21.sh",
-    "scripts/uninstall-cloudflare-tunnel-v21.sh",
-    "scripts/cloudflare-quick-diagnosis-v21.sh",
+    "scripts/install-controller-ver22.sh",
+    "scripts/install-client-ver22.sh",
+    "scripts/install-controller-aws-ver22.sh",
+    "scripts/install-client-aws-ver22.sh",
+    "scripts/install-controller-aws-cloudflare-ver22.sh",
+    "scripts/setup-cloudflare-tunnel-v22.sh",
+    "scripts/verify-cloudflare-tunnel-v22.sh",
+    "scripts/uninstall-cloudflare-tunnel-v22.sh",
+    "scripts/cloudflare-quick-diagnosis-v22.sh",
     "scripts/vercel-preflight.mjs",
     "wrangler.jsonc",
-    "scripts/uninstall-controller-ver21.sh",
-    "scripts/uninstall-client-ver21.sh",
+    "scripts/uninstall-controller-ver22.sh",
+    "scripts/uninstall-client-ver22.sh",
     "scripts/release/create-bundle.sh",
     "configs/parser-catalog/nli-v20-parser-catalog.json",
     "configs/catalog/nli-v20-parser-catalog.json",
@@ -52,7 +52,7 @@ required = (
 )
 for name in required:
     if not (root / name).is_file():
-        fail(f"missing Ver21 release input: {name}")
+        fail(f"missing Ver22 release input: {name}")
 
 scan_roots = ("README.md", "docs", "packaging", "scripts", "web", ".github")
 files: list[Path] = []
@@ -134,22 +134,22 @@ if "REQUIRE_PREVIOUS=0" in workflow:
 
 rocky_validation = (root / "tests/rocky/validate.sh").read_text(encoding="utf-8")
 for marker in (
-    "previous client must be the genuine Ver21 R10 RPM",
-    "previous controller must be the genuine Ver21 R10 RPM",
-    "$previous_client_release =~ ^10[.]1[.]1([.]el[0-9]+)?$ && $current_client_release =~ ^2([.]el[0-9]+)?$",
-    "$previous_controller_release =~ ^10[.]1[.]1([.]el[0-9]+)?$ && $current_controller_release =~ ^2([.]el[0-9]+)?$",
+    "previous client must be the genuine Ver22 22.0.0-2 RPM",
+    "previous controller must be the genuine Ver22 22.0.0-2 RPM",
+    "$previous_client_release =~ ^2([.]el[0-9]+)?$ && $current_client_release =~ ^0([.]el[0-9]+)?$",
+    "$previous_controller_release =~ ^2([.]el[0-9]+)?$ && $current_controller_release =~ ^0([.]el[0-9]+)?$",
 ):
     if marker not in rocky_validation:
         fail(f"Rocky lifecycle validation is missing previous-release gate {marker!r}")
-if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v21.0.0-10.1.1' }}" not in workflow:
-    fail("Ver21 lifecycle validation does not use the published Ver21 R10 baseline")
-if "name: nli-v22-unsigned-release" not in workflow or "--notes-file docs/V22_RELEASE_NOTES.md" not in workflow:
-    fail("Ver21 lifecycle workflow does not publish R10 artifacts and release notes")
+if "PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag || 'v22.0.0-2' }}" not in workflow:
+    fail("Ver22 lifecycle validation does not use the published Ver22 22.0.0-2 baseline")
+if "name: nli-v22-unsigned-release" not in workflow or "--notes-file docs/V22_1_RELEASE_NOTES.md" not in workflow:
+    fail("Ver22 lifecycle workflow does not publish R10 artifacts and release notes")
 release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-if "NLI_VERSION=22.0.0" not in release_env or "NLI_RELEASE=2" not in release_env.splitlines():
-    fail("Ver22 release identity is not 22.0.0-2")
+if "NLI_VERSION=22.1.0" not in release_env or "NLI_RELEASE=0" not in release_env.splitlines():
+    fail("Ver22 release identity is not 22.1.0-0")
 if "PREVIOUS_RELEASE_REPO: ${{ github.repository }}" not in workflow:
-    fail("Ver21 lifecycle validation does not use the current published repository")
+    fail("Ver22 lifecycle validation does not use the current published repository")
 
 research_ledger = (root / "docs/V20_RESEARCH_AND_LICENSE_LEDGER.md").read_text(encoding="utf-8")
 if "| **Total** | **100** |" not in research_ledger:
@@ -163,11 +163,11 @@ for installer_name in required[:2]:
     installer = (root / installer_name).read_text(encoding="utf-8")
     if "rpm_release == 1" in installer or "not release 1" in installer:
         fail(f"hard-coded RPM release validation remains in {installer_name}")
-    for marker in ("validate_rpm_release", "^[1-9][0-9]*([.][0-9]+)*$", "--verify-only"):
+    for marker in ("validate_rpm_release", "^[0-9]+([.][0-9]+)*$", "--verify-only"):
         if marker not in installer:
             fail(f"{installer_name} is missing release validation marker {marker!r}")
     for marker in ("RELEASE_ID is missing", "release bundle checksum verification failed", "does not match this bundle release"):
         if marker not in installer:
             fail(f"{installer_name} is missing mixed-release protection {marker!r}")
 
-print("Ver21 quick static release invariants: PASS")
+print("Ver22 quick static release invariants: PASS")

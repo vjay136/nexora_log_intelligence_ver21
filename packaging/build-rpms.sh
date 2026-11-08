@@ -29,16 +29,16 @@ mkdir -p "$OUTPUT_DIR" "$WORK_DIR"
 [[ -z $(find "$WORK_DIR" -mindepth 1 -print -quit) ]] || fail "work directory is not empty"
 for tool in rpmbuild rpm zip unzip file sha256sum tar gzip python3; do command -v "$tool" >/dev/null || fail "missing tool: $tool"; done
 
-install -m 0755 "$ROOT/scripts/install-controller-ver21.sh" "$OUTPUT_DIR/install-controller-ver21.sh"
-install -m 0755 "$ROOT/scripts/install-client-ver21.sh" "$OUTPUT_DIR/install-client-ver21.sh"
-install -m 0755 "$ROOT/scripts/install-controller-aws-ver21.sh" "$ROOT/scripts/install-client-aws-ver21.sh" "$ROOT/scripts/install-controller-aws-cloudflare-ver21.sh" "$ROOT/scripts/aws-rhel-preflight-ver21.sh" "$ROOT/scripts/aws-security-group-plan-ver21.sh" "$OUTPUT_DIR/"
-install -m 0755 "$ROOT/scripts/setup-cloudflare-tunnel-v21.sh" "$ROOT/scripts/verify-cloudflare-tunnel-v21.sh" "$ROOT/scripts/uninstall-cloudflare-tunnel-v21.sh" "$ROOT/scripts/cloudflare-quick-diagnosis-v21.sh" "$OUTPUT_DIR/"
+install -m 0755 "$ROOT/scripts/install-controller-ver22.sh" "$OUTPUT_DIR/install-controller-ver22.sh"
+install -m 0755 "$ROOT/scripts/install-client-ver22.sh" "$OUTPUT_DIR/install-client-ver22.sh"
+install -m 0755 "$ROOT/scripts/install-controller-aws-ver22.sh" "$ROOT/scripts/install-client-aws-ver22.sh" "$ROOT/scripts/install-controller-aws-cloudflare-ver22.sh" "$ROOT/scripts/aws-rhel-preflight-ver22.sh" "$ROOT/scripts/aws-security-group-plan-ver22.sh" "$OUTPUT_DIR/"
+install -m 0755 "$ROOT/scripts/setup-cloudflare-tunnel-v22.sh" "$ROOT/scripts/verify-cloudflare-tunnel-v22.sh" "$ROOT/scripts/uninstall-cloudflare-tunnel-v22.sh" "$ROOT/scripts/cloudflare-quick-diagnosis-v22.sh" "$OUTPUT_DIR/"
 install -m 0644 "$ROOT/scripts/vercel-preflight.mjs" "$OUTPUT_DIR/vercel-preflight.mjs"
-install -m 0755 "$ROOT/scripts/uninstall-controller-ver21.sh" "$OUTPUT_DIR/uninstall-controller-ver21.sh"
-install -m 0755 "$ROOT/scripts/uninstall-client-ver21.sh" "$OUTPUT_DIR/uninstall-client-ver21.sh"
+install -m 0755 "$ROOT/scripts/uninstall-controller-ver22.sh" "$OUTPUT_DIR/uninstall-controller-ver22.sh"
+install -m 0755 "$ROOT/scripts/uninstall-client-ver22.sh" "$OUTPUT_DIR/uninstall-client-ver22.sh"
 install -m 0644 "$ROOT/docs/INSTALLATION_AND_CONFIGURATION.md" "$OUTPUT_DIR/INSTALLATION_AND_CONFIGURATION.md"
 install -m 0644 "$ROOT/docs/WEBAPP_OPERATOR_AND_PARSER_GUIDE.md" "$OUTPUT_DIR/WEBAPP_OPERATOR_AND_PARSER_GUIDE.md"
-install -m 0644 "$ROOT/docs/V22_RELEASE_NOTES.md" "$ROOT/docs/V22_FLEET_ENROLLMENT.md" "$OUTPUT_DIR/"
+install -m 0644 "$ROOT/docs/V22_1_RELEASE_NOTES.md" "$ROOT/docs/V22_RELEASE_NOTES.md" "$ROOT/docs/V22_FLEET_ENROLLMENT.md" "$OUTPUT_DIR/"
 install -m 0644 "$ROOT/docs/VERCEL_DEPLOYMENT.md" "$OUTPUT_DIR/VERCEL_DEPLOYMENT.md"
 install -m 0644 "$ROOT/docs/CLOUDFLARE_PAGES_DEPLOYMENT.md" "$OUTPUT_DIR/CLOUDFLARE_PAGES_DEPLOYMENT.md"
 install -m 0644 "$ROOT/docs/PARSER_CATALOG.md" "$OUTPUT_DIR/PARSER_CATALOG.md"
@@ -63,13 +63,13 @@ NLI_RELEASE=$NLI_RELEASE
 NLI_ARCH=$NLI_ARCH
 SOURCE_REVISION=$SOURCE_REVISION
 EOF
-normalize_lf "$OUTPUT_DIR/install-controller-ver21.sh" "$OUTPUT_DIR/install-client-ver21.sh" \
-  "$OUTPUT_DIR/uninstall-controller-ver21.sh" "$OUTPUT_DIR/uninstall-client-ver21.sh" \
-  "$OUTPUT_DIR/install-controller-aws-ver21.sh" "$OUTPUT_DIR/install-client-aws-ver21.sh" \
-  "$OUTPUT_DIR/install-controller-aws-cloudflare-ver21.sh" \
-  "$OUTPUT_DIR/aws-rhel-preflight-ver21.sh" "$OUTPUT_DIR/aws-security-group-plan-ver21.sh" \
-  "$OUTPUT_DIR/setup-cloudflare-tunnel-v21.sh" "$OUTPUT_DIR/verify-cloudflare-tunnel-v21.sh" \
-  "$OUTPUT_DIR/uninstall-cloudflare-tunnel-v21.sh" "$OUTPUT_DIR/cloudflare-quick-diagnosis-v21.sh" \
+normalize_lf "$OUTPUT_DIR/install-controller-ver22.sh" "$OUTPUT_DIR/install-client-ver22.sh" \
+  "$OUTPUT_DIR/uninstall-controller-ver22.sh" "$OUTPUT_DIR/uninstall-client-ver22.sh" \
+  "$OUTPUT_DIR/install-controller-aws-ver22.sh" "$OUTPUT_DIR/install-client-aws-ver22.sh" \
+  "$OUTPUT_DIR/install-controller-aws-cloudflare-ver22.sh" \
+  "$OUTPUT_DIR/aws-rhel-preflight-ver22.sh" "$OUTPUT_DIR/aws-security-group-plan-ver22.sh" \
+  "$OUTPUT_DIR/setup-cloudflare-tunnel-v22.sh" "$OUTPUT_DIR/verify-cloudflare-tunnel-v22.sh" \
+  "$OUTPUT_DIR/uninstall-cloudflare-tunnel-v22.sh" "$OUTPUT_DIR/cloudflare-quick-diagnosis-v22.sh" \
   "$OUTPUT_DIR/vercel-preflight.mjs" \
   "$OUTPUT_DIR/INSTALLATION_AND_CONFIGURATION.md" "$OUTPUT_DIR/WEBAPP_OPERATOR_AND_PARSER_GUIDE.md" \
   "$OUTPUT_DIR/VERCEL_DEPLOYMENT.md" "$OUTPUT_DIR/CLOUDFLARE_PAGES_DEPLOYMENT.md" "$OUTPUT_DIR/PARSER_CATALOG.md" \
@@ -106,6 +106,8 @@ install -m 0644 "$ROOT"/metrics/* "$CLIENT/metrics/"
 while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
   find "$CLIENT/sbin" "$CLIENT/configs" "$CLIENT/systemd" -type f -print0
 )
+install -m 0644 "$ROOT/docs/V22_1_RELEASE_NOTES.md" "$CLIENT/"
+normalize_lf "$CLIENT/V22_1_RELEASE_NOTES.md"
 normalize_lf "$CLIENT/README.md"
 normalize_lf "$CLIENT/PARSER_CATALOG.md"
 normalize_lf "$CLIENT/All_NLI_features.md" "$CLIENT/V21_R1_RELEASE_NOTES.md" "$CLIENT/V21_R1_TEST_RESULTS.md" "$CLIENT/V21_R2_RELEASE_NOTES.md" "$CLIENT/V21_R2_TEST_RESULTS.md" "$CLIENT/V21_R3_RELEASE_NOTES.md" "$CLIENT/V21_R3_TEST_RESULTS.md" "$CLIENT/V21_R4_RELEASE_NOTES.md" "$CLIENT/V21_R4_TEST_RESULTS.md" "$CLIENT/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md" "$CLIENT/V21_R5_RELEASE_NOTES.md" "$CLIENT/V21_R5_TEST_RESULTS.md" "$CLIENT/V21_R6_RELEASE_NOTES.md" "$CLIENT/V21_R6_TEST_RESULTS.md" "$CLIENT/V21_R7_RELEASE_NOTES.md" "$CLIENT/V21_R7_TEST_RESULTS.md" "$CLIENT/V21_R7_MAPPING_DESIGN.md" "$CLIENT/V21_R7_FIELD_MAPPING_GUIDE.md" "$CLIENT/V21_R8_RELEASE_NOTES.md" "$CLIENT/V21_R8_TEST_RESULTS.md" "$CLIENT/V21_R8_DESIGN_ENGINE_DESIGN.md" "$CLIENT/V21_R8_DESIGN_ENGINE_GUIDE.md" "$CLIENT/V21_R8_OUTPUT_ACCOUNTING_GUIDE.md" "$CLIENT/V21_R8_AI_PROVIDER_GUIDE.md" "$CLIENT/V21_R9_RELEASE_NOTES.md" "$CLIENT/V21_R9_TEST_RESULTS.md" "$CLIENT/V21_R9_FIELD_MAPPING_GUIDE.md" "$CLIENT/V21_R10_RELEASE_NOTES.md" "$CLIENT/V21_R10_TEST_RESULTS.md" "$CLIENT/V21_R10_MANAGER_DEMO.md" "$CLIENT/VER21_IMPLEMENTATION_PLAN.md" "$CLIENT/nli-output-audit.py"
@@ -114,7 +116,7 @@ while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
 )
 python3 "$ROOT/tests/release/metrics_packaging_test.py" --root "$ROOT" --stage "$CLIENT/metrics"
 
-WEB_ROOT="$STAGE/webview_ver21"
+WEB_ROOT="$STAGE/webview_ver22"
 mkdir -p "$WEB_ROOT"
 runtime_web_assets=(index.html styles.css app.js design-engine.js design-engine.css nli-mark.svg nexora-logo-v21.png login-banner-v21.png nexora-poster-v21.png README.txt Open-NLI-WebView.ps1)
 for relative in "${runtime_web_assets[@]}"; do
@@ -135,10 +137,10 @@ find "$WEB_ROOT" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 [[ -s "$OUTPUT_DIR/WEBVIEW_SHA256SUMS" ]] || fail "WebView asset manifest is empty"
 (
   cd "$STAGE"
-  find webview_ver21 -type f -print | LC_ALL=C sort | zip -X -q "$OUTPUT_DIR/webview_ver21.zip" -@
+  find webview_ver22 -type f -print | LC_ALL=C sort | zip -X -q "$OUTPUT_DIR/webview_ver22.zip" -@
 )
 
-python3 "$ROOT/scripts/release/build-webapp.py" --root "$ROOT" --output "$OUTPUT_DIR/webapp_ver21.zip" --epoch "$SOURCE_DATE_EPOCH"
+python3 "$ROOT/scripts/release/build-webapp.py" --root "$ROOT" --output "$OUTPUT_DIR/webapp_ver22.zip" --epoch "$SOURCE_DATE_EPOCH"
 
 CONTROLLER="$STAGE/nli-controller-agent-$NLI_VERSION"
 mkdir -p "$CONTROLLER"/{bin,sbin,configs,systemd,web,supabase}
@@ -160,6 +162,8 @@ install -m 0644 "$ROOT"/metrics/* "$CONTROLLER/metrics/"
 while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
   find "$CONTROLLER/sbin" "$CONTROLLER/configs" "$CONTROLLER/systemd" "$CONTROLLER/supabase" -type f -print0
 )
+install -m 0644 "$ROOT/docs/V22_1_RELEASE_NOTES.md" "$CONTROLLER/"
+normalize_lf "$CONTROLLER/V22_1_RELEASE_NOTES.md"
 normalize_lf "$CONTROLLER/README.md"
 normalize_lf "$CONTROLLER/All_NLI_features.md" "$CONTROLLER/V21_R1_RELEASE_NOTES.md" "$CONTROLLER/V21_R1_TEST_RESULTS.md" "$CONTROLLER/V21_R2_RELEASE_NOTES.md" "$CONTROLLER/V21_R2_TEST_RESULTS.md" "$CONTROLLER/V21_R3_RELEASE_NOTES.md" "$CONTROLLER/V21_R3_TEST_RESULTS.md" "$CONTROLLER/V21_R4_RELEASE_NOTES.md" "$CONTROLLER/V21_R4_TEST_RESULTS.md" "$CONTROLLER/V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md" "$CONTROLLER/V21_R5_RELEASE_NOTES.md" "$CONTROLLER/V21_R5_TEST_RESULTS.md" "$CONTROLLER/V21_R6_RELEASE_NOTES.md" "$CONTROLLER/V21_R6_TEST_RESULTS.md" "$CONTROLLER/V21_R7_RELEASE_NOTES.md" "$CONTROLLER/V21_R7_TEST_RESULTS.md" "$CONTROLLER/V21_R7_MAPPING_DESIGN.md" "$CONTROLLER/V21_R7_FIELD_MAPPING_GUIDE.md" "$CONTROLLER/V21_R8_RELEASE_NOTES.md" "$CONTROLLER/V21_R8_TEST_RESULTS.md" "$CONTROLLER/V21_R8_DESIGN_ENGINE_DESIGN.md" "$CONTROLLER/V21_R8_DESIGN_ENGINE_GUIDE.md" "$CONTROLLER/V21_R8_OUTPUT_ACCOUNTING_GUIDE.md" "$CONTROLLER/V21_R8_AI_PROVIDER_GUIDE.md" "$CONTROLLER/V21_R9_RELEASE_NOTES.md" "$CONTROLLER/V21_R9_TEST_RESULTS.md" "$CONTROLLER/V21_R9_FIELD_MAPPING_GUIDE.md" "$CONTROLLER/V21_R10_RELEASE_NOTES.md" "$CONTROLLER/V21_R10_TEST_RESULTS.md" "$CONTROLLER/V21_R10_MANAGER_DEMO.md" "$CONTROLLER/VER21_IMPLEMENTATION_PLAN.md" "$CONTROLLER/nli-output-audit.py"
 while IFS= read -r -d '' text_file; do normalize_lf "$text_file"; done < <(
@@ -194,52 +198,52 @@ rpmbuild "${rpm_args[@]}" -bb "$TOP/SPECS/nli-controller-agent.spec"
 client_rpm=$(find "$TOP/RPMS" -type f -name 'nli-client-*.x86_64.rpm' -print -quit)
 controller_rpm=$(find "$TOP/RPMS" -type f -name 'nli-controller-agent-*.x86_64.rpm' -print -quit)
 [[ -n $client_rpm && -n $controller_rpm ]] || fail "rpmbuild did not produce both RPMs"
-install -m 0644 "$client_rpm" "$OUTPUT_DIR/nli_client_ver21.rpm"
-install -m 0644 "$controller_rpm" "$OUTPUT_DIR/nli_controller_agent_ver21.rpm"
+install -m 0644 "$client_rpm" "$OUTPUT_DIR/nli_client_ver22.rpm"
+install -m 0644 "$controller_rpm" "$OUTPUT_DIR/nli_controller_agent_ver22.rpm"
 install -m 0644 "$BIN_ROOT/SOURCE_BINARY_PROVENANCE.txt" "$OUTPUT_DIR/SOURCE_BINARY_PROVENANCE.txt"
 printf '%s\n' "$SOURCE_REVISION" >"$OUTPUT_DIR/SOURCE_REVISION"
 
 for rpm_file in "$OUTPUT_DIR"/*.rpm; do
   [[ $(od -An -tx1 -N4 "$rpm_file" | tr -d ' \n') == edabeedb ]] || fail "non-RPM output: $rpm_file"
 done
-rpm -qpi "$OUTPUT_DIR/nli_client_ver21.rpm" >"$OUTPUT_DIR/nli_client_ver21.rpm.info.txt"
-rpm -qpi "$OUTPUT_DIR/nli_controller_agent_ver21.rpm" >"$OUTPUT_DIR/nli_controller_agent_ver21.rpm.info.txt"
-rpm -qpl "$OUTPUT_DIR/nli_client_ver21.rpm" >"$OUTPUT_DIR/nli_client_ver21.files.txt"
-rpm -qpl "$OUTPUT_DIR/nli_controller_agent_ver21.rpm" >"$OUTPUT_DIR/nli_controller_agent_ver21.files.txt"
-rpm -qp --qf '[%{FILENAMES} %{FILEMODES:perms} %{FILEUSERNAME} %{FILEGROUPNAME}\n]' "$OUTPUT_DIR/nli_client_ver21.rpm" >"$OUTPUT_DIR/nli_client_ver21.permissions.txt"
-rpm -qp --qf '[%{FILENAMES} %{FILEMODES:perms} %{FILEUSERNAME} %{FILEGROUPNAME}\n]' "$OUTPUT_DIR/nli_controller_agent_ver21.rpm" >"$OUTPUT_DIR/nli_controller_agent_ver21.permissions.txt"
+rpm -qpi "$OUTPUT_DIR/nli_client_ver22.rpm" >"$OUTPUT_DIR/nli_client_ver22.rpm.info.txt"
+rpm -qpi "$OUTPUT_DIR/nli_controller_agent_ver22.rpm" >"$OUTPUT_DIR/nli_controller_agent_ver22.rpm.info.txt"
+rpm -qpl "$OUTPUT_DIR/nli_client_ver22.rpm" >"$OUTPUT_DIR/nli_client_ver22.files.txt"
+rpm -qpl "$OUTPUT_DIR/nli_controller_agent_ver22.rpm" >"$OUTPUT_DIR/nli_controller_agent_ver22.files.txt"
+rpm -qp --qf '[%{FILENAMES} %{FILEMODES:perms} %{FILEUSERNAME} %{FILEGROUPNAME}\n]' "$OUTPUT_DIR/nli_client_ver22.rpm" >"$OUTPUT_DIR/nli_client_ver22.permissions.txt"
+rpm -qp --qf '[%{FILENAMES} %{FILEMODES:perms} %{FILEUSERNAME} %{FILEGROUPNAME}\n]' "$OUTPUT_DIR/nli_controller_agent_ver22.rpm" >"$OUTPUT_DIR/nli_controller_agent_ver22.permissions.txt"
 
 for required in /usr/bin/nli /usr/bin/nli-agent /usr/bin/nli-client-control /usr/bin/nli-bench /usr/sbin/nli-client-setup /etc/nli/nli.json /etc/nli/parsers /usr/share/doc/nli-client/PARSER_CATALOG.md /usr/share/doc/nli-client/V21_R1_RELEASE_NOTES.md /usr/share/doc/nli-client/V21_R1_TEST_RESULTS.md /usr/share/doc/nli-client/V21_R2_RELEASE_NOTES.md /usr/share/doc/nli-client/V21_R2_TEST_RESULTS.md /usr/share/doc/nli-client/V21_R3_RELEASE_NOTES.md /usr/share/doc/nli-client/V21_R3_TEST_RESULTS.md /usr/share/nli/metrics/README.md /usr/share/nli/metrics/metric-catalog.json /usr/share/nli/metrics/prometheus-scrape.yml /usr/share/nli/metrics/grafana-dashboard.json /usr/lib/systemd/system/nli-agent.service /usr/lib/systemd/system/nli-client-control.service /usr/lib/systemd/system/nli-client-bootstrap.service /var/lib/nli /var/lib/nli-control-client /var/log/nli/input /var/log/nli/output; do
-  grep -Fxq "$required" "$OUTPUT_DIR/nli_client_ver21.files.txt" || fail "client payload missing $required"
+  grep -Fxq "$required" "$OUTPUT_DIR/nli_client_ver22.files.txt" || fail "client payload missing $required"
 done
-for document in V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py; do
-  grep -Fxq "/usr/share/doc/nli-client/$document" "$OUTPUT_DIR/nli_client_ver21.files.txt" || fail "client payload missing $document"
+for document in V22_1_RELEASE_NOTES.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py; do
+  grep -Fxq "/usr/share/doc/nli-client/$document" "$OUTPUT_DIR/nli_client_ver22.files.txt" || fail "client payload missing $document"
 done
 mapfile -t profile_assets < <(find "$ROOT/configs/parsers" -maxdepth 1 -type f -name '*.parserpack.json' -printf '%f\n' | LC_ALL=C sort)
 [[ ${#profile_assets[@]} -ge 8 ]] || fail "expected at least the eight reviewed baseline parser profiles"
 for asset in "${profile_assets[@]}"; do
   installed="/etc/nli/parsers/$asset"
-  grep -Fxq "$installed" "$OUTPUT_DIR/nli_client_ver21.files.txt" || fail "client payload missing reviewed profile $installed"
-  grep -Fxq "$installed -rw-r--r-- root nli" "$OUTPUT_DIR/nli_client_ver21.permissions.txt" || fail "reviewed profile has wrong mode/owner: $installed"
+  grep -Fxq "$installed" "$OUTPUT_DIR/nli_client_ver22.files.txt" || fail "client payload missing reviewed profile $installed"
+  grep -Fxq "$installed -rw-r--r-- root nli" "$OUTPUT_DIR/nli_client_ver22.permissions.txt" || fail "reviewed profile has wrong mode/owner: $installed"
   source_hash=$(sed 's/\r$//' "$ROOT/configs/parsers/$asset" | sha256sum | awk '{print $1}')
-  rpm_hash=$(rpm -qp --dump "$OUTPUT_DIR/nli_client_ver21.rpm" | awk -v path="$installed" '$1==path {print $4}')
+  rpm_hash=$(rpm -qp --dump "$OUTPUT_DIR/nli_client_ver22.rpm" | awk -v path="$installed" '$1==path {print $4}')
   [[ -n $rpm_hash && $source_hash == "$rpm_hash" ]] || fail "reviewed profile differs in RPM: $asset"
 done
-[[ $(grep -Ec '^/etc/nli/parsers/[^/]+\.parserpack\.json$' "$OUTPUT_DIR/nli_client_ver21.files.txt") -eq ${#profile_assets[@]} ]] || fail "unexpected reviewed profile count in client RPM"
+[[ $(grep -Ec '^/etc/nli/parsers/[^/]+\.parserpack\.json$' "$OUTPUT_DIR/nli_client_ver22.files.txt") -eq ${#profile_assets[@]} ]] || fail "unexpected reviewed profile count in client RPM"
 for required in /usr/bin/nli-controller-agent /usr/bin/nli /usr/sbin/nli-controller-setup /usr/sbin/nli-supabase-setup /usr/sbin/nli-admin-reset /usr/share/doc/nli-controller-agent/V21_R1_RELEASE_NOTES.md /usr/share/doc/nli-controller-agent/V21_R1_TEST_RESULTS.md /usr/share/doc/nli-controller-agent/V21_R2_RELEASE_NOTES.md /usr/share/doc/nli-controller-agent/V21_R2_TEST_RESULTS.md /usr/share/doc/nli-controller-agent/V21_R3_RELEASE_NOTES.md /usr/share/doc/nli-controller-agent/V21_R3_TEST_RESULTS.md /usr/share/nli/supabase/nli_schema.sql /usr/share/nli/metrics/README.md /usr/share/nli/metrics/metric-catalog.json /usr/share/nli/metrics/prometheus-scrape.yml /usr/share/nli/metrics/grafana-dashboard.json /etc/nli/controller.json /etc/nli/geoip.env /usr/lib/systemd/system/nli-controller-agent.service /usr/lib/systemd/system/nli-controller-bootstrap.service /usr/lib/systemd/system/nli-geoip-update.service /usr/lib/systemd/system/nli-geoip-update.timer /usr/share/nli/webview_ver21/index.html /usr/share/nli/webview_ver21/styles.css /usr/share/nli/webview_ver21/app.js /usr/share/nli/webview_ver21/design-engine.js /usr/share/nli/webview_ver21/design-engine.css /usr/share/nli/webview_ver21/nli-mark.svg /usr/share/nli/webview_ver21/nexora-logo-v21.png /usr/share/nli/webview_ver21/login-banner-v21.png /usr/share/nli/webview_ver21/nexora-poster-v21.png /usr/share/nli/webview_ver21/README.txt /usr/share/nli/webview_ver21/Open-NLI-WebView.ps1 /var/lib/nli-controller; do
-  grep -Fxq "$required" "$OUTPUT_DIR/nli_controller_agent_ver21.files.txt" || fail "controller payload missing $required"
+  grep -Fxq "$required" "$OUTPUT_DIR/nli_controller_agent_ver22.files.txt" || fail "controller payload missing $required"
 done
-for document in V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py; do
-  grep -Fxq "/usr/share/doc/nli-controller-agent/$document" "$OUTPUT_DIR/nli_controller_agent_ver21.files.txt" || fail "controller payload missing $document"
+for document in V22_1_RELEASE_NOTES.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py; do
+  grep -Fxq "/usr/share/doc/nli-controller-agent/$document" "$OUTPUT_DIR/nli_controller_agent_ver22.files.txt" || fail "controller payload missing $document"
 done
-! grep -Eq 'webview_ver(1|5|6|7)(/|$)' "$OUTPUT_DIR/nli_controller_agent_ver21.files.txt" || fail "stale pre-V20 WebView payload"
+! grep -Eq 'webview_ver(1|5|6|7)(/|$)' "$OUTPUT_DIR/nli_controller_agent_ver22.files.txt" || fail "stale pre-V20 WebView payload"
 expected_assets=$(wc -l <"$OUTPUT_DIR/WEBVIEW_SHA256SUMS")
-zip_assets=$(unzip -Z1 "$OUTPUT_DIR/webview_ver21.zip" | grep -vc '/$')
-rpm_assets=$(rpm -qp --dump "$OUTPUT_DIR/nli_controller_agent_ver21.rpm" | awk '$1 ~ "^/usr/share/nli/webview_ver21/" && $5 ~ /^010/ {count++} END {print count+0}')
+zip_assets=$(unzip -Z1 "$OUTPUT_DIR/webview_ver22.zip" | grep -vc '/$')
+rpm_assets=$(rpm -qp --dump "$OUTPUT_DIR/nli_controller_agent_ver22.rpm" | awk '$1 ~ "^/usr/share/nli/webview_ver21/" && $5 ~ /^010/ {count++} END {print count+0}')
 [[ $expected_assets -eq $zip_assets && $expected_assets -eq $rpm_assets ]] || fail "WebView asset counts differ: source=$expected_assets zip=$zip_assets rpm=$rpm_assets"
 while read -r expected relative; do
-  zip_hash=$(unzip -p "$OUTPUT_DIR/webview_ver21.zip" "webview_ver21/$relative" | sha256sum | awk '{print $1}')
-  rpm_hash=$(rpm -qp --dump "$OUTPUT_DIR/nli_controller_agent_ver21.rpm" | awk -v path="/usr/share/nli/webview_ver21/$relative" '$1==path {print $4}')
+  zip_hash=$(unzip -p "$OUTPUT_DIR/webview_ver22.zip" "webview_ver22/$relative" | sha256sum | awk '{print $1}')
+  rpm_hash=$(rpm -qp --dump "$OUTPUT_DIR/nli_controller_agent_ver22.rpm" | awk -v path="/usr/share/nli/webview_ver21/$relative" '$1==path {print $4}')
   [[ $expected == "$zip_hash" && $expected == "$rpm_hash" ]] || fail "WebView asset differs: $relative"
 done <"$OUTPUT_DIR/WEBVIEW_SHA256SUMS"
 echo "RPM build: PASS"

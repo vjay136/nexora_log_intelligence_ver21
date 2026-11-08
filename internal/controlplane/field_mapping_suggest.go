@@ -76,6 +76,9 @@ func (s *Server) handleFieldMappingSuggest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	profiles, diagnostics := nfiSuggestCorpus(ctx, request.Samples, request.Separator)
+	if err := s.annotateKnownKeys(ctx, request.Service, profiles); err != nil {
+		diagnostics = append(diagnostics, "Published Known Key Catalog is unavailable. Structural suggestions remain available.")
+	}
 	runtimeInfo, runtimeFields := s.automaticSuggestionEvidence(ctx, request.Samples, request.Service)
 	if fieldSenseContextError(w, ctx) {
 		return
@@ -85,6 +88,47 @@ func (s *Server) handleFieldMappingSuggest(w http.ResponseWriter, r *http.Reques
 		fields = profiles[0].Fields
 	}
 	jsonOK(w, map[string]any{"engine": "nfi-v1", "sample_count": len(request.Samples), "fields": fields, "profiles": profiles, "runtime": runtimeInfo, "runtime_field_suggestions": runtimeFields, "diagnostics": diagnostics, "plan": fieldmapping.Plan{Version: 1, Fields: fields}, "persisted": false, "activated": false, "learning": "Deterministic structural suggestions; review field labels, optionality and ambiguity before validation or publication."})
+}
+
+// Catalog matches annotate only observed KV fields; they never invent an output
+// field or change the literal key read by the runtime parser.
+func (s *Server) annotateKnownKeys(ctx context.Context, service string, profiles []nfiSuggestionProfile) error {
+	if s.metadata == nil || len(profiles) == 0 {
+		return nil
+	}
+	catalog, err := s.listParserSyncDocuments(ctx, "known-keys", "active", parserSyncTargetLimit)
+	if err != nil {
+		return err
+	}
+	keys := map[string]bool{}
+	for _, doc := range catalog {
+		var asset struct {
+			Config struct {
+				Keys   []string `json:"keys"`
+				Family string   `json:"family"`
+			} `json:"config"`
+		}
+		if doc.Deleted || json.Unmarshal(doc.Payload, &asset) != nil {
+			continue
+		}
+		family := strings.TrimSpace(asset.Config.Family)
+		if family != "" && !strings.EqualFold(family, "auto") && !strings.EqualFold(family, service) {
+			continue
+		}
+		for _, key := range asset.Config.Keys {
+			keys[strings.ToLower(key)] = true
+		}
+	}
+	for _, profile := range profiles {
+		for i := range profile.Fields {
+			field := &profile.Fields[i]
+			if field.Method == "key_value" && keys[strings.ToLower(field.Source)] {
+				field.Evidence += " · Observed key matches the published Known Key Catalog"
+				field.Confidence = "known_catalog"
+			}
+		}
+	}
+	return nil
 }
 
 func nfiSuggestCorpus(ctx context.Context, samples []string, separator string) ([]nfiSuggestionProfile, []string) {

@@ -844,3 +844,46 @@ func TestInputPathProfileConfigValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestKnownKeyCatalogPublicationAndRevocation(t *testing.T) {
+	f := newAPIFixture(t)
+	const collection = "/api/v1/config/known-keys"
+	const asset = collection + "/operator-known-keys"
+	config := map[string]any{"id": "operator-known-keys", "name": "Operator keys", "config": map[string]any{"family": "smtp", "keys": []string{"status"}}}
+	response, data := f.request(http.MethodPost, collection, config)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("create: %d %s", response.StatusCode, data)
+	}
+	for _, action := range []string{"submit", "approve", "publish"} {
+		response, data = f.request(http.MethodPost, asset+"/"+action, map[string]any{})
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s: %d %s", action, response.StatusCode, data)
+		}
+	}
+	response, data = f.request(http.MethodPost, collection, config)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("active asset can be overwritten: %d %s", response.StatusCode, data)
+	}
+	suggest := func(service string) []byte {
+		t.Helper()
+		sample := "20250811 080053105+0100 host smtp 3692 0 140026854221568 Note;SieveRuleMsg status=failed:reason=notneeded:server=cloud"
+		response, data := f.request(http.MethodPost, "/api/v1/field-mapping/suggest", map[string]any{"samples": []string{sample}, "service": service})
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("suggest: %d %s", response.StatusCode, data)
+		}
+		return data
+	}
+	if data := suggest("smtp"); !bytes.Contains(data, []byte(`"confidence":"known_catalog"`)) {
+		t.Fatalf("published key not recognized: %s", data)
+	}
+	if data := suggest("imap"); bytes.Contains(data, []byte(`"confidence":"known_catalog"`)) {
+		t.Fatalf("catalog match escaped family scope: %s", data)
+	}
+	response, data = f.request(http.MethodPost, asset+"/revoke", map[string]any{})
+	if response.StatusCode != http.StatusOK || !bytes.Contains(data, []byte(`"state":"revoked"`)) {
+		t.Fatalf("revoke: %d %s", response.StatusCode, data)
+	}
+	if data := suggest("smtp"); bytes.Contains(data, []byte(`"confidence":"known_catalog"`)) {
+		t.Fatalf("revoked key still recognized: %s", data)
+	}
+}

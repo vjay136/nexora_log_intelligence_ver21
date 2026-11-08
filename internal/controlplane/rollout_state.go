@@ -34,6 +34,7 @@ type rolloutNodeResult struct {
 	Attempts   int       `json:"attempts"`
 	Error      string    `json:"error,omitempty"`
 	Message    string    `json:"message,omitempty"`
+	ConfigHash string    `json:"config_hash,omitempty"`
 }
 type rolloutRecord struct {
 	ID          string                        `json:"id"`
@@ -87,7 +88,7 @@ func (m *rolloutStateManager) Create(kind, name, actor string, targets []string,
 	if name == "" {
 		return nil, errors.New("rollout name required")
 	}
-	allowed := map[string]bool{rolloutTypeConfigPush: true, rolloutTypePackageUpdate: true, rolloutTypeParserSync: true, rolloutTypeRestart: true, rolloutTypeReplay: true}
+	allowed := map[string]bool{rolloutTypeConfigPush: true, rolloutTypePackageUpdate: true, rolloutTypeParserSync: true, rolloutTypeRestart: true, rolloutTypeReplay: true, protocol.ManagedInputFileCommand: true}
 	if !allowed[kind] {
 		return nil, errors.New("unsupported rollout type")
 	}
@@ -127,7 +128,7 @@ func (m *rolloutStateManager) Start(id string, targets []string) error {
 	}
 	return m.save()
 }
-func (m *rolloutStateManager) RecordNodeResult(id, node, status, message string) error {
+func (m *rolloutStateManager) RecordNodeResult(id, node, status, message string, configHash ...string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	item := m.items[id]
@@ -146,6 +147,9 @@ func (m *rolloutStateManager) RecordNodeResult(id, node, status, message string)
 	}
 	result.Status = status
 	result.Message = message
+	if status == rolloutStatusCompleted && len(configHash) > 0 {
+		result.ConfigHash = configHash[0]
+	}
 	result.DoneAt = time.Now().UTC()
 	item.DoneNodes++
 	if status == rolloutStatusFailed {
@@ -210,7 +214,7 @@ func (m *rolloutStateManager) NextForNode(node string, lease time.Duration) (*pr
 		if item.Status != rolloutStatusRunning || result == nil || result.Status == rolloutStatusCompleted || result.Status == rolloutStatusFailed {
 			continue
 		}
-		if item.Type == rolloutTypeConfigPush {
+		if item.Type == rolloutTypeConfigPush || item.Type == protocol.ManagedInputFileCommand {
 			if oldestConfig == nil || rolloutStartTime(item).Before(rolloutStartTime(oldestConfig)) {
 				oldestConfig = item
 			}
