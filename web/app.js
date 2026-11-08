@@ -384,6 +384,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         <label>Edit type<select data-kv-input-key="action"><option value="replace" ${edit.action==='replace'?'selected':''}>Replace all occurrences</option><option value="strip_prefix" ${edit.action==='strip_prefix'?'selected':''}>Remove from start</option><option value="strip_suffix" ${edit.action==='strip_suffix'?'selected':''}>Remove from end</option></select></label>
         <label>Find literal text<input aria-label="Find literal text" data-kv-input-key="find" value="${esc(edit.find)}" maxlength="1024"></label>
         ${edit.action==='replace'?`<label>Replace with (blank removes it)<input aria-label="Replace with" data-kv-input-key="replace" value="${esc(edit.replace||'')}" maxlength="1024"></label>`:''}
+        <label>Require a match<input type="checkbox" data-kv-input-key="required" ${edit.required?'checked':''}></label>
         <button type="button" class="danger small" data-action="kv-input-remove" data-id="${esc(field.id)}" data-index="${index}">Remove edit</button>
       </div>`).join('')}
       <p class="hint">The controller previews the edited range and validates all pairs. To rename a key in the output, use Key Aliases. To change a key’s value, use Edit individual KV output fields.</p>
@@ -2426,7 +2427,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         if(!field||!isKVTail(field))throw new Error('Choose a dynamic KV row first');
         const edits=field.kv_input_edits||[];
         if(button.dataset.action==='kv-bracket-preset'){
-          Object.assign(field,{kv_input_edits:[{action:'replace',find:'][',replace:'|'},{action:'strip_prefix',find:'['},{action:'strip_suffix',find:']'}],
+          Object.assign(field,{kv_input_edits:[{action:'replace',find:'][',replace:'|'},{action:'strip_prefix',find:'[',required:true},{action:'strip_suffix',find:']',required:true}],
             kv_pair_separators:['|'],pair_delimiters:'|',assignment_separators:[':', ';', '=']});
         }else if(button.dataset.action==='kv-input-add'){
           if(edits.length>=16)throw new Error('A KV row supports up to 16 input edits');
@@ -2657,7 +2658,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     if(kvInput){
       const edit=field.kv_input_edits?.[Number(kvInput.closest('[data-kv-input-index]').dataset.kvInputIndex)];
       if(!edit)return;
-      edit[kvInput.dataset.kvInputKey]=kvInput.value;
+      edit[kvInput.dataset.kvInputKey]=kvInput.type==='checkbox'?kvInput.checked:kvInput.value;
       field.status='unresolved';
       qrwControllerPreview=null;
       if(kvInput.dataset.kvInputKey==='action'){

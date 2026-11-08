@@ -75,6 +75,13 @@ func TestNFISuggestionsWrappedPairsUseOneDynamicMapping(t *testing.T) {
 		if values["status"] != "failed" || values["reason"] != "notneeded" || values["server"] != "cloud#" {
 			t.Fatalf("wrong extracted values: %v", values)
 		}
+		compiled, err := fieldmapping.Compile(fieldmapping.Plan{Version: 1, Fields: fields[9:]})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := compiled.Execute(context.Background(), prefix+tail[:len(tail)-1]); err == nil {
+			t.Fatal("an incomplete closing wrapper was accepted by the suggested parser")
+		}
 	}
 }
 

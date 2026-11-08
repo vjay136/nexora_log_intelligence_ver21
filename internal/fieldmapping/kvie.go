@@ -357,8 +357,8 @@ func InspectWrappedKeyValues(text string, offset int) (KVProfile, bool) {
 		pos += match[1]
 	}
 	profile.InputEdits = append(profile.InputEdits,
-		KVInputEdit{Action: "strip_prefix", Find: string(first)},
-		KVInputEdit{Action: "strip_suffix", Find: string(previous)})
+		KVInputEdit{Action: "strip_prefix", Find: string(first), Required: true},
+		KVInputEdit{Action: "strip_suffix", Find: string(previous), Required: true})
 	return profile, true
 }
 
@@ -366,14 +366,23 @@ func editKVInput(text string, edits []KVInputEdit) (string, error) {
 	for _, edit := range edits {
 		switch edit.Action {
 		case "replace":
+			if edit.Required && !strings.Contains(text, edit.Find) {
+				return "", fmt.Errorf("required KV replacement text %q is absent", edit.Find)
+			}
 			value, err := applyOperation(text, Operation{Op: "replace", Find: edit.Find, Replace: edit.Replace}, nil, nil)
 			if err != nil {
 				return "", err
 			}
 			text = value.(string)
 		case "strip_prefix":
+			if edit.Required && !strings.HasPrefix(text, edit.Find) {
+				return "", fmt.Errorf("required KV opening wrapper %q is absent", edit.Find)
+			}
 			text = strings.TrimPrefix(text, edit.Find)
 		case "strip_suffix":
+			if edit.Required && !strings.HasSuffix(text, edit.Find) {
+				return "", fmt.Errorf("required KV closing wrapper %q is absent", edit.Find)
+			}
 			text = strings.TrimSuffix(text, edit.Find)
 		}
 	}

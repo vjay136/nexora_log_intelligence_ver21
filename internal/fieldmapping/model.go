@@ -118,9 +118,10 @@ type Field struct {
 }
 
 type KVInputEdit struct {
-	Action  string `json:"action"`
-	Find    string `json:"find"`
-	Replace string `json:"replace,omitempty"`
+	Action   string `json:"action"`
+	Find     string `json:"find"`
+	Replace  string `json:"replace,omitempty"`
+	Required bool   `json:"required,omitempty"`
 }
 
 type Operation struct {
