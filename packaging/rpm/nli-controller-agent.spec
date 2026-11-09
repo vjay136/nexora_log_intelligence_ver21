@@ -1,4 +1,4 @@
-%{!?nli_version:%global nli_version 22.3.0}
+%{!?nli_version:%global nli_version 22.4.0}
 %{!?nli_release:%global nli_release 0}
 Name:           nli-controller-agent
 Version:        %{nli_version}
@@ -135,7 +135,7 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %doc %{_docdir}/%{name}/V22_4_RELEASE_NOTES.md
 
 %changelog
-* Mon Nov 09 2026 Nexora Engineering <engineering@nexora.local> - 22.3.0-0
+* Mon Nov 09 2026 Nexora Engineering <engineering@nexora.local> - 22.4.0-0
 - Improve parser coverage, hourly output files and replay reporting.
 
 * Sun Nov 08 2026 Nexora Engineering <engineering@nexora.local> - 22.2.0-0
