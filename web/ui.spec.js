@@ -5,7 +5,7 @@ import { contrast as designContrast } from './design-engine.js';
 // These browser regressions verify frontend behavior independently of network
 // and database availability. e2e.spec.js separately exercises a real controller.
 const origin = 'http://127.0.0.1:4176';
-const tabs = ['operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
+const tabs = ['operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
 const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
 test('contextual Ask AI and visual blocks start from an empty mapping', async ({page})=>{
@@ -605,8 +605,8 @@ test('navigation leads with Command Center, Assurance Lab, approvals and notific
   await mockController(page);
   await login(page);
   const ids=await page.locator('.nav-item').evaluateAll(items=>items.map(item=>item.dataset.page));
-  expect(ids.slice(0,19)).toEqual(['operations','monitoring','streams','assurance','quarantine-wizard','upes','rollouts','parser-sync','artifacts','parser-workspace','nupire','field-integrity','ai','parsers','field-mapping','studio','regex','knownkeys','drift']);
-  expect(ids[19]).toBe('notifications');
+  expect(ids.slice(0,21)).toEqual(['operations','monitoring','streams','assurance','quarantine-wizard','upes','rollouts','parser-sync','artifacts','parser-workspace','nupire','field-integrity','ai','parsers','reference-ai','building-blocks','field-mapping','studio','regex','knownkeys','drift']);
+  expect(ids[21]).toBe('notifications');
   const input=ids.indexOf('input-paths'),output=ids.indexOf('outputs'),parsing=ids.indexOf('kv');
   expect(ids[input+1]).toBe('migration');
   expect(ids[input+2]).toBe('outputs');
@@ -776,13 +776,29 @@ test('AI manager tests the exact unsaved NVIDIA model with explicit SSE vision o
  await form.getByRole('button',{name:'Save provider settings',exact:true}).click();await expect.poll(()=>saved?.id).toBe('nvidia-vision');expect(saved).toMatchObject({enabled:true,credential_source:'env_ref',credential_ref:'NVIDIA_API_KEY',fallback_group:'review'});expect(saved).not.toHaveProperty('api_key');expect(saved).not.toHaveProperty('image_url');expect(saved).not.toHaveProperty('stream');
 });
 
-test('FieldSense optional AI uses configured capability and failed Assurance while preserving review gates',async({page})=>{
- const mock=await mockController(page,{assurancePassed:false});const writes=[];page.on('request',request=>{if(request.method()==='POST')writes.push(new URL(request.url()).pathname);});
- await page.route('**/api/v1/ai/capabilities',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({available:true,status:'configured_not_connection_verified',credential_ready_profiles:1})}));
- await page.route('**/api/v1/assurance/mapping-preview',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({passed:false,actual:{},errors:['Required mapping mismatch']})}));
- const proposal={id:'ai-review-only',state:'draft',payload:{name:'AI review only',source_hash:'synthetic-failure',proposal:{pattern_type:'regex',pattern:'^(?P<status>.*)$'},requires_human_approval:true}};await page.route('**/api/v1/assurance/ai-proposal',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:proposal.id,requires_human_approval:true,published:false})}));await page.route('**/api/v1/assurance/ai-proposals',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({proposals:[proposal]})}));
- await login(page);await page.getByTestId('nav-field-mapping').click();await page.locator('#nfi-raw').fill('status=FAILED');await page.getByRole('button',{name:'Add Custom Field',exact:true}).click();await page.locator('[data-qrw-key=name]').fill('my_status');await page.locator('[data-qrw-key=policy]').selectOption('required');await page.locator('[data-qrw-key=method]').selectOption('key_value');await page.locator('[data-qrw-key=source]').fill('status');await page.getByText('Optional configured AI help · review only',{exact:true}).click();await page.getByRole('button',{name:'Ask configured AI for review-only help',exact:true}).click();expect(writes.includes('/api/v1/assurance/ai-proposal')).toBe(false);
- await page.getByRole('button',{name:'Preview mapping',exact:true}).click();await page.getByRole('button',{name:'Ask configured AI for review-only help',exact:true}).click();await expect(page.locator('#nfi-ai-status')).toContainText('Review-only AI draft');await expect(page.locator('#nfi-ai-proposals')).toContainText('AI review only');await expect(page.locator('[data-qrw-key=name]')).toHaveValue('my_status');expect(writes).toContain('/api/v1/assurance/run');expect(writes).toContain('/api/v1/assurance/ai-proposal');expect(writes.some(path=>path.endsWith('/publish')||path.endsWith('/assurance/parsers'))).toBe(false);expect(mock.observed.some(item=>item.endsWith('/rollouts/proposals')&&item.startsWith('POST'))).toBe(false);
+test('FieldSense requests guidance before native preview and preserves the editable plan',async({page})=>{
+  await mockController(page);
+  const writes=[];
+  page.on('request',request=>{if(request.method()==='POST')writes.push(new URL(request.url()).pathname);});
+  await page.route('**/api/v1/ai/workspace',route=>{
+    expect(route.request().postDataJSON()).toMatchObject({mode:'ask',workspace:'field-mapping',raw:'status=FAILED'});
+    return route.fulfill({json:{answer:'Map the status key from the raw record.',review_only:true}});
+  });
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  await page.locator('#nfi-raw').fill('status=FAILED');
+  await page.getByRole('button',{name:'Add Custom Field',exact:true}).click();
+  await page.locator('[data-qrw-key=name]').fill('my_status');
+  await page.getByText('Optional configured AI help · review only',{exact:true}).click();
+  await page.getByRole('button',{name:'Ask configured AI for review-only help',exact:true}).click();
+  const dialog=page.getByRole('dialog');
+  await dialog.getByRole('textbox',{name:'What do you need help with?'}).fill('How should I map status?');
+  await dialog.getByRole('button',{name:'Get guidance'}).click();
+  await expect(dialog.getByRole('status')).toHaveText('Map the status key from the raw record.');
+  await dialog.getByRole('button',{name:'Close',exact:true}).click();
+  await expect(page.locator('[data-qrw-key=name]')).toHaveValue('my_status');
+  expect(writes).toContain('/api/v1/ai/workspace');
+  expect(writes.some(path=>path.endsWith('/publish')||path.endsWith('/assurance/parsers')||path.endsWith('/rollouts/proposals'))).toBe(false);
 });
 
 test('FieldSense controller suggestions preserve manual mappings and expose optional read-only parser-pool evidence',async({page})=>{

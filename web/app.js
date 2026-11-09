@@ -862,9 +862,9 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     }
   }
   const WORKSPACE_ARTIFACTS=[['mapping','Field mapping'],['parser','Full parser pack'],['regex','Regex'],['template','Template'],['pattern','Pattern'],['key_pack','Key pack'],['keys','Known keys']];
-  function workspaceAIForm({mode='fix',tab='',raw='',references=[]}={}) {
+  function workspaceAIForm({mode='fix',tab='',raw='',references=[],defaultArtifact=''}={}) {
     return `<form class="form-grid" data-workspace-ai-form data-mode="${esc(mode)}" data-tab="${esc(tab)}"><label class="field wide">${mode==='ask'?'What do you need help with?':'Describe the desired fix and any fields to keep, rename, omit or transform'}<textarea name="question" maxlength="2000" rows="3"></textarea></label>
-      ${mode==='fix'?'<label class="field">Draft type<select name="artifact">'+WORKSPACE_ARTIFACTS.map(([id,label])=>`<option value="${id}">${label}</option>`).join('')+'</select></label>':''}
+      ${mode==='fix'?'<label class="field">Draft type<select name="artifact"><option value="">Recommend the next action</option>'+WORKSPACE_ARTIFACTS.map(([id,label])=>`<option value="${id}" ${id===defaultArtifact?'selected':''}>${label}</option>`).join('')+'</select></label>':''}
       ${references.length?'<label class="field">Existing reference<select name="reference"><option value="">No reference</option>'+references.map(({kind,id,revision,label})=>`<option value="${esc(JSON.stringify({kind,id,revision}))}">${esc(label)}</option>`).join('')+'</select></label>':''}
       <label class="field wide">Sample record · optional for guidance<textarea name="raw" rows="4" maxlength="65536">${esc(raw)}</textarea></label>${mode==='fix'?'<label class="field wide">Expected mapping output (optional JSON object)<textarea name="desired" rows="3"></textarea></label>':''}<p class="hint wide">The controller masks sample evidence before sending it to the configured provider. Review the proposal before applying it to your editor.</p><div class="actions wide"><button type="button" class="primary" data-action="workspace-ai-run">${mode==='ask'?'Get guidance':'Build draft'}</button><button type="reset" class="secondary">Reset form</button><button type="button" class="secondary" data-action="workspace-ai-import" hidden>Apply mapping to editor</button><button type="button" class="secondary" data-action="workspace-ai-download" hidden>Download draft</button></div><pre class="json-output wide" data-workspace-ai-result role="status"></pre></form>`;
   }
@@ -874,7 +874,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       const data=await api(path).catch(()=>({}));
       return (data.parsers||data.items||data.documents||[]).filter(item=>item.id).map(item=>({kind,id:item.id,revision:item.revision,label:`${kind} · ${item.payload?.name||item.name||item.id}${item.revision?' · revision '+item.revision:''}`}));
     }))).flat();
-    renderPage('reference-ai',panel('Reference based help & Fix','Choose the artifact you want to draft, describe the outcome and include a sample record.',workspaceAIForm({references})));
+    renderPage('reference-ai',panel('Reference based help & Fix','Choose the artifact you want to draft, describe the outcome and include a sample record.',workspaceAIForm({references,defaultArtifact:'mapping'})));
   }
   function loadBuildingBlocks(){
     renderPage('building-blocks',panel('Building Blocks','Select text from the raw record to capture a reusable character range. Each block becomes an editable FieldSense field.',`<label class="field">Raw record<textarea id="block-raw" rows="5">${esc(state.blockSeed||'')}</textarea></label><div class="actions"><button type="button" class="secondary" data-action="block-add">Split at selected text</button><button type="button" class="secondary" data-action="block-literal">Add literal</button><button type="button" class="secondary" data-action="block-reset">Reset</button><button type="button" class="primary" data-action="block-open">Open blocks in FieldSense</button></div><div id="block-fields"></div>`));
@@ -2541,7 +2541,8 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         const dialog=document.createElement('dialog'),tab=button.dataset.tab||page.querySelector('[role=tab][aria-selected=true]')?.textContent||'';
         dialog.id='workspace-ai-dialog';
         dialog.className='panel';
-        dialog.innerHTML=`<h3>${button.dataset.mode==='fix'?'Fix with AI':'Ask AI'} · ${esc(tab||TITLES[state.page])}</h3>${workspaceAIForm({mode:button.dataset.mode,tab,raw:tab==='Field mapping'||['field-mapping','quarantine-wizard'].includes(state.page)?qrwRaw():''})}<button type="button" class="secondary" data-action="workspace-ai-close">Close</button>`;
+        const raw=tab==='Field mapping'||['field-mapping','quarantine-wizard'].includes(state.page)?qrwRaw():'';
+        dialog.innerHTML=`<h3>${button.dataset.mode==='fix'?'Fix with AI':'Ask AI'} · ${esc(tab||TITLES[state.page])}</h3>${workspaceAIForm({mode:button.dataset.mode,tab,raw,defaultArtifact:raw?'mapping':''})}<button type="button" class="secondary" data-action="workspace-ai-close">Close</button>`;
         page.append(dialog);
         dialog.showModal();
         break;
