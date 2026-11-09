@@ -38,16 +38,16 @@ Existing logs are preserved. Missing files are created as `nli:nli` mode
 `0640`, and every bundled ParserPack is self-tested before services start.
 
 These scripts support Rocky Linux 9 and Rocky Linux 10 on x86_64. Download only
-the versioned `nli-v22.2.0-0-x86_64.tar.gz` archive and its adjacent `.sha256`
+the versioned `nli-v22.3.0-0-x86_64.tar.gz` archive and its adjacent `.sha256`
 file from the same GitHub release. Never copy loose release files into an old
 `~/nli-ver22` directory. Extract each release into a new versioned directory:
 
 ```bash
 mkdir -p ~/nli/releases
 cd ~/nli/releases
-sha256sum -c nli-v22.2.0-0-x86_64.tar.gz.sha256
-tar -xzf nli-v22.2.0-0-x86_64.tar.gz
-cd nli-v22.2.0-0-x86_64
+sha256sum -c nli-v22.3.0-0-x86_64.tar.gz.sha256
+tar -xzf nli-v22.3.0-0-x86_64.tar.gz
+cd nli-v22.3.0-0-x86_64
 cat RELEASE_ID
 sha256sum -c SHA256SUMS
 ```
@@ -359,9 +359,11 @@ sudo dnf -y install ./nli_client_ver22.rpm
 sudo systemctl status nli-client-bootstrap nli-client-control nli-agent --no-pager
 ```
 
-The client RPM creates empty input files as `nli:nli`, mode `0640`. The agent
-creates a family-isolated output file lazily only after the first routed record
-for that family, using the current UTC-hour timestamp pattern shown below:
+The client RPM creates empty input files as `nli:nli`, mode `0640`. At startup
+and on each UTC hour boundary, the agent prepares the configured hourly
+output files. With the default local file output, each configured family gets
+a normalized file and a quarantine file. Both files can exist before records
+arrive, and an idle route leaves its file empty. Existing records are preserved.
 
 | Input | Successful JSONL | Quarantine JSONL |
 |---|---|---|

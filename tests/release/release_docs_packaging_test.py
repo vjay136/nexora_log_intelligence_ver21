@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that the Ver22.2 release documents ship everywhere."""
+"""Verify that the Ver22.3 release documents ship everywhere."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 DOCUMENTS = {
-    "V22_2_RELEASE_NOTES.md": "docs/V22_2_RELEASE_NOTES.md",
+    "V22_3_RELEASE_NOTES.md": "docs/V22_3_RELEASE_NOTES.md",
     "All_NLI_features.md": "All_NLI_features.md",
     "V21_R1_RELEASE_NOTES.md": "docs/V21_R1_RELEASE_NOTES.md",
     "V21_R1_TEST_RESULTS.md": "docs/V21_R1_TEST_RESULTS.md",
@@ -45,7 +45,7 @@ DOCUMENTS = {
 
 
 def fail(message: str) -> None:
-    raise SystemExit(f"Ver22.2 release-doc packaging: FAIL: {message}")
+    raise SystemExit(f"Ver22.3 release-doc packaging: FAIL: {message}")
 
 
 def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
@@ -115,19 +115,19 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
                 fail(f"{relative} does not reference packaged artifact {name}")
 
     workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    for claim in ("NLI V22 release", "nli-v22-unsigned-release", "docs/V22_2_RELEASE_NOTES.md", "v22.1.0-0"):
+    for claim in ("NLI V22 release", "nli-v22-unsigned-release", "docs/V22_3_RELEASE_NOTES.md", "v22.2.0-0"):
         if claim not in workflow:
             fail(f"release workflow does not identify the Ver22 workflow and Ver22 baseline: {claim!r}")
 
     release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-    if "NLI_VERSION=22.2.0" not in release_env or "NLI_RELEASE=0" not in release_env.splitlines():
-        fail("packaging release identity is not 22.2.0-0")
+    if "NLI_VERSION=22.3.0" not in release_env or "NLI_RELEASE=0" not in release_env.splitlines():
+        fail("packaging release identity is not 22.3.0-0")
 
     for relative in (
-        "README.md", "CHANGELOG.md", "docs/V22_2_RELEASE_NOTES.md",
+        "README.md", "CHANGELOG.md", "docs/V22_3_RELEASE_NOTES.md",
         "packaging/rpm/nli-client.spec", "packaging/rpm/nli-controller-agent.spec",
     ):
-        if "22.2.0-0" not in (root / relative).read_text(encoding="utf-8"):
+        if "22.3.0-0" not in (root / relative).read_text(encoding="utf-8"):
             fail(f"{relative} does not identify the current release")
 
     # Historical source evidence remains available for compatibility and audit.
@@ -148,7 +148,7 @@ def main() -> None:
     parser.add_argument("--controller", required=True, type=Path)
     args = parser.parse_args()
     validate(args.root.resolve(), args.output.resolve(), args.client.resolve(), args.controller.resolve())
-    print("Ver22.2 release-doc packaging: PASS")
+    print("Ver22.3 release-doc packaging: PASS")
 
 
 if __name__ == "__main__":

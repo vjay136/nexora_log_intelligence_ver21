@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -10,6 +11,36 @@ import (
 )
 
 const additiveSMTP = "20250812 130034198+0100 mail001 smtp 3609 0 140290550523648 Note;SmtpServerConnect(2001/3) id=6864BD5E047384B0:host=11.22.33.44:connection_count=1:local_port=2525"
+
+func TestSMTPWrappedTailCannotNormalizePartially(t *testing.T) {
+	const header = "20250812 130035121+0100 aaa-gmailrgo009 smtp 3609 0 140293780948736 Note;SmtpServerEHLO(2001/4) "
+	const tail = "{id=6864BD5E047384C4:domain=server035.mx.internal:host=11.22.33.44}"
+	adapter, err := NewParserPackAdapter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := engine.Source{Service: "auto"}
+	result := adapter.TryParseV5Production(header+tail, source)
+	if !result.Success || result.Quarantined {
+		t.Fatalf("complete sample was not parsed: %+v", result.ParseTelemetry)
+	}
+	t.Logf("sample selected parser %s", result.ParseTelemetry.ParserID)
+	for key, want := range map[string]string{"id": "6864BD5E047384C4", "domain": "server035.mx.internal", "host": "11.22.33.44"} {
+		if got, ok := result.EventPayload.Get(key); !ok || got != want {
+			t.Errorf("%s = %v, want %q", key, got, want)
+		}
+	}
+	for _, input := range []string{header + strings.TrimSuffix(tail, "}"), header + "{id=6864BD5E047384C4:unmapped_field=lost}"} {
+		rejected := adapter.TryParseV5Production(input, source)
+		if rejected.Success || !rejected.Quarantined || !slices.Contains(rejected.ParseTelemetry.ErrorCodes, "incomplete_structured_tail") {
+			t.Fatalf("partial result escaped quarantine: %+v", rejected.ParseTelemetry)
+		}
+	}
+	misrouted := adapter.TryParseV5Production(header+tail, engine.Source{Service: "unrecognized-mail-service"})
+	if misrouted.Success || !misrouted.Quarantined || !slices.Contains(misrouted.ParseTelemetry.ErrorCodes, "incomplete_structured_tail") {
+		t.Fatalf("unsupported configured service allowed generic fallback: %+v", misrouted.ParseTelemetry)
+	}
+}
 
 func TestAutomaticReviewedMappingDoesNotShortCircuitExistingParsers(t *testing.T) {
 	adapter, _ := sourceParityAdapter(t, additiveSMTP, fieldmapping.Plan{Version: 1, Fields: []fieldmapping.Field{{Name: "custom_message", Method: "raw"}}})

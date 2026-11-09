@@ -9,10 +9,41 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"nexora.local/nli-v20/internal/output"
 	"nexora.local/nli-v20/telemetry"
 )
+
+func TestAgentPreparesBothHourlyFilesForEmptyInput(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "smtp.log")
+	if err := os.WriteFile(input, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		Inputs:   []InputConfig{{Path: input, Service: "smtp"}},
+		StateDir: filepath.Join(root, "state"),
+		PollMS:   50,
+		Outputs: []output.Config{
+			{Type: "file", PathTemplate: filepath.Join(root, "smtp_normalised_{hour_utc}.jsonl"), Routes: []string{"normal"}},
+			{Type: "file", PathTemplate: filepath.Join(root, "smtp_quarantine_{hour_utc}.jsonl"), Routes: []string{"quarantine"}},
+		},
+	}
+	started := time.Now()
+	if err := Run(context.Background(), cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, destination := range cfg.Outputs {
+		path, _ := output.ResolveFilePath(destination, started)
+		if _, err := os.Stat(path); os.IsNotExist(err) && started.UTC().Hour() != time.Now().UTC().Hour() {
+			path, _ = output.ResolveFilePath(destination, time.Now())
+		}
+		if content, err := os.ReadFile(path); err != nil || len(content) != 0 {
+			t.Fatalf("expected empty hourly destination %s: %q, %v", path, content, err)
+		}
+	}
+}
 
 func TestRemoteOnlyProfileGetsMandatoryRetryableLocalQuarantinePath(t *testing.T) {
 	config := Config{StateDir: t.TempDir(), Outputs: []output.Config{{Type: "clickhouse", URL: "https://clickhouse.example.com", Routes: []string{"normal", "warning"}}}}

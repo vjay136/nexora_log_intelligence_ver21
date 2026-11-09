@@ -1,6 +1,6 @@
 {
   "name": "nexora-log-intelligence-v22",
-  "version": "22.2.0",
+  "version": "22.3.0",
   "private": true,
   "type": "module",
   "engines": { "node": "24.x" },

@@ -28,6 +28,7 @@ func TestKVIEOnePlanForReportedMailTails(t *testing.T) {
 		"|status:failed|reason:notneeded|server:cloud|",
 		"status:failed reason;notneeded server;cloud",
 		"status=failed:reason=notneeded:server=cloud",
+		"{status=failed:reason=notneeded:server=cloud}",
 		"status=failed reason=notneeded server=cloud",
 		"status:failed,reason:notneeded,server:cloud",
 	} {

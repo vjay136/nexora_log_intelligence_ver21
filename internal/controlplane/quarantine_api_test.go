@@ -362,6 +362,24 @@ func TestQuarantineReplayResultUpdatesRecordsPerAgentConfirmation(t *testing.T) 
 			t.Errorf("record %s parser revision=%q, want %q", id, got.ParserRevision, revisions[id])
 		}
 	}
+	response, data := f.request(http.MethodGet, "/api/v1/sync/snapshot", nil)
+	var snapshot struct {
+		Subsystems struct {
+			Replay struct {
+				Queued       int                       `json:"queued"`
+				Reprocessing int                       `json:"reprocessing"`
+				Resolved     int                       `json:"resolved"`
+				ByNode       map[string]map[string]int `json:"by_node"`
+			} `json:"replay"`
+		} `json:"subsystems"`
+	}
+	if err := json.Unmarshal(data, &snapshot); err != nil || response.StatusCode != http.StatusOK {
+		t.Fatalf("replay snapshot: %d %s, %v", response.StatusCode, data, err)
+	}
+	replay := snapshot.Subsystems.Replay
+	if replay.Resolved != 1 || replay.Reprocessing != 0 || replay.Queued != 4 || replay.ByNode["node-1"]["resolved"] != 1 {
+		t.Fatalf("replay outcomes not reflected in live counts: %+v", replay)
+	}
 }
 
 func TestQuarantineReplayIgnoresStaleAndDuplicateAcknowledgements(t *testing.T) {

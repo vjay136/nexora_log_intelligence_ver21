@@ -281,6 +281,7 @@ func (e *ParserPackExecutor) executeRule(ctx context.Context, request *Execution
 		Outcome: telemetry.AttemptOutcomeFailed, StageResults: []telemetry.StageResult{},
 	}
 	fields := workingSet{}
+	mappingVerified := false
 	if len(rule.Stages) > e.pack.ResourceLimits.MaxStageCount {
 		err := fail("stage_limit", "rule exceeds configured stage limit")
 		attempt.FailureReason = errorCode(err)
@@ -315,6 +316,15 @@ func (e *ParserPackExecutor) executeRule(ctx context.Context, request *Execution
 			return nil, attempt, snapshotRuleStats(fields), err
 		}
 		attempt.StageResults = append(attempt.StageResults, stageResult)
+		mappingVerified = mappingVerified || stage.Type == StageTypeMapping
+	}
+
+	if !mappingVerified {
+		if err := validateFramedMailTail(request.Input, fields); err != nil {
+			attempt.FailureReason = errorCode(err)
+			attempt.LatencyMs = elapsedMillis(started)
+			return nil, attempt, snapshotRuleStats(fields), err
+		}
 	}
 
 	if err := enforceSchema(rule, fields); err != nil {

@@ -122,6 +122,9 @@ type Server struct {
 	metricIngestMu           sync.Mutex
 	fleetSyncMu              sync.Mutex
 	quarantine               *quarantineVault
+	replaySnapshotMu         sync.Mutex
+	replaySnapshot           map[string]any
+	replaySnapshotExpires    time.Time
 	nupire                   nupireController
 	downloadKey              []byte
 	browserHeartbeatMu       sync.RWMutex
@@ -525,7 +528,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/notifications", s.handleNotificationFeed)
 	s.mux.HandleFunc("/api/v1/notifications/config", s.handleNotificationConfig)
 	s.mux.HandleFunc("/api/v1/notifications/", s.handleNotificationAck)
-	s.mux.HandleFunc("/api/v1/sync/stream", guard(middleware.PermissionReadTelemetry, s.streamTelemetry.CanonicalSSEHandlerWithSnapshot(s.hub, func(r *http.Request) any { return s.canonicalSyncSnapshot(r.Context()) })))
+	s.mux.HandleFunc("/api/v1/sync/stream", guard(middleware.PermissionReadTelemetry, s.streamTelemetry.CanonicalSSEHandlerWithSnapshot(s.hub, func(r *http.Request) any {
+		return s.canonicalSyncSnapshot(r.Context())
+	}, s.cachedReplayQueueSnapshot)))
 	s.mux.HandleFunc("/api/v1/sync/diagnostics", guard(middleware.PermissionReadTelemetry, s.streamTelemetry.DiagnosticsHandler))
 	s.mux.HandleFunc("/api/v1/dashboard/snapshot", guard(middleware.PermissionReadTelemetry, s.handleDashboardSnapshot))
 	s.mux.HandleFunc("/api/v1/quarantine/summary", guard(middleware.PermissionReadLogs, s.handleQuarantineSummary))
@@ -1090,6 +1095,8 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 	if canRead(middleware.PermissionReadTelemetry) {
 		files, _ := json.Marshal(s.streamTelemetry.Snapshot())
 		parts["stream_files"] = files
+		replay, _ := json.Marshal(s.cachedReplayQueueSnapshot(r.Context()))
+		parts["replay"] = replay
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-NLI-Dashboard-Bounded", "true")

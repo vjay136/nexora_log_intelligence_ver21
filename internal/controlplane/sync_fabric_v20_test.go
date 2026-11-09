@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,8 +14,32 @@ import (
 
 	"nexora.local/nli-v20/internal/fleet"
 	"nexora.local/nli-v20/internal/protocol"
+	metastore "nexora.local/nli-v20/internal/store"
 	"nexora.local/nli-v20/telemetry"
 )
+
+type replayInventoryStore struct {
+	metastore.Store
+}
+
+func (replayInventoryStore) List(_ context.Context, _ string, query metastore.Query) ([]metastore.Document, error) {
+	if query.Offset == 1000 {
+		return []metastore.Document{{}}, nil
+	}
+	rows := make([]metastore.Document, query.Limit)
+	for i := range rows {
+		rows[i].Payload = json.RawMessage(`{"node_id":"node-1","status":"resolved"}`)
+	}
+	return rows, nil
+}
+
+func TestReplayQueueSnapshotMarksBoundedCountsPartial(t *testing.T) {
+	server := Server{quarantine: &quarantineVault{store: replayInventoryStore{}}}
+	got := server.replayQueueSnapshot(context.Background(), time.Now())
+	if got["status"] != "partial" || got["resolved"] != 1000 || got["count_limit"] != 1000 {
+		t.Fatalf("bounded replay inventory must be reported as partial: %+v", got)
+	}
+}
 
 func syncBatch(node, generation string, sequence uint64, files ...telemetry.StreamFileTelemetry) telemetry.SyncBatch {
 	now := time.Now().UTC()
@@ -125,7 +150,7 @@ func TestCanonicalSSERefreshesServerWriteDeadline(t *testing.T) {
 	hub := NewStreamHub(4)
 	hub.target = 10 * time.Millisecond
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.serveCanonicalSSE(w, r, nil, nil)
+		hub.serveCanonicalSSE(w, r, nil, nil, nil)
 	}))
 	server.Config.WriteTimeout = 35 * time.Millisecond
 	server.Start()

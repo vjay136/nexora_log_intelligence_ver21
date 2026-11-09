@@ -233,11 +233,11 @@ func (w *FileWriter) WriteIdentified(envelope []byte, route, id string) (resultE
 	if len(j.committed)+len(j.pending) >= maxPendingDeliveryReceipts {
 		return fmt.Errorf("unacknowledged local delivery capacity exceeded; restore required destination and retry")
 	}
-	target, err := resolveFilePath(w.cfg, w.now().UTC())
+	path, err := resolveFilePath(w.cfg, w.now().UTC())
 	if err != nil {
 		return err
 	}
-	paths := []string{target, w.currentPath}
+	paths := []string{path, w.currentPath}
 	for _, entry := range j.pending {
 		paths = append(paths, entry.Path)
 	}
@@ -263,8 +263,7 @@ func (w *FileWriter) WriteIdentified(envelope []byte, route, id string) (resultE
 	if j.committed[id] {
 		return nil
 	}
-	path, err := w.ensureCurrentFile()
-	if err != nil {
+	if err := w.ensureCurrentFile(path); err != nil {
 		return err
 	}
 	maxBytes := w.cfg.MaxMB * 1024 * 1024

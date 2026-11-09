@@ -1,5 +1,10 @@
 # Changelog
 
+## [22.3.0-0]
+
+- Improve parser coverage and hourly normalized and quarantine files.
+- Report successful replay separately from original ingestion.
+
 ## [22.2.0-0]
 
 - Add direct literal Replace and Split controls in field mappings.

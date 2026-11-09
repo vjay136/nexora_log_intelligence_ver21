@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -595,14 +596,16 @@ func (h *StreamHub) SSEHandlerWithEvents(events *wsrelay.Hub) http.HandlerFunc {
 }
 
 func (h *StreamHub) CanonicalSSEHandlerWithEvents(events *wsrelay.Hub) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) { h.serveCanonicalSSE(w, r, events, nil) }
+	return func(w http.ResponseWriter, r *http.Request) { h.serveCanonicalSSE(w, r, events, nil, nil) }
 }
 
-func (h *StreamHub) CanonicalSSEHandlerWithSnapshot(events *wsrelay.Hub, snapshot func(*http.Request) any) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) { h.serveCanonicalSSE(w, r, events, snapshot) }
+func (h *StreamHub) CanonicalSSEHandlerWithSnapshot(events *wsrelay.Hub, snapshot func(*http.Request) any, replaySnapshot func(context.Context) map[string]any) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h.serveCanonicalSSE(w, r, events, snapshot, replaySnapshot)
+	}
 }
 
-func (h *StreamHub) serveCanonicalSSE(w http.ResponseWriter, r *http.Request, events *wsrelay.Hub, snapshot func(*http.Request) any) {
+func (h *StreamHub) serveCanonicalSSE(w http.ResponseWriter, r *http.Request, events *wsrelay.Hub, snapshot func(*http.Request) any, replaySnapshot func(context.Context) map[string]any) {
 	if r.Method != http.MethodGet {
 		jsonError(w, "GET required", http.StatusMethodNotAllowed)
 		return
@@ -687,9 +690,15 @@ func (h *StreamHub) serveCanonicalSSE(w http.ResponseWriter, r *http.Request, ev
 		case <-keepalive.C:
 			// Keep transport freshness and source disconnect detection live from
 			// the in-memory canonical store. Do not execute the full snapshot
-			// callback here: it can query remote metadata and would multiply that
-			// work by every connected browser once per second.
-			heartbeat := h.CanonicalSnapshot()
+			// callback here: it can query remote metadata. Replay is a separate,
+			// cached snapshot of local controller records.
+			heartbeat := struct {
+				telemetry.SyncSnapshot
+				Subsystems map[string]any `json:"subsystems,omitempty"`
+			}{SyncSnapshot: h.CanonicalSnapshot()}
+			if replaySnapshot != nil {
+				heartbeat.Subsystems = map[string]any{"replay": replaySnapshot(r.Context())}
+			}
 			if !writeSSE(stream, flusher, enc, strconv.FormatUint(h.sequence.Add(1), 10), "sync_heartbeat", heartbeat) {
 				return
 			}

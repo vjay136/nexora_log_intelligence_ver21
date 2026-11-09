@@ -781,6 +781,50 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		defer func() { runErr = errors.Join(runErr, v5Router.Close()) }()
 	}
 
+	hourlyFiles := make([]output.Config, 0)
+	for _, destination := range c.Outputs {
+		if destination.Type == "file" && destination.PathTemplate != "" {
+			hourlyFiles = append(hourlyFiles, destination)
+		}
+	}
+	refreshHourlyFiles := func() time.Duration {
+		now := time.Now()
+		nextHour := now.UTC().Truncate(time.Hour).Add(time.Hour)
+		err := output.EnsureHourlyFiles(hourlyFiles, now)
+		delay := time.Until(nextHour)
+		if err != nil {
+			// A route can still write independently. Retry preparation
+			// without interrupting ingestion for other destinations.
+			fmt.Fprintf(os.Stderr, "nli: %v\n", err)
+			delay = min(delay, time.Minute)
+		}
+		return delay
+	}
+	if len(hourlyFiles) > 0 {
+		delay := refreshHourlyFiles()
+		if !once {
+			hourlyContext, stopHourlyFiles := context.WithCancel(ctx)
+			hourlyDone := make(chan struct{})
+			go func() {
+				defer close(hourlyDone)
+				timer := time.NewTimer(delay)
+				defer timer.Stop()
+				for {
+					select {
+					case <-hourlyContext.Done():
+						return
+					case <-timer.C:
+						timer.Reset(refreshHourlyFiles())
+					}
+				}
+			}()
+			defer func() {
+				stopHourlyFiles()
+				<-hourlyDone
+			}()
+		}
+	}
+
 	statePath := filepath.Join(c.StateDir, "offsets.json")
 	states := map[string]cursor{}
 	if data, err := os.ReadFile(statePath); err == nil {

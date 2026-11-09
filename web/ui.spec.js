@@ -1491,9 +1491,23 @@ test('equal-revision canonical heartbeat refreshes freshness without replacing t
   const range=page.locator('#dashboard-range');
   await range.focus();
   await range.evaluate(node=>{window.__heartbeatInput=node;window.__heartbeatRoot=document.querySelector('#page').firstElementChild;});
-  await page.evaluate(value=>window.__streamSources.at(-1).emit('sync_heartbeat',{schema_version:value.schema_version,revision:value.revision,generated_at:new Date().toISOString(),target_interval_ms:value.target_interval_ms,aggregate:value.aggregate,sources:value.sources,diagnostics:value.diagnostics}),snapshot);
+  const historical=page.getByTestId('live-dashboard-kpis').locator('.dashboard-kpi').filter({hasText:'Quarantined'}).locator('strong');
+  const originalCount=await historical.textContent();
+  const replay=page.getByTestId('dashboard-replay');
+  await expect(replay.locator('[data-replay-counter="reprocessing"]')).toHaveText('1');
+  await page.evaluate(value=>window.__streamSources.at(-1).emit('sync_heartbeat',{schema_version:value.schema_version,revision:value.revision,generated_at:new Date().toISOString(),target_interval_ms:value.target_interval_ms,aggregate:value.aggregate,sources:value.sources,diagnostics:value.diagnostics,subsystems:{replay:{status:'ready',queued:1,reprocessing:0,resolved:3,manual_attention:0,by_node:{'node-1':{queued:1,resolved:2}}}}}),snapshot);
+  await expect(replay.locator('[data-replay-counter="reprocessing"]')).toHaveText('0');
+  await expect(replay.locator('[data-replay-counter="resolved"]')).toHaveText('3');
+  await expect(historical).toHaveText(originalCount);
+  await page.evaluate(value=>{
+    const {subsystems,...heartbeat}=value;
+    window.__streamSources.at(-1).emit('sync_heartbeat',heartbeat);
+  },snapshot);
+  await expect(replay.locator('[data-replay-counter="resolved"]')).toHaveText('3');
   await expect.poll(()=>page.evaluate(()=>({focused:document.activeElement===window.__heartbeatInput,connected:window.__heartbeatInput?.isConnected,root:document.querySelector('#page').firstElementChild===window.__heartbeatRoot}))).toEqual({focused:true,connected:true,root:true});
   await expect(page.locator('#freshness')).toContainText('live');
+  await page.locator('#dashboard-client').selectOption('node-1');
+  await expect(replay.locator('[data-replay-counter="resolved"]')).toHaveText('2');
   await page.getByTestId('nav-napi-monitor').click();
   await expect(page.locator('#page')).toContainText('Pending drafts');
   await expect(page.locator('#page')).toContainText('3');

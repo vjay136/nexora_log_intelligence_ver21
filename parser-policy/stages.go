@@ -296,6 +296,16 @@ func (e *ParserPackExecutor) executeMixedKVStage(request *ExecutionRequest, rule
 		}
 		input, baseStart = text, field.Start
 	}
+	if inputField != "" {
+		body, offset, framed, err := framedKVBody(input)
+		if err != nil {
+			return 0, 0, err
+		}
+		if framed {
+			input, baseStart = body, baseStart+offset
+			config.AllowLeadingText = false
+		}
+	}
 	parsed, err := mixedkv.Parse(input, config)
 	if err != nil {
 		if typed, ok := err.(*mixedkv.Error); ok {

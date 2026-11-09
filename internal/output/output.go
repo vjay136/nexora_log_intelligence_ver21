@@ -130,17 +130,16 @@ func (w *FileWriter) Write(envelope []byte, route string) (resultErr error) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	target, err := resolveFilePath(w.cfg, w.now().UTC())
+	path, err := resolveFilePath(w.cfg, w.now().UTC())
 	if err != nil {
 		return err
 	}
-	unlock, err := lockLocalPaths(w.currentPath, target)
+	unlock, err := lockLocalPaths(w.currentPath, path)
 	if err != nil {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, unlock()) }()
-	path, err := w.ensureCurrentFile()
-	if err != nil {
+	if err := w.ensureCurrentFile(path); err != nil {
 		return err
 	}
 	maxBytes := w.cfg.MaxMB * 1024 * 1024
@@ -687,74 +686,70 @@ func (w *FileWriter) rotate(path string) error {
 	return nil
 }
 
-func (w *FileWriter) ensureCurrentFile() (string, error) {
-	path, err := resolveFilePath(w.cfg, w.now().UTC())
-	if err != nil {
-		return "", err
-	}
+func (w *FileWriter) ensureCurrentFile(path string) error {
 	if w.file != nil && path == w.currentPath {
 		opened, openedErr := w.file.Stat()
 		current, currentErr := os.Stat(path)
 		if openedErr != nil {
-			return "", openedErr
+			return openedErr
 		}
 		if currentErr == nil && os.SameFile(opened, current) {
 			w.currentSize = opened.Size() + int64(w.buffer.Buffered())
-			return path, nil
+			return nil
 		}
 		if currentErr != nil && !os.IsNotExist(currentErr) {
-			return "", currentErr
+			return currentErr
 		}
 		// Replay compacts the active raw queue by atomic replacement. A live
 		// identified writer must follow the replacement, never append to the
 		// unlinked old inode. Buffered callers fail safely instead of hiding data.
 		if w.buffer.Buffered() > 0 {
-			return "", fmt.Errorf("output was replaced while unsynchronized records were buffered")
+			return fmt.Errorf("output was replaced while unsynchronized records were buffered")
 		}
 		if err := w.file.Close(); err != nil {
-			return "", err
+			return err
 		}
 		w.file = nil
 		w.buffer = nil
 	}
 	if err := makeOwnedDirectory(filepath.Dir(path), 0750); err != nil {
-		return "", err
+		return err
 	}
 	_, priorErr := os.Stat(path)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if os.IsNotExist(priorErr) {
 		if err = PreserveFileOwner(filepath.Dir(path), path); err != nil {
 			file.Close()
-			return "", err
+			return err
 		}
 	}
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
-		return "", err
+		return err
 	}
 	if err = syncDeliveryParents(filepath.Dir(path)); err != nil {
 		_ = file.Close()
-		return "", err
+		return err
 	}
 	if w.file != nil {
 		if err := w.flushAndSyncLocked(); err != nil {
 			_ = file.Close()
-			return "", err
+			return err
 		}
 		if closeErr := w.file.Close(); closeErr != nil {
 			_ = file.Close()
-			return "", closeErr
+			return closeErr
 		}
 	}
 	w.file = file
 	w.buffer = bufio.NewWriterSize(file, fileWriterBufferSize)
 	w.currentPath = path
 	w.currentSize = info.Size()
-	return path, nil
+	return nil
 }
 
 func resolveFilePath(cfg Config, now time.Time) (string, error) {

@@ -143,6 +143,12 @@ func (p *kvieProfile) observe(raw string, offset int) ([]KeyValueObservation, er
 	// and only recognize framing when the selected profile allows pipes.
 	body := strings.TrimLeft(raw, " \t\r\n")
 	offset += len(raw) - len(body)
+	if unwrapped, start, framed, err := mixedkv.UnwrapAssignmentEnvelope(body); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrIncompleteKV, err)
+	} else if framed {
+		body = unwrapped
+		offset += start
+	}
 	frame := ""
 	for _, separator := range p.pairSeps {
 		if len(separator) > len(frame) && strings.Trim(separator, "|") == "" && strings.HasPrefix(body, separator) {

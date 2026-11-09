@@ -179,7 +179,7 @@ func (s *Server) subsystemSyncSnapshot(ctx context.Context, snapshot telemetry.S
 	nursf := map[string]any{"status": "ready", "state": nursfState, "updated_at": snapshot.GeneratedAt, "revision": snapshot.Revision, "target_interval_ms": snapshot.TargetIntervalMS, "tracked_nodes": snapshot.Diagnostics.TrackedNodes, "tracked_sources": snapshot.Diagnostics.TrackedSources, "accepted_batches": snapshot.Diagnostics.AcceptedBatches}
 	storeStats := s.events.Stats()
 	delivery := map[string]any{"status": "ready", "updated_at": snapshot.GeneratedAt, "acknowledgements_by_destination": storeStats["delivery_acks"], "retry_count": nil, "backlog": nil, "latency_ms": nil, "retry_backlog_latency_status": telemetry.FreshnessNotInstrumented}
-	replay := s.replayQueueSnapshot(ctx, snapshot.GeneratedAt)
+	replay := s.cachedReplayQueueSnapshot(ctx)
 	release := s.releaseReadinessSnapshot(ctx, snapshot.GeneratedAt)
 	upes := reconcileUPESSnapshot(upesSyncSnapshot(s.fleet.All(), snapshot.GeneratedAt), replay)
 	return map[string]any{"nhle": nhle, "napi": napi, "nal": nal, "nursf": nursf, "delivery": delivery, "replay": replay, "release_readiness": release, "upes": upes}
@@ -294,27 +294,54 @@ func reconcileUPESSnapshot(runtimeState, replayState map[string]any) map[string]
 	return result
 }
 
+// The local quarantine inventory is shared by all live dashboard subscribers.
+// Refreshing it at most once per interval keeps SSE heartbeats inexpensive.
+func (s *Server) cachedReplayQueueSnapshot(ctx context.Context) map[string]any {
+	s.replaySnapshotMu.Lock()
+	defer s.replaySnapshotMu.Unlock()
+	now := time.Now().UTC()
+	if now.Before(s.replaySnapshotExpires) {
+		return s.replaySnapshot
+	}
+	s.replaySnapshot = s.replayQueueSnapshot(ctx, now)
+	s.replaySnapshotExpires = time.Now().Add(5 * time.Second)
+	return s.replaySnapshot
+}
+
 func (s *Server) replayQueueSnapshot(ctx context.Context, now time.Time) map[string]any {
-	result := map[string]any{"status": "ready", "updated_at": now, "queued": 0, "reprocessing": 0, "resolved": 0, "oldest_queued_age_seconds": nil, "attempts_total": 0}
+	const countLimit = 1000
+	result := map[string]any{"status": "ready", "updated_at": now, "queued": 0, "reprocessing": 0, "resolved": 0, "manual_attention": 0, "oldest_queued_age_seconds": nil, "attempts_total": 0}
 	if s.quarantine == nil || s.quarantine.store == nil {
 		result["status"], result["state"] = telemetry.FreshnessUnavailable, "unavailable"
 		return result
 	}
-	docs, err := s.quarantine.store.List(ctx, quarantineRecordsCollection, metastore.Query{Limit: 1000})
+	docs, err := s.quarantine.store.List(ctx, quarantineRecordsCollection, metastore.Query{Limit: countLimit})
 	if err != nil {
 		result["status"], result["state"], result["reason"] = telemetry.FreshnessCollectionFailed, "unavailable", "quarantine queue collection failed"
 		return result
 	}
+	// The configured retention ceiling is at most countLimit. Probe one
+	// additional row so an oversized inventory does not look like a total.
+	if len(docs) == countLimit {
+		extra, err := s.quarantine.store.List(ctx, quarantineRecordsCollection, metastore.Query{Limit: 1, Offset: countLimit})
+		if err != nil || len(extra) != 0 {
+			result["status"] = "partial"
+			result["count_limit"] = countLimit
+			result["reason"] = "full quarantine inventory could not be verified"
+		}
+	}
 	oldestAge := time.Duration(0)
 	var latestAttempt time.Time
+	byNode := map[string]map[string]int{}
 	for _, doc := range docs {
 		var record quarantineRecord
 		if json.Unmarshal(doc.Payload, &record) != nil {
 			continue
 		}
+		var category string
 		switch record.Status {
 		case "waiting", "replay_failed":
-			result["queued"] = result["queued"].(int) + 1
+			category = "queued"
 			age := now.Sub(record.FirstSeen)
 			if age < 0 {
 				age = 0
@@ -323,15 +350,25 @@ func (s *Server) replayQueueSnapshot(ctx context.Context, now time.Time) map[str
 				oldestAge = age
 			}
 		case "reprocessing":
-			result["reprocessing"] = result["reprocessing"].(int) + 1
+			category = "reprocessing"
 		case "resolved":
-			result["resolved"] = result["resolved"].(int) + 1
+			category = "resolved"
+		case "dead_letter", "manual_attention":
+			category = "manual_attention"
+		}
+		if category != "" {
+			result[category] = result[category].(int) + 1
+			if byNode[record.NodeID] == nil {
+				byNode[record.NodeID] = map[string]int{}
+			}
+			byNode[record.NodeID][category]++
 		}
 		result["attempts_total"] = result["attempts_total"].(int) + record.AttemptCount
 		if record.LastAttempt.After(latestAttempt) {
 			latestAttempt = record.LastAttempt
 		}
 	}
+	result["by_node"] = byNode
 	if result["queued"].(int) > 0 {
 		result["oldest_queued_age_seconds"] = oldestAge.Seconds()
 		result["state"] = "queued"

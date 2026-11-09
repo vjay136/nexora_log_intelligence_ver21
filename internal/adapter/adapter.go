@@ -157,7 +157,7 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 	started := time.Now()
 	trimmed := strings.TrimSpace(input)
 	service := runtimeService(source.Service, trimmed)
-	if service == "" {
+	if service == "" && !parserpolicy.HasFramedMailTail(trimmed) {
 		return &V5ParseResult{Success: false}
 	}
 	candidates := adapter.candidates(service)
@@ -173,7 +173,7 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 		}
 		return candidates[i].specificity < candidates[j].specificity
 	})
-	if len(candidates) == 0 {
+	if len(candidates) == 0 && !parserpolicy.HasFramedMailTail(trimmed) {
 		return &V5ParseResult{Success: false}
 	}
 
@@ -244,6 +244,10 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 			if code == "incomplete_structured_tail" {
 				incomplete = true
 			}
+		}
+		if !incomplete && parserpolicy.HasFramedMailTail(trimmed) {
+			metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "incomplete_structured_tail")
+			incomplete = true
 		}
 		return &V5ParseResult{ParseTelemetry: metadata, Success: false, Quarantined: hasEmbeddedCandidate || incomplete}
 	}
