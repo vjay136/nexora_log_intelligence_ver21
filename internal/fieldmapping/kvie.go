@@ -341,7 +341,19 @@ func InspectWrappedKeyValues(text string, offset int) (KVProfile, bool) {
 		if strings.IndexByte("[{(<", open) != strings.IndexByte("]})>", close) {
 			return KVProfile{}, false
 		}
-		values, err := parser.observe(text[pos+match[4]:pos+match[5]], offset+pos+match[4])
+		body := text[pos+match[4]:pos+match[5]]
+		bodyOffset := offset + pos + match[4]
+		if pos == 0 && match[1] == len(text) {
+			// A single envelope can contain multiple pairs. Leave that
+			// layout to the normal KV grammar detector, which unwraps it.
+			profiles, _ := detectKVIE(context.Background(), body, bodyOffset)
+			for _, candidate := range profiles {
+				if len(candidate.Observations) > 1 {
+					return KVProfile{}, false
+				}
+			}
+		}
+		values, err := parser.observe(body, bodyOffset)
 		if err != nil || len(values) != 1 || seen[values[0].Key] {
 			return KVProfile{}, false
 		}
