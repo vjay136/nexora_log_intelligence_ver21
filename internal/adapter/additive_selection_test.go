@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -39,6 +40,59 @@ func TestSMTPWrappedTailCannotNormalizePartially(t *testing.T) {
 	misrouted := adapter.TryParseV5Production(header+tail, engine.Source{Service: "unrecognized-mail-service"})
 	if misrouted.Success || !misrouted.Quarantined || !slices.Contains(misrouted.ParseTelemetry.ErrorCodes, "incomplete_structured_tail") {
 		t.Fatalf("unsupported configured service allowed generic fallback: %+v", misrouted.ParseTelemetry)
+	}
+}
+
+func TestSMTPPipeTailCannotNormalizePartially(t *testing.T) {
+	const header = "20250812 130035121+0100 aaa-gmailrgo009 smtp 3609 0 140293780948736 Note;SmtpServerEHLO(2001/4) "
+	adapter, err := NewParserPackAdapter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := engine.Default()
+	deps.SetV5Parser(adapter)
+	for _, tail := range []string{
+		`|sid=5f9e|tenant=acme corp|from=sales@example.com|to=buyer@example.org|subj==?UTF-8?B?w4RuZGVydW5nIGZ1ciBBbmdlYm90?=|sz=5120|enc=quoted-printable|body=Hello team please reviewbudget`,
+		`|RCPT|sid=5f9e\|2c1a|tenant=acme corp|from=sales@example.com|to=buyer@example.org|subj==?UTF-8?B?w4RuZGVydW5nIGZ1ciBBbmdlYm90?=|sz=5120|enc=quoted-printable|body=Hello=20team,=\nplease review =E2=82=AC500 budget=\r\n`,
+		`|DATA|sid=5f9e\|2c1a|dkim=fail(sig-expired)|spam=0.12|hdr=X-Mailer:Outlook 16.0\, Build 1234|hdr=X-Forwarded-For:198.51.100.91, 203.0.113.9`,
+		`|GW-EU-07|DEFER|sid=5f9e\|2c1a|reason=4.7.1 greylisted; retry after 300s|`,
+	} {
+		for _, service := range []string{"auto", "unrecognized-mail-service"} {
+			result := adapter.TryParseV5Production(header+tail, engine.Source{Service: service})
+			if result.Success || !result.Quarantined || !slices.Contains(result.ParseTelemetry.ErrorCodes, "incomplete_structured_tail") {
+				t.Fatalf("partial pipe payload escaped quarantine for %s: %+v", service, result.ParseTelemetry)
+			}
+			routed := engine.Parse(header+tail, engine.Source{Service: service}, deps)
+			if string(routed.Meta.Route) != "quarantine" {
+				t.Fatalf("partial pipe payload entered normalized output: %+v", routed)
+			}
+		}
+	}
+}
+
+func TestSMTPReviewedPipeMappingRoutesCompletePayload(t *testing.T) {
+	const raw = "20250812 130035121+0100 aaa-gmailrgo009 smtp 3609 0 140293780948736 Note;SmtpServerEHLO(2001/4) " +
+		`|DATA|sid=5f9e\|2c1a|hdr=X-Mailer:Outlook 16.0\, Build 1234|hdr=X-Forwarded-For:198.51.100.91, 203.0.113.9`
+	fields := []fieldmapping.Field{
+		{Name: "smtp_command", Type: "string", Source: "field1"},
+		{Name: "session_id", Type: "string", Source: "sid"},
+		{Name: "headers", Type: "array", Source: "hdr", DuplicatePolicy: "array"},
+	}
+	for i := range fields {
+		fields[i].Method, fields[i].KVProfile, fields[i].KVStart = "key_value", "auto", "9"
+	}
+	adapter, want := sourceParityAdapter(t, raw, fieldmapping.Plan{Version: 1, Fields: fields})
+	deps := engine.Default()
+	deps.SetV5Parser(adapter)
+	result := engine.Parse(raw, engine.Source{Service: "nfi-fixture"}, deps)
+	if string(result.Meta.Route) != "normal" || !reflect.DeepEqual(result.Data, want) {
+		t.Fatalf("complete reviewed pipe mapping did not normalize: %+v", result)
+	}
+	if result.Data["smtp_command"] != "DATA" || result.Data["session_id"] != "5f9e|2c1a" || !reflect.DeepEqual(result.Data["headers"], []any{
+		`X-Mailer:Outlook 16.0\, Build 1234`,
+		"X-Forwarded-For:198.51.100.91, 203.0.113.9",
+	}) {
+		t.Fatalf("pipe payload lost evidence: %#v", result.Data)
 	}
 }
 

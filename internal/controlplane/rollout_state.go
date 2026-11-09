@@ -209,6 +209,7 @@ func (m *rolloutStateManager) NextForNode(node string, lease time.Duration) (*pr
 	now := time.Now().UTC()
 	items := make([]*rolloutRecord, 0)
 	var oldestConfig *rolloutRecord
+	var oldestParser *rolloutRecord
 	for _, item := range m.items {
 		result := item.NodeResults[node]
 		if item.Status != rolloutStatusRunning || result == nil || result.Status == rolloutStatusCompleted || result.Status == rolloutStatusFailed {
@@ -220,16 +221,25 @@ func (m *rolloutStateManager) NextForNode(node string, lease time.Duration) (*pr
 			}
 			continue
 		}
+		if item.Type == rolloutTypeParserSync {
+			if oldestParser == nil || rolloutStartTime(item).Before(rolloutStartTime(oldestParser)) {
+				oldestParser = item
+			}
+			continue
+		}
 		if result.Status != rolloutStatusRunning || !result.LeaseUntil.After(now) {
 			items = append(items, item)
 		}
 	}
-	// A lost acknowledgement can leave an earlier config leased. Do not
-	// deliver a later config until that command finishes or is retried.
-	if oldestConfig != nil {
-		result := oldestConfig.NodeResults[node]
+	// Keep config and parser commands ordered within their own streams. A
+	// leased baseline parser delivery must finish before a newer parser applies.
+	for _, oldest := range []*rolloutRecord{oldestConfig, oldestParser} {
+		if oldest == nil {
+			continue
+		}
+		result := oldest.NodeResults[node]
 		if result.Status != rolloutStatusRunning || !result.LeaseUntil.After(now) {
-			items = append(items, oldestConfig)
+			items = append(items, oldest)
 		}
 	}
 	if len(items) == 0 {

@@ -26,31 +26,57 @@ func newCoverageKV(assignments []string) *mixedkv.Parser {
 }
 
 var (
-	coverageKV = newCoverageKV([]string{"=", ";"})
+	coverageKV      = newCoverageKV([]string{"=", ";"})
 	coverageColonKV = newCoverageKV([]string{"=", ":", ";"})
 )
 
-// HasFramedMailTail also recognizes a malformed envelope so a fallback
+// HasFramedMailTail also recognizes a malformed envelope or pipe tail so a fallback
 // cannot normalize it after all governed candidates reject the record.
 func HasFramedMailTail(input string) bool {
 	header := structuredMailHeader.FindStringIndex(input)
 	if header == nil {
 		return false
 	}
-	_, _, framed, _ := mixedkv.UnwrapAssignmentEnvelope(input[header[1]:])
+	tail := input[header[1]:]
+	if strings.HasPrefix(tail, "|") {
+		return true
+	}
+	_, _, framed, _ := mixedkv.UnwrapAssignmentEnvelope(tail)
 	return framed
 }
 
 // Validate against raw value spans, so a field name or a similar-looking
 // value elsewhere in the record cannot hide an omitted structured pair.
-func validateFramedMailTail(input string, fields workingSet) error {
+func validateFramedMailTail(input string, fields workingSet, projected map[string]interface{}) error {
 	header := structuredMailHeader.FindStringIndex(input)
 	if header == nil {
 		return nil
 	}
-	body, offset, framed, err := framedKVBody(input[header[1]:])
-	if err != nil || !framed {
+	base := header[1]
+	tail := input[base:]
+	pipe := strings.HasPrefix(tail, "|")
+	body, offset, framed, err := framedKVBody(tail)
+	if err != nil || !framed && !pipe {
 		return err
+	}
+	captured := make(map[mixedkv.Span]bool, len(fields))
+	for name := range projected {
+		field := fields[name]
+		if field.Source {
+			captured[mixedkv.Span{Start: field.Start - base, End: field.End - base}] = true
+		}
+	}
+	if pipe {
+		segments, err := mixedkv.ScanPipeTail(tail)
+		if err != nil {
+			return fail("incomplete_structured_tail", err.Error())
+		}
+		for _, segment := range segments {
+			if !captured[segment.Value] && !captured[segment.Pair] {
+				return fail("incomplete_structured_tail", "pipe-delimited payload contains a segment without a corresponding captured source span")
+			}
+		}
+		return nil
 	}
 	scanner := coverageKV
 	if first := strings.IndexAny(body, "=:;"); first >= 0 && body[first] == ':' {
@@ -60,16 +86,9 @@ func validateFramedMailTail(input string, fields workingSet) error {
 	if err != nil || parsed.RemainderSpan != nil || len(parsed.Entries) == 0 {
 		return fail("incomplete_structured_tail", "could not verify complete coverage of the key/value envelope")
 	}
-	base := header[1] + offset
-	captured := make(map[mixedkv.Span]bool, len(fields))
-	for name, field := range fields {
-		if field.Source && !strings.HasPrefix(name, "_") {
-			captured[mixedkv.Span{Start: field.Start, End: field.End}] = true
-		}
-	}
 	for _, entry := range parsed.Entries {
-		value := mixedkv.Span{Start: base + entry.ValueSpan.Start, End: base + entry.ValueSpan.End}
-		pair := mixedkv.Span{Start: base + entry.PairSpan.Start, End: base + entry.PairSpan.End}
+		value := mixedkv.Span{Start: offset + entry.ValueSpan.Start, End: offset + entry.ValueSpan.End}
+		pair := mixedkv.Span{Start: offset + entry.PairSpan.Start, End: offset + entry.PairSpan.End}
 		if !captured[value] && !captured[pair] {
 			return fail("incomplete_structured_tail", "key/value envelope contains a value without a corresponding captured source span")
 		}

@@ -8,6 +8,33 @@ const origin = 'http://127.0.0.1:4176';
 const tabs = ['operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
 const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
+test('contextual Ask AI and visual blocks start from an empty mapping', async ({page})=>{
+  await mockController(page);
+  await page.route('**/api/v1/ai/workspace',route=>{
+    const body=route.request().postDataJSON();
+    expect(body).toMatchObject({workspace:'building-blocks',mode:'ask',question:'How do I split a field?'});
+    return route.fulfill({json:{answer:'Select the exact source range.',review_only:true}});
+  });
+  await login(page);
+  await page.getByTestId('nav-building-blocks').click();
+  await page.getByRole('button',{name:'Ask AI',exact:true}).click();
+  const dialog=page.getByRole('dialog');
+  await dialog.getByRole('textbox',{name:'What do you need help with?'}).fill('How do I split a field?');
+  await dialog.getByRole('button',{name:'Get guidance'}).click();
+  await expect(dialog.getByRole('status')).toHaveText('Select the exact source range.');
+  await dialog.getByRole('button',{name:'Close',exact:true}).click();
+  const raw=page.locator('#block-raw');
+  await raw.fill('smtp status=failed');
+  await raw.evaluate(input=>input.setSelectionRange(5,18));
+  await page.getByRole('button',{name:'Split at selected text'}).click();
+  await page.locator('[data-block-name]').fill('status');
+  await page.locator('[data-block-delimiter]').fill('=');
+  await page.locator('[data-block-part]').fill('2');
+  await page.getByRole('button',{name:'Open blocks in FieldSense'}).click();
+  await expect(page.locator('#nfi-raw')).toHaveValue('smtp status=failed');
+  await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveValue('status');
+});
+
 async function mockController(page, { role = 'admin', healthIdentity = 'v21', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [], rolloutSeed = [], rolloutApprovalFailure = null, replayFailure = null, replayPending = false } = {}) {
   const observed = [];
   const cases = [];

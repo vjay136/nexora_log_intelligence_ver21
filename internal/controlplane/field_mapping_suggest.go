@@ -164,18 +164,22 @@ func nfiSuggestCorpus(ctx context.Context, samples []string, separator string) (
 		for _, field := range fields {
 			key := nfiSuggestionIdentity(field)
 			profile.counts[key]++
-			oldType, known := profile.types[key]
-			if !known {
-				profile.types[key] = field.Type
-			} else if oldType != field.Type {
-				profile.types[key] = "string"
-			}
 			found := -1
 			for i, old := range profile.Fields {
 				if nfiSuggestionIdentity(old) == key {
 					found = i
 					break
 				}
+			}
+			oldType, known := profile.types[key]
+			switch {
+			case found >= 0 && (field.DuplicatePolicy == "array" || profile.Fields[found].DuplicatePolicy == "array"):
+				profile.types[key] = "array"
+				profile.Fields[found].DuplicatePolicy = "array"
+			case !known:
+				profile.types[key] = field.Type
+			case oldType != field.Type:
+				profile.types[key] = "string"
 			}
 			if found >= 0 {
 				if field.Policy == "nullable" {
@@ -346,6 +350,16 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 	discoveryRaw := raw
 	if mail && len(tokens) > 8 {
 		discoveryRaw = strings.TrimSpace(raw[len(nfiSuggestMailHeader.FindString(raw)):])
+		if strings.HasPrefix(discoveryRaw, "|") {
+			profiles, err := fieldmapping.InspectKeyValues(ctx, raw, fieldmapping.Field{Name: "tail_fields", Type: "object", Method: "kv_all", Source: "9"})
+			if err != nil {
+				return "", nil, err
+			}
+			if len(profiles) != 1 {
+				return "", nil, fmt.Errorf("pipe payload needs one complete extraction grammar")
+			}
+			return family + "/pipe-kv", nfiKVIEFields(fields, profiles[0]), nil
+		}
 		if profile, ok := fieldmapping.InspectWrappedKeyValues(discoveryRaw, 0); ok {
 			return family + "/bracketed-kv", append(fields, nfiWrappedKVField("9", profile)), nil
 		}
@@ -459,8 +473,12 @@ func nfiWrappedKVField(start string, profile fieldmapping.KVProfile) fieldmappin
 
 func nfiKVIEFields(fields []fieldmapping.Field, profile fieldmapping.KVProfile) []fieldmapping.Field {
 	used, seen := map[string]bool{}, map[string]bool{}
+	counts := map[string]int{}
 	for _, f := range fields {
 		used[f.Name] = true
+	}
+	for _, pair := range profile.Observations {
+		counts[pair.Key]++
 	}
 	for _, pair := range profile.Observations {
 		if len(fields) >= fieldmapping.MaxFields {
@@ -477,6 +495,13 @@ func nfiKVIEFields(fields []fieldmapping.Field, profile fieldmapping.KVProfile) 
 		f.AssignmentSeparators, f.PairDelimiters = profile.AssignmentSeparators, profile.PairDelimiters
 		f.Type = nfiSuggestedType(pair.Key, pair.Value)
 		f.Evidence = "Observed with KV AutoSense at token 9; verify the source, grammar and output name"
+		if profile.PairDelimiters == "|" {
+			f.EndOfLine = false
+			f.Evidence = "Observed in the pipe-delimited payload at token 9. Rename the output field to match your schema."
+		}
+		if counts[pair.Key] > 1 {
+			f.Type, f.DuplicatePolicy = "array", "array"
+		}
 		fields = append(fields, f)
 	}
 	return fields

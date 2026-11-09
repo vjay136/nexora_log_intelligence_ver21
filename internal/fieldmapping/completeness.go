@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"nexora.local/nli-v20/internal/mixedkv"
 )
 
-var mailTail = regexp.MustCompile(`^\d{8}\s+\d{9}[+-]\d{4}\s+\S+\s+\S+\s+\d+\s+\d+\s+\d+\s+[^;\s]+;\S+\s+`)
+var mailTail = regexp.MustCompile(`^\s*\d{8}\s+\d{9}[+-]\d{4}\s+\S+\s+\S+\s+\d+\s+\d+\s+\d+\s+[^;\s]+;\S+\s+`)
 
 // ValidateComplete prevents a successful partial mapping from hiding structured
 // source data. Hidden/omitted fields retain evidence and are intentional choices.
@@ -87,6 +89,27 @@ func validateStructuredCoverage(raw string, spans []Span, assignments []string, 
 		start = header[1]
 	}
 	if covered(start, end) && start < end {
+		return nil
+	}
+	if start > 0 && strings.HasPrefix(raw[start:], "|") {
+		segments, err := mixedkv.ScanPipeTail(raw[start:end])
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrIncompleteKV, err)
+		}
+		evidence := make(map[Span]bool, len(spans))
+		for _, span := range spans {
+			evidence[span] = true
+		}
+		for _, segment := range segments {
+			value := Span{start + segment.Value.Start, start + segment.Value.End}
+			pair := Span{start + segment.Pair.Start, start + segment.Pair.End}
+			if !evidence[value] && !evidence[pair] {
+				if segment.Key != "" {
+					return fmt.Errorf("%w: key %q has no mapped or explicitly omitted pipe segment at byte %d", ErrIncompleteKV, segment.Key, pair.Start+1)
+				}
+				return fmt.Errorf("%w: no mapped or explicitly omitted pipe segment at byte %d", ErrIncompleteKV, pair.Start+1)
+			}
+		}
 		return nil
 	}
 	if observations, ok := result.profileObservations(start, end); ok {

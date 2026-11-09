@@ -132,3 +132,6 @@ Navigation IDs and titles are sourced from `NAV` in `web/app.js`; the loader lis
 ## NFI — Native Field Intelligence (Ver21 R7)
 
 The `field-mapping` primary workspace is the 45th workspace. It provides the shared bounded mapping workbench also used by Quarantine Resolution Wizard Steps 3–4. Inspect token/character positions, name fields, compose extraction and operations, compare the controller preview against desired JSON, and hand the same mapping plan to the governed parser-candidate flow. See `V21_R7_FIELD_MAPPING_GUIDE.md` for exact supported methods and constraints.
+
+- `reference-ai` opens Reference based help & Fix for reviewable AI artifact drafts.
+- `building-blocks` converts selected source ranges and ordered edits into editable FieldSense mappings.

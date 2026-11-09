@@ -437,6 +437,11 @@ func validateNotificationPolicy(policy notificationPolicy) bool {
 }
 
 func classifyNotificationEvent(event auditlog.Event) (string, string, bool) {
+	// Periodic browser probes report connectivity in Communications Status.
+	// Keep their request audit records without raising an incident on every retry.
+	if strings.EqualFold(event.Action, http.MethodPost) && event.Resource == "/api/v1/communications/browser-heartbeat" {
+		return "", "", false
+	}
 	// The browser deliberately probes the current session before presenting the
 	// login form.  An anonymous/expired-session 401 is an expected control-flow
 	// result, not an operational incident.  Keep it in the immutable audit chain

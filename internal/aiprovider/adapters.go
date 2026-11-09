@@ -37,6 +37,7 @@ func BuildRequest(ctx context.Context, profile Profile, credential, prompt strin
 // can ask for a bounded, useful response.
 type RequestOptions struct {
 	SystemPrompt string
+	JSONResponse bool
 	MaxTokens    int
 	Stream       bool
 	ImageURL     string
@@ -68,7 +69,11 @@ func BuildRequestWithOptions(ctx context.Context, profile Profile, credential, p
 		}
 	case KindGemini:
 		endpoint = appendEndpoint(profile.BaseURL, "models/"+url.PathEscape(profile.Model)+":generateContent")
-		body = map[string]any{"contents": []map[string]any{{"role": "user", "parts": []map[string]string{{"text": prompt}}}}, "generationConfig": map[string]int{"maxOutputTokens": maxTokens}}
+		generation := map[string]any{"maxOutputTokens": maxTokens}
+		if options.JSONResponse {
+			generation["responseMimeType"] = "application/json"
+		}
+		body = map[string]any{"contents": []map[string]any{{"role": "user", "parts": []map[string]string{{"text": prompt}}}}, "generationConfig": generation}
 		if options.SystemPrompt != "" {
 			body.(map[string]any)["systemInstruction"] = map[string]any{"parts": []map[string]string{{"text": options.SystemPrompt}}}
 		}
@@ -90,7 +95,14 @@ func BuildRequestWithOptions(ctx context.Context, profile Profile, credential, p
 			messages = append(messages, map[string]string{"role": "system", "content": options.SystemPrompt})
 		}
 		messages = append(messages, map[string]string{"role": "user", "content": prompt})
-		body = map[string]any{"model": profile.Model, "max_tokens": maxTokens, "messages": messages}
+		tokenParam := "max_tokens"
+		if profile.Kind == KindOpenAI && (strings.HasPrefix(profile.Model, "gpt-5") || strings.HasPrefix(profile.Model, "o3") || strings.HasPrefix(profile.Model, "o4")) {
+			tokenParam = "max_completion_tokens"
+		}
+		body = map[string]any{"model": profile.Model, tokenParam: maxTokens, "messages": messages}
+		if profile.Kind == KindOpenAI && options.JSONResponse {
+			body.(map[string]any)["response_format"] = map[string]string{"type": "json_object"}
+		}
 		if options.Stream {
 			body.(map[string]any)["stream"] = true
 		}

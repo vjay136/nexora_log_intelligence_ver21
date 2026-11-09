@@ -553,20 +553,11 @@ func TestNodeStateDriftIsAuthenticated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proposalID := ""
 	for _, proposal := range proposals {
 		var payload map[string]any
 		if json.Unmarshal(proposal.Payload, &payload) == nil && payload["name"] == "Initial parser asset synchronization" {
-			proposalID = proposal.ID
-			break
+			t.Fatal("new enrollment should deliver the shipped baseline without a pending approval")
 		}
-	}
-	if proposalID == "" {
-		t.Fatal("new enrollment did not create an approval-gated initial parser sync proposal")
-	}
-	approvalResponse, approvalData := f.request(http.MethodPost, "/api/v1/rollouts/"+proposalID+"/approve", map[string]any{})
-	if approvalResponse.StatusCode != http.StatusOK {
-		t.Fatalf("independent initial parser sync approval %d: %s", approvalResponse.StatusCode, approvalData)
 	}
 	commandRequest, _ := http.NewRequest(http.MethodGet, f.http.URL+"/api/v1/node/commands/next?node_id=node-1", nil)
 	commandRequest.Header.Set("Authorization", "Bearer "+token)
@@ -590,6 +581,55 @@ func TestNodeStateDriftIsAuthenticated(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		payload, _ := io.ReadAll(response.Body)
 		t.Fatalf("node state %d: %s", response.StatusCode, payload)
+	}
+}
+
+func TestEnrollmentParserSyncRequiresApprovalForCustomizedCatalog(t *testing.T) {
+	f := newAPIFixture(t)
+	ctx := context.Background()
+	bundle, err := f.server.buildActiveParserBundle(ctx)
+	if err != nil || !isBuiltinEnrollmentBundle(bundle) {
+		t.Fatalf("controller did not build its shipped catalog: %v", err)
+	}
+	asset := bundle.Assets[0]
+	var payload map[string]any
+	if err := json.Unmarshal(asset.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["name"] = "site customization"
+	modified, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset.Payload = modified
+	bundle.Assets[0] = asset
+	if isBuiltinEnrollmentBundle(bundle) {
+		t.Fatal("asset with matching ID, revision and approval label but modified content was accepted")
+	}
+	if _, err := f.server.metadata.Put(ctx, metastore.Document{Collection: asset.AssetClass, ID: asset.AssetID, State: "active", Payload: modified, CreatedBy: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	registration, _ := json.Marshal(map[string]any{"id": "site-node", "hostname": "site-node", "arch": "x86_64", "version": "22.4.0"})
+	request, err := http.NewRequest(http.MethodPost, f.http.URL+"/api/v1/node/register", bytes.NewReader(registration))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-NLI-Enrollment", "Enrollment-token-123456789012")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("enrollment status %d", response.StatusCode)
+	}
+	if command, found := f.server.rollouts.NextForNode("site-node", time.Minute); found {
+		t.Fatalf("custom catalog was queued without approval: %s", command.Type)
+	}
+	proposals, err := f.server.metadata.List(ctx, "rollout-proposals", metastore.Query{State: "pending_approval", Limit: 10})
+	if err != nil || len(proposals) != 1 {
+		t.Fatalf("expected a single custom catalog approval, got %d (%v)", len(proposals), err)
 	}
 }
 

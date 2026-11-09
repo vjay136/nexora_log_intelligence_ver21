@@ -11,4 +11,4 @@ const assets = ['index.html', 'app.js', 'styles.css', 'design-engine.js', 'desig
 for (const name of assets) await copyFile(resolve(root, 'web', name), resolve(output, name));
 const unexpected = (await readdir(output)).filter(name => !assets.includes(name));
 if (unexpected.length) throw new Error(`Unexpected public output files: ${unexpected.join(', ')}; use a clean build directory.`);
-console.log(`NLI V21: built ${assets.length} public assets in build/web-public`);
+console.log(`NLI: built ${assets.length} public assets in build/web-public`);

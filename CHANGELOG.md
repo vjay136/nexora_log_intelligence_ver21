@@ -1,5 +1,11 @@
 # Changelog
 
+## [22.4.0-0]
+
+- Add contextual AI guidance and reviewable artifact drafts.
+- Add reference-based drafting, visual FieldSense blocks, and guided session reset.
+- Check structured SMTP pipe payload coverage before normalization.
+
 ## [22.3.0-0]
 
 - Improve parser coverage and hourly normalized and quarantine files.

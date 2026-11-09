@@ -339,7 +339,7 @@ func (p *Parser) Parse(input string) (Result, error) {
 		}
 
 		fieldType := p.valueType(h.key)
-		end, err := p.findBoundary(input, h.valueStart, fieldType)
+		end, err := p.findBoundary(input, h.valueStart, fieldType, false)
 		if err != nil {
 			return result, err
 		}
@@ -484,7 +484,7 @@ func (p *Parser) findFirstHeader(input string, start int) (int, bool, error) {
 	return 0, false, nil
 }
 
-func (p *Parser) findBoundary(input string, valueStart int, fieldType string) (*boundary, error) {
+func (p *Parser) findBoundary(input string, valueStart int, fieldType string, literalSeparators bool) (*boundary, error) {
 	var quote byte
 	stack := make([]byte, 0, 4)
 	for i := valueStart; i < len(input); {
@@ -528,6 +528,9 @@ func (p *Parser) findBoundary(input string, valueStart int, fieldType string) (*
 			separator, after, matched := p.pairSeparatorAt(input, i)
 			if matched {
 				next := skipSpace(input, after)
+				if literalSeparators {
+					return &boundary{start: i, next: next, separator: separator}, nil
+				}
 				nextHeader, valid := p.headerAt(input, next)
 				if valid {
 					candidateStart, candidateEnd := p.trimValueBounds(input, valueStart, i)

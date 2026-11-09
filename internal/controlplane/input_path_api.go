@@ -193,6 +193,13 @@ func (s *Server) listInputPathRollouts(w http.ResponseWriter, r *http.Request, p
 				state[key] = value
 			}
 			checkInputPathAcknowledgement(state, node)
+			if desired["id"] != profileID {
+				state["input_path_sync_status"] = "superseded"
+				state["input_path_sync_message"] = "A different profile is now desired for this client."
+			} else if fmt.Sprint(desired["revision"]) != strconv.Itoa(profile.Revision) {
+				state["input_path_sync_status"] = "previous_revision"
+				state["input_path_sync_message"] = "The client was targeted with an earlier revision of this profile."
+			}
 		}
 		clients = append(clients, map[string]any{"node_id": node.ID, "hostname": node.Hostname, "status": node.Status, "input_path_sync": state})
 	}

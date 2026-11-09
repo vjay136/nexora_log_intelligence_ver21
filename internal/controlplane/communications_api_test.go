@@ -247,6 +247,23 @@ func TestExpectedAnonymousSessionProbeIsAuditedButNotNotified(t *testing.T) {
 	}
 }
 
+func TestBrowserHeartbeatFailuresStayInAuditWithoutFloodingNotifications(t *testing.T) {
+	f := newAPIFixture(t)
+	const path = "/api/v1/communications/browser-heartbeat"
+	for i := 0; i < 3; i++ {
+		if _, err := f.server.audit.Append(auditlog.Event{
+			Action: http.MethodPost, Resource: path, Outcome: "failure",
+			Details: map[string]string{"detail": "status=503"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response, body := f.request(http.MethodGet, "/api/v1/notifications?limit=100", nil)
+	if response.StatusCode != http.StatusOK || strings.Contains(string(body), path) {
+		t.Fatalf("browser heartbeat leaked into the notification feed: %d %s", response.StatusCode, body)
+	}
+}
+
 func TestExpiredSessionProbeWithStaleActorIsNotNotified(t *testing.T) {
 	event := auditlog.Event{
 		Action:   http.MethodGet,

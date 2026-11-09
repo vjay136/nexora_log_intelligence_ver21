@@ -319,14 +319,6 @@ func (e *ParserPackExecutor) executeRule(ctx context.Context, request *Execution
 		mappingVerified = mappingVerified || stage.Type == StageTypeMapping
 	}
 
-	if !mappingVerified {
-		if err := validateFramedMailTail(request.Input, fields); err != nil {
-			attempt.FailureReason = errorCode(err)
-			attempt.LatencyMs = elapsedMillis(started)
-			return nil, attempt, snapshotRuleStats(fields), err
-		}
-	}
-
 	if err := enforceSchema(rule, fields); err != nil {
 		attempt.FailureReason = errorCode(err)
 		attempt.LatencyMs = elapsedMillis(started)
@@ -373,6 +365,13 @@ func (e *ParserPackExecutor) executeRule(ctx context.Context, request *Execution
 		attempt.FailureReason = errorCode(typed)
 		attempt.LatencyMs = elapsedMillis(started)
 		return nil, attempt, snapshotRuleStats(fields), typed
+	}
+	if !mappingVerified {
+		if err := validateFramedMailTail(request.Input, fields, projected.Fields); err != nil {
+			attempt.FailureReason = errorCode(err)
+			attempt.LatencyMs = elapsedMillis(started)
+			return nil, attempt, snapshotRuleStats(fields), err
+		}
 	}
 	if len(projected.Fields) > e.pack.ResourceLimits.MaxFields {
 		typed := fail("field_limit", "rule exceeded configured field limit")

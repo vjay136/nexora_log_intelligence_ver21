@@ -4,7 +4,7 @@ Nexora Log Intelligence Ver22 is a deterministic, review-gated log parsing and f
 
 > Install from the single versioned release archive in a fresh directory. Verify its external `.sha256` file and the complete internal `SHA256SUMS`; never mix loose files from different releases.
 
-Release `22.3.0-0` upgrades Ver22 `22.2.0-0`. See the [22.3 release notes](docs/V22_3_RELEASE_NOTES.md) and the [installation guide](docs/INSTALLATION_AND_CONFIGURATION.md).
+Release `22.4.0-0` upgrades Ver22 `22.3.0-0`. See the [22.4 release notes](docs/V22_4_RELEASE_NOTES.md) and the [installation guide](docs/INSTALLATION_AND_CONFIGURATION.md).
 
 ## V18 upgrade baseline architecture
 

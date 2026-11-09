@@ -331,3 +331,16 @@ button[data-qrw-action-step="9"] { outline-color: var(--green); }
 .nfi-operation-shortcuts {
   margin-block: .35rem;
 }
+.workspace-ai-actions {
+  margin-block: 0.5rem;
+}
+
+#workspace-ai-dialog {
+  width: min(46rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  overflow: auto;
+}
+
+#workspace-ai-dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+}

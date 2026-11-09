@@ -534,8 +534,23 @@ func (s *Server) handleAIProviderTest(w http.ResponseWriter, r *http.Request) {
 	}
 	testInfo := s.aiTestInfo(r.Context(), cfg, input.Stream, input.ImageURL, input.TestMaxTokens)
 	policy := providerPolicy()
-	if err := aiprovider.Validate(profileFromConfig(cfg), policy); err != nil {
-		jsonOK(w, map[string]any{"connected": false, "status": "failed", "message": "Provider URL, model or key is invalid", "tested_config": testInfo})
+	profile := profileFromConfig(cfg)
+	if err := aiprovider.Validate(profile, policy); err != nil {
+		code, message := "invalid_provider_config", "Check the provider endpoint, model, profile ID, and request limits."
+		if aiprovider.ValidateMetadata(profile, policy) == nil {
+			code = "invalid_credential_config"
+			switch profile.Credential.Source {
+			case aiprovider.CredentialEnvironment:
+				message = "Enter the uppercase controller environment variable name in Credential reference, for example GEMINI_API_KEY."
+			case aiprovider.CredentialFile:
+				message = "Enter a valid managed secret file path in Credential reference."
+			case aiprovider.CredentialEncryptedInline:
+				message = "Enter an API key in Encrypted inline mode or load a saved inline credential."
+			default:
+				message = "Choose an available credential mode for this provider."
+			}
+		}
+		jsonOK(w, map[string]any{"connected": false, "status": "failed", "message": message, "error_code": code, "tested_config": testInfo})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 17*time.Second)

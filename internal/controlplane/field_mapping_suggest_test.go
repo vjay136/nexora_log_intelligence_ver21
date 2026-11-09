@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -54,6 +55,58 @@ func TestNFISuggestionsRequestedColonSampleAndVariants(t *testing.T) {
 	got = executeNFISuggestedFields(t, fields, variant)
 	if got["event"] != "OtherEvent" || got["reason"] != "not needed" || got["thread_id"] != "000001" {
 		t.Fatalf("non-hardcoded variant failed: %v", got)
+	}
+}
+
+func TestNFISuggestionsPreserveCompleteSMTPPipePayload(t *testing.T) {
+	const prefix = "20250812 130035121+0100 aaa-gmailrgo009 smtp 3609 0 140293780948736 Note;SmtpServerEHLO(2001/4) "
+	const subject = "=?UTF-8?B?w4RuZGVydW5nIGZ1ciBBbmdlYm90?="
+	tests := []struct {
+		tail string
+		want map[string]any
+	}{
+		{
+			"|sid=5f9e|tenant=acme corp|from=sales@example.com|to=buyer@example.org|subj=" + subject + "|sz=5120|enc=quoted-printable|body=Hello team please reviewbudget",
+			map[string]any{"sid": "5f9e", "tenant": "acme corp", "from": "sales@example.com", "to": "buyer@example.org", "subj": subject, "enc": "quoted-printable", "body": "Hello team please reviewbudget"},
+		},
+		{
+			`|RCPT|sid=5f9e\|2c1a|tenant=acme corp|body=Hello=20team,=` + "\nplease review =E2=82=AC500 budget=\r\n",
+			map[string]any{"field1": "RCPT", "sid": "5f9e|2c1a", "tenant": "acme corp", "body": "Hello=20team,=\nplease review =E2=82=AC500 budget="},
+		},
+		{
+			`|DATA|sid=5f9e\|2c1a|dkim=fail(sig-expired)|spam=0.12|hdr=X-Mailer:Outlook 16.0\, Build 1234|hdr=X-Forwarded-For:198.51.100.91, 203.0.113.9`,
+			map[string]any{"field1": "DATA", "sid": "5f9e|2c1a", "dkim": "fail(sig-expired)", "spam": 0.12, "hdr": []any{`X-Mailer:Outlook 16.0\, Build 1234`, "X-Forwarded-For:198.51.100.91, 203.0.113.9"}},
+		},
+		{
+			`|GW-EU-07|DEFER|sid=5f9e\|2c1a|reason=4.7.1 greylisted; retry after 300s|`,
+			map[string]any{"field1": "GW-EU-07", "field2": "DEFER", "sid": "5f9e|2c1a", "reason": "4.7.1 greylisted; retry after 300s"},
+		},
+	}
+	for _, test := range tests {
+		raw := prefix + test.tail
+		family, fields, err := nfiSuggestRecord(context.Background(), raw, "")
+		if err != nil || family != "mail-header/smtp/pipe-kv" {
+			t.Fatalf("family=%q err=%v", family, err)
+		}
+		for index := range fields {
+			fields[index].Confirmed = true
+		}
+		plan, err := fieldmapping.Compile(fieldmapping.Plan{Version: 1, Fields: fields})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := plan.Execute(context.Background(), raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := plan.ValidateComplete(raw, result); err != nil {
+			t.Fatal(err)
+		}
+		for key, expected := range test.want {
+			if got := result.Values[key]; !reflect.DeepEqual(got, expected) {
+				t.Errorf("%s=%#v, want %#v", key, got, expected)
+			}
+		}
 	}
 }
 

@@ -146,7 +146,7 @@ func (s *Server) aiCapabilities(ctx context.Context) map[string]any {
 			status = "configured_not_connection_verified"
 		}
 	}
-	return map[string]any{"status": status, "configured_profiles": len(configs), "enabled_profiles": enabled, "credential_ready_profiles": ready, "available": ready > 0, "connection_check": "Run an explicit connection test; credential presence is not proof of provider availability.", "features": []map[string]any{{"id": "assurance_failure_remediation", "available": ready > 0, "requires": "Explicit operator action after deterministic Assurance failure"}, {"id": "fieldsense_mapping_help", "available": ready > 0, "requires": "Explicit operator action; deterministic preview first; masked failure evidence; review-only proposal"}, {"id": "quarantine_repair", "available": ready > 0, "requires": "Retained failing evidence and normal parser review gates"}, {"id": "agent_cluster_discovery", "available": false, "requires": "Separate explicit agent-local AI configuration and environment credentials; controller keys are never distributed to clients"}}, "encryption_ready": s.assurance.providerAEAD != nil, "automatic_activation": false, "live_parsing_dependency": false, "max_parallel_reviews": 2, "max_provider_attempts": 3, "request_deadline_seconds": 17}
+	return map[string]any{"status": status, "configured_profiles": len(configs), "enabled_profiles": enabled, "credential_ready_profiles": ready, "available": ready > 0, "connection_check": "Run an explicit connection test; credential presence is not proof of provider availability.", "features": []map[string]any{{"id": "assurance_failure_remediation", "available": ready > 0, "requires": "Explicit operator action after deterministic Assurance failure"}, {"id": "fieldsense_mapping_help", "available": ready > 0, "requires": "Explicit operator action with a new or quarantined sample. NLI checks the proposed extraction on the exact sample."}, {"id": "workspace_ai", "available": ready > 0, "requires": "Explicit Ask AI or Fix with AI request. Returned proposals remain review-only."}, {"id": "quarantine_repair", "available": ready > 0, "requires": "Retained failing evidence and normal parser review gates"}, {"id": "agent_cluster_discovery", "available": false, "requires": "Separate explicit agent-local AI configuration and environment credentials; controller keys are never distributed to clients"}}, "encryption_ready": s.assurance.providerAEAD != nil, "automatic_activation": false, "live_parsing_dependency": false, "max_parallel_reviews": 2, "max_provider_attempts": 3, "request_deadline_seconds": 17}
 }
 func (s *Server) handleAICapabilities(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -205,7 +205,7 @@ func (s *Server) aiReviewPromptWithContext(ctx context.Context, input assuranceR
 		// only extraction coordinates and schema hints, never those previews.
 		structure := make([]map[string]any, 0, len(fields))
 		for _, field := range fields {
-			structure = append(structure, map[string]any{"name": field.Name, "type": field.Type, "method": field.Method, "source": field.Source, "delimiter": field.Delimiter, "part": field.Part, "kv_separator": field.KVSeparator, "pair_delimiters": field.PairDelimiters})
+			structure = append(structure, map[string]any{"name": field.Name, "type": field.Type, "method": field.Method, "source": field.Source, "delimiter": field.Delimiter, "part": field.Part, "kv_separator": field.KVSeparator, "pair_delimiters": field.PairDelimiters, "kv_profile": field.KVProfile, "assignment_separators": field.AssignmentSeparators, "kv_pair_separators": field.KVPairSeparators, "duplicate_policy": field.DuplicatePolicy, "end_of_line": field.EndOfLine, "require_complete": field.RequireComplete, "output_policy": field.OutputPolicy})
 		}
 		evidence["available"], evidence["family"], evidence["fields"] = true, family, structure
 		evidence["review_required"] = true
@@ -239,8 +239,8 @@ func (s *Server) aiReviewPrompt(input assuranceRequest, result map[string]any) s
 	})
 	var safeContext any
 	_ = json.Unmarshal(contextJSON, &safeContext)
-	contextJSON, _ = json.Marshal(masker.MaskValue(safeContext))
-	masked := s.assuranceDeps.Masker.MaskForTemplate(string(contextJSON))
+	contextJSON, _ = json.Marshal(s.maskAIWorkspaceValue(masker.MaskValue(safeContext)))
+	masked := string(contextJSON)
 	if len(masked) > 48<<10 {
 		masked = masked[:48<<10]
 		for !utf8.ValidString(masked) {

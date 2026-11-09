@@ -1,11 +1,13 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 
 	parsercatalog "nexora.local/nli-v20/configs/catalog"
+	"nexora.local/nli-v20/internal/canonicaljson"
 	metastore "nexora.local/nli-v20/internal/store"
 )
 
@@ -13,6 +15,44 @@ var catalogCollections = map[string]string{
 	"kv": "kv-config", "regex": "regex-patterns", "known-keys": "known-keys",
 	"static-patterns": "static-patterns", "templates": "templates", "projections": "projections",
 	"semantic-extraction": "semantic-extraction",
+}
+
+func builtinCatalogPayload(asset parsercatalog.Asset) ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"name": asset.Name, "config": asset.Config,
+		"review_state": "active", "approved_by": "nli-v21-release",
+		"published_by": "nli-v21-release",
+	})
+}
+
+// Only the original release assets may be delivered on enrollment without
+// a new operator approval. Compare their content against the binary, since
+// catalog IDs and approval labels alone do not establish provenance.
+func isBuiltinEnrollmentBundle(bundle parserAssetBundle) bool {
+	embedded, err := parsercatalog.Assets()
+	if err != nil || len(embedded) != len(bundle.Assets) {
+		return false
+	}
+	type assetKey struct{ collection, id string }
+	byKey := make(map[assetKey]parserBundleAsset, len(bundle.Assets))
+	for _, asset := range bundle.Assets {
+		byKey[assetKey{asset.AssetClass, asset.AssetID}] = asset
+	}
+	for _, asset := range embedded {
+		published := byKey[assetKey{catalogCollections[asset.Collection], asset.ID}]
+		if published.Revision != 1 {
+			return false
+		}
+		payload, err := builtinCatalogPayload(asset)
+		if err != nil {
+			return false
+		}
+		canonicalPayload, err := canonicaljson.Normalize(payload)
+		if err != nil || !bytes.Equal(canonicalPayload, published.Payload) {
+			return false
+		}
+	}
+	return true
 }
 
 func seedBuiltinCatalog(ctx context.Context, store metastore.Store) error {
@@ -28,11 +68,7 @@ func seedBuiltinCatalog(ctx context.Context, store metastore.Store) error {
 		if _, err := store.Get(ctx, collection, asset.ID, 0); err == nil {
 			continue // Preserve user revisions and edits across restarts.
 		}
-		payload, err := json.Marshal(map[string]any{
-			"name": asset.Name, "config": asset.Config,
-			"review_state": "active", "approved_by": "nli-v21-release",
-			"published_by": "nli-v21-release",
-		})
+		payload, err := builtinCatalogPayload(asset)
 		if err != nil {
 			return err
 		}

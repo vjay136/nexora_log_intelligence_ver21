@@ -119,6 +119,7 @@ var kvieProfiles = func() []*kvieProfile {
 	// Colon assignments deliberately use non-colon pair boundaries. A colon
 	// can belong to a timestamp, URL, IPv6 address or an ordinary value.
 	presets := []KVProfile{
+		{AssignmentSeparators: []string{"=>", ":=", "=", ":", ";"}, PairDelimiters: "|"},
 		{AssignmentSeparators: []string{"=>", ":=", "="}, PairDelimiters: ":;| \t\r\n"},
 		{AssignmentSeparators: []string{":"}, PairDelimiters: ";| \t\r\n"},
 		{AssignmentSeparators: []string{":"}, PairDelimiters: ","},
@@ -143,6 +144,18 @@ func (p *kvieProfile) observe(raw string, offset int) ([]KeyValueObservation, er
 	// and only recognize framing when the selected profile allows pipes.
 	body := strings.TrimLeft(raw, " \t\r\n")
 	offset += len(raw) - len(body)
+	if len(p.pairSeps) == 1 && p.pairSeps[0] == "|" && strings.HasPrefix(body, "|") {
+		fields, err := p.parser.ScanPipeTail(body)
+		if err != nil {
+			if lexical, ok := err.(*mixedkv.Error); ok && lexical.Offset >= 0 {
+				positioned := *lexical
+				positioned.Offset += offset
+				err = &positioned
+			}
+			return nil, fmt.Errorf("%w: %w", ErrIncompleteKV, err)
+		}
+		return pipeObservations(fields, offset), nil
+	}
 	if unwrapped, start, framed, err := mixedkv.UnwrapAssignmentEnvelope(body); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrIncompleteKV, err)
 	} else if framed {
@@ -201,6 +214,32 @@ func (p *kvieProfile) observe(raw string, offset int) ([]KeyValueObservation, er
 	return out, nil
 }
 
+func pipeObservations(fields []mixedkv.PipeField, offset int) []KeyValueObservation {
+	used := make(map[string]bool, len(fields))
+	for _, field := range fields {
+		used[field.Key] = true
+	}
+	out := make([]KeyValueObservation, 0, len(fields))
+	next := 1
+	for _, field := range fields {
+		key := field.Key
+		if key == "" {
+			for {
+				key = fmt.Sprintf("field%d", next)
+				next++
+				if !used[key] {
+					break
+				}
+			}
+		}
+		out = append(out, KeyValueObservation{
+			Key: key, Value: field.Text,
+			Start: offset + field.Value.Start, End: offset + field.Value.End,
+		})
+	}
+	return out
+}
+
 func (p *kvieProfile) validateValue(value string) error {
 	if value == "" {
 		return nil
@@ -218,11 +257,29 @@ func (p *kvieProfile) validateValue(value string) error {
 }
 
 func detectKVIE(ctx context.Context, raw string, offset int) ([]KVProfile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if strings.HasPrefix(strings.TrimLeft(raw, " \t\r\n"), "|") {
+		preset := kvieProfiles[0]
+		observations, err := preset.observe(raw, offset)
+		if err != nil {
+			return nil, err
+		}
+		return []KVProfile{{
+			AssignmentSeparators: append([]string(nil), preset.assignments...),
+			PairDelimiters:       preset.delimiters,
+			Observations:         observations,
+		}}, nil
+	}
 	best := 0
 	structured := kvieHeader.MatchString(strings.TrimLeft(raw, " \t\r\n"))
 	var out []KVProfile
 	var evidenceError error
 	for _, preset := range kvieProfiles {
+		if preset.delimiters == "|" {
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -341,7 +398,7 @@ func InspectWrappedKeyValues(text string, offset int) (KVProfile, bool) {
 		if strings.IndexByte("[{(<", open) != strings.IndexByte("]})>", close) {
 			return KVProfile{}, false
 		}
-		body := text[pos+match[4]:pos+match[5]]
+		body := text[pos+match[4] : pos+match[5]]
 		bodyOffset := offset + pos + match[4]
 		if pos == 0 && match[1] == len(text) {
 			// A single envelope can contain multiple pairs. Leave that

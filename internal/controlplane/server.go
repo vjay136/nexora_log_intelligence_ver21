@@ -575,6 +575,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/field-mapping", guard(middleware.PermissionReadParsers, s.handleFieldMappingStatus))
 	s.mux.HandleFunc("/api/v1/field-mapping/suggest", guard(middleware.PermissionParsePreview, s.handleFieldMappingSuggest))
 	s.mux.HandleFunc("/api/v1/field-mapping/ai-suggest", guard(middleware.PermissionParsePreview, s.handleFieldMappingAISuggest))
+	s.mux.HandleFunc("/api/v1/ai/workspace", guard(middleware.PermissionParsePreview, s.handleAIWorkspace))
 	s.mux.HandleFunc("/api/v1/assurance/cases", s.handleAssuranceCases)
 	s.mux.HandleFunc("/api/v1/assurance/cases/", s.handleAssuranceCase)
 	s.mux.HandleFunc("/api/v1/assurance/parsers", s.handleAssuranceParsers)
@@ -767,7 +768,8 @@ func (s *Server) handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 	enrollment := r.Header.Get("X-NLI-Enrollment")
 	node := &fleet.Node{ID: request.ID, Hostname: request.Hostname, IP: request.IP, OS: request.OS, Arch: request.Arch, Version: request.Version, ConfigHash: request.ConfigHash, MetricsURL: request.MetricsURL, Tags: request.Tags}
 	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
-	initial := true
+	_, existing := s.fleet.Get(request.ID)
+	initial := !existing
 	if strings.HasPrefix(enrollment, fleetGrantPrefix) {
 		s.enrollmentMu.Lock()
 		accepted, err := s.acceptFleetGrant(enrollment, request.ID, r.Header.Get("X-NLI-Enrollment-Proof"))
@@ -796,12 +798,8 @@ func (s *Server) handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Initial enrollment sync uses the same independent rollout approval gate
-	// as every other parser bundle rollout.
 	if initial {
-		if bundle, err := s.buildActiveParserBundle(r.Context()); err == nil {
-			_, _ = s.proposeParserBundleRollout(r.Context(), "nli-v21-auto-enrollment", "Initial parser asset synchronization", "Initial parser synchronization for a newly enrolled client requires independent rollout approval.", "selected", bundle, []string{request.ID})
-		}
+		s.queueEnrollmentParserSync(r.Context(), request.ID)
 	}
 	jsonCreated(w, protocol.RegisterResponse{Status: "registered", NodeID: request.ID, NodeToken: token})
 }

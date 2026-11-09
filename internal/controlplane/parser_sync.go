@@ -482,6 +482,27 @@ func parserSyncClientBlocker(node *fleet.Node, minimumRelease string, acknowledg
 	return parserSyncBlocker(acknowledged, node.Status == fleet.StatusOffline, state)
 }
 
+// The shipped baseline is approved with the release. Site-specific bundles
+// still need rollout approval before they are delivered to a new node.
+func (s *Server) queueEnrollmentParserSync(ctx context.Context, nodeID string) {
+	s.parserMutationMu.Lock()
+	defer s.parserMutationMu.Unlock()
+	const actor = "nli-enrollment"
+	const name = "Initial parser asset synchronization"
+	targets := []string{nodeID}
+	bundle, err := s.buildActiveParserBundle(ctx)
+	if err == nil {
+		if isBuiltinEnrollmentBundle(bundle) {
+			_, err = s.startParserBundleRollout(ctx, actor, name, bundle, targets)
+		} else {
+			_, err = s.proposeParserBundleRollout(ctx, actor, name, "Site-specific parser assets require rollout approval for this newly enrolled client.", "selected", bundle, targets)
+		}
+	}
+	if err != nil {
+		s.auditAction(nil, "parser.enrollment_sync", "nodes/"+nodeID, "failure", map[string]string{"error": err.Error()})
+	}
+}
+
 func (s *Server) startParserBundleRollout(ctx context.Context, actor, name string, bundle parserAssetBundle, targetIDs []string) (*rolloutRecord, error) {
 	if len(targetIDs) == 0 {
 		for _, node := range s.fleet.All() {

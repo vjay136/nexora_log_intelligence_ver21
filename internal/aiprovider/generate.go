@@ -77,7 +77,8 @@ func ResponseText(kind Kind, data []byte) (string, error) {
 		Candidates []struct {
 			Content struct {
 				Parts []struct {
-					Text string `json:"text"`
+					Text    string `json:"text"`
+					Thought bool   `json:"thought"`
 				} `json:"parts"`
 			} `json:"content"`
 		} `json:"candidates"`
@@ -104,7 +105,9 @@ func ResponseText(kind Kind, data []byte) (string, error) {
 	case KindGemini:
 		if len(envelope.Candidates) > 0 {
 			for _, part := range envelope.Candidates[0].Content.Parts {
-				text.WriteString(part.Text)
+				if !part.Thought {
+					text.WriteString(part.Text)
+				}
 			}
 		}
 	case KindOllama:
