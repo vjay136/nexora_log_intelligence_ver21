@@ -115,8 +115,18 @@ for input_name in auto imap pop webtop mta smtp-in smtp-out pabd capd pss; do
   docker exec "$client" test -f "/var/log/nli/input/${input_name}.log"
 done
 for output_family in auto imap pop webtop-webmail mta smtp-in smtp-out pabd capd pss; do
-  docker exec "$client" sh -c "! ls /var/log/nli/output/${output_family}_normalised_[0-9]*.jsonl >/dev/null 2>&1"
-  docker exec "$client" sh -c "! ls /var/log/nli/output/${output_family}_quarantine_[0-9]*.jsonl >/dev/null 2>&1"
+  docker exec "$client" bash -c '
+    for attempt in {1..10}; do
+      for normal in /var/log/nli/output/"$1"_normalised_[0-9]*.jsonl; do
+        quarantine=${normal/_normalised_/_quarantine_}
+        if [[ -f $normal && -f $quarantine && ! -s $normal && ! -s $quarantine ]]; then
+          exit 0
+        fi
+      done
+      sleep 1
+    done
+    exit 1
+  ' nli-hourly-pair "$output_family" || { echo "two-node acceptance: client missing an empty hourly output pair for ${output_family}" >&2; exit 1; }
 done
 docker exec "$client" systemctl is-active --quiet nli-agent.service
 docker exec "$client" systemctl is-active --quiet nli-client-control.service

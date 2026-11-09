@@ -142,8 +142,15 @@ systemctl enable --now nli-controller-agent.service nli-agent.service nli-client
 assert_services_healthy initial-start
 
 for output_family in auto imap pop webtop-webmail mta smtp-in smtp-out pabd capd pss; do
-  ! compgen -G "/var/log/nli/output/${output_family}_normalised_[0-9]*.jsonl" >/dev/null || fail "agent created an unused normalised output: ${output_family}"
-  ! compgen -G "/var/log/nli/output/${output_family}_quarantine_[0-9]*.jsonl" >/dev/null || fail "agent created an unused quarantine output: ${output_family}"
+  paired=false
+  for normal in /var/log/nli/output/"${output_family}"_normalised_[0-9]*.jsonl; do
+    quarantine=${normal/_normalised_/_quarantine_}
+    if [[ -f $normal && -f $quarantine && ! -s $normal && ! -s $quarantine ]]; then
+      paired=true
+      break
+    fi
+  done
+  [[ $paired == true ]] || fail "missing an empty hourly output pair for ${output_family}"
 done
 [[ -d /var/lib/nli/parsers/quarantine ]] || fail "atomic parser synchronization omitted the runtime quarantine directory"
 [[ $(stat -c '%U:%G %a' /var/lib/nli/parsers) == 'root:nli 750' ]] || fail "atomic parser root did not preserve root:nli 0750 ownership"
