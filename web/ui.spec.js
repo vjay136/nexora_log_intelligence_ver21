@@ -8,7 +8,7 @@ const origin = 'http://127.0.0.1:4176';
 const tabs = ['sample-history', 'header-templates', 'kv-templates', 'operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
 const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
-test('contextual Ask AI and visual blocks start from an empty mapping', async ({page})=>{
+test('contextual Ask Nexora AI and visual blocks start from an empty mapping', async ({page})=>{
   await mockController(page);
   await page.route('**/api/v1/ai/workspace',route=>{
     const body=route.request().postDataJSON();
@@ -17,7 +17,7 @@ test('contextual Ask AI and visual blocks start from an empty mapping', async ({
   });
   await login(page);
   await page.getByTestId('nav-building-blocks').click();
-  await page.getByRole('button',{name:'Ask AI',exact:true}).click();
+  await page.getByRole('button',{name:'Ask Nexora AI',exact:true}).click();
   const dialog=page.getByRole('dialog');
   await dialog.getByRole('textbox',{name:'What do you need help with?'}).fill('How do I split a field?');
   await dialog.getByRole('button',{name:'Get guidance'}).click();
@@ -35,7 +35,7 @@ test('contextual Ask AI and visual blocks start from an empty mapping', async ({
   await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveValue('status');
 });
 
-test('Ask NLI AI sends selected workspace, issue, and current raw sample to the live gateway',async({page})=>{
+test('Ask Nexora AI sends selected workspace, issue, and current raw sample to the live gateway',async({page})=>{
   await mockController(page);
   const raw='smtp status=failed';
   await page.route('**/api/v1/ai/workspace',route=>{
@@ -135,7 +135,7 @@ test('Building Blocks mapping button sends the current sample directly and offer
   await login(page);
   await page.getByTestId('nav-building-blocks').click();
   await page.locator('#block-raw').fill(raw);
-  await page.getByRole('button',{name:'Suggest Mappings with AI',exact:true}).click();
+  await page.getByRole('button',{name:'Suggest Mappings with Nexora AI',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const draft=page.locator('[data-workspace-ai-auto-panel]');
   await expect(draft.getByRole('status')).toContainText('Status mapped from exact evidence.');
@@ -145,7 +145,7 @@ test('Building Blocks mapping button sends the current sample directly and offer
   expect(calls).toBe(1);
 });
 
-test('Suggest Mappings with AI previews a labeled native fallback before import', async ({page})=>{
+test('Suggest Mappings with Nexora AI previews a labeled native fallback before import', async ({page})=>{
   await mockController(page);
   const raw='smtp status=failed';
   let calls=0;
@@ -168,13 +168,13 @@ test('Suggest Mappings with AI previews a labeled native fallback before import'
   await login(page);
   await page.getByTestId('nav-field-mapping').click();
   await page.locator('#nfi-raw').fill(raw);
-  await page.getByRole('button',{name:'Suggest Mappings with AI',exact:true}).click();
+  await page.getByRole('button',{name:'Suggest Mappings with Nexora AI',exact:true}).click();
   const draft=page.locator('[data-workspace-ai-auto-panel]');
   await expect(draft.getByRole('status')).toContainText('native FieldSense draft');
   await expect(draft.getByRole('status')).toContainText('"status": "failed"');
   await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveCount(0);
   await expect(draft.getByRole('heading',{name:'Fields that need attention'})).toBeVisible();
-  await draft.getByRole('button',{name:'Ask AI about this field'}).click();
+  await draft.getByRole('button',{name:'Ask Nexora AI about this field'}).click();
   const fieldHelp=page.getByRole('dialog');
   await fieldHelp.getByRole('button',{name:'Get guidance'}).click();
   await expect(fieldHelp.getByRole('status')).toContainText('source key status');
@@ -205,14 +205,14 @@ test('Auto Fix applies a verified AI draft and previews regex and unconfirmed de
   await login(page);
   await page.getByTestId('nav-field-mapping').click();
   await page.locator('#nfi-raw').fill(raw);
-  await page.locator('.qrw-field-editor').getByRole('button',{name:'Auto Fix with AI',exact:true}).click();
+  await page.locator('.qrw-field-editor').getByRole('button',{name:'Auto Fix with Nexora AI',exact:true}).click();
   await expect(page.locator('[data-qrw-key=name]')).toHaveCount(2);
   await expect(page.locator('[data-qrw-key=confirmed]')).not.toBeChecked();
   await expect(page.locator('#nfi-live-json')).toContainText('2001/4');
   await expect(page.locator('#nfi-live-state')).toContainText('Confirm the highlighted delimiter');
 });
 
-for(const source of ['pasted','retained'])test('Suggest & map with AI uses the exact '+source+' wizard sample and hands off to candidate validation',async({page})=>{
+for(const source of ['pasted','retained'])test('Suggest & map with Nexora AI uses the exact '+source+' wizard sample and hands off to candidate validation',async({page})=>{
   const raw='status=failed reason=not needed';
   const actual={status:'failed',reason:'not needed'};
   const plan={version:1,fields:Object.keys(actual).map(name=>({name,source:name,method:'key_value',type:'string',policy:'required'}))};
@@ -231,9 +231,9 @@ for(const source of ['pasted','retained'])test('Suggest & map with AI uses the e
   await page.getByTestId('nav-quarantine-wizard').click();
   if(source==='pasted'){
     await page.locator('#gprs-manual-raw').fill(raw);
-    await page.locator('#gprs-manual-raw').locator('xpath=ancestor::section[1]').getByRole('button',{name:'Suggest & map with AI',exact:true}).click();
+    await page.locator('#gprs-manual-raw').locator('xpath=ancestor::section[1]').getByRole('button',{name:'Suggest & map with Nexora AI',exact:true}).click();
   }else{
-    await page.getByRole('row').filter({has:page.getByRole('button',{name:'Inspect',exact:true})}).first().getByRole('button',{name:'Suggest & map with AI',exact:true}).click();
+    await page.getByRole('row').filter({has:page.getByRole('button',{name:'Inspect',exact:true})}).first().getByRole('button',{name:'Suggest & map with Nexora AI',exact:true}).click();
   }
   await expect(page.locator('#nfi-live-state')).toContainText('AI draft applied');
   await expect(page.locator('#nfi-live-json')).toContainText('not needed');
@@ -244,7 +244,7 @@ for(const source of ['pasted','retained'])test('Suggest & map with AI uses the e
   expect(mock.observed.some(entry=>entry.endsWith('/publish'))).toBe(false);
 });
 
-test('Suggest & map with AI in Parser Creation sends its own sample and opens the verified draft',async({page})=>{
+test('Suggest & map with Nexora AI in Parser Creation sends its own sample and opens the verified draft',async({page})=>{
   const raw='host=mailnode',actual={host:'mailnode'};
   await mockController(page);
   await page.route('**/api/v1/ai/workspace',route=>{
@@ -256,7 +256,7 @@ test('Suggest & map with AI in Parser Creation sends its own sample and opens th
   await page.getByTestId('nav-parser-workspace').click();
   const form=page.locator('#parser-workspace-form');
   await form.locator('[name=samples]').fill(raw);
-  await form.getByRole('button',{name:'Suggest & map with AI',exact:true}).click();
+  await form.getByRole('button',{name:'Suggest & map with Nexora AI',exact:true}).click();
   await expect(page.locator('#nfi-raw')).toHaveValue(raw);
   await expect(page.locator('#nfi-live-state')).toContainText('AI draft applied');
 });
@@ -367,7 +367,7 @@ test('AI model order and exclusive default can be saved independently',async({pa
   await login(page);
   await page.getByTestId('nav-ai').click();
   await page.locator('#ai-profile-choice').selectOption('second');
-  await page.getByRole('button',{name:'Set as Default AI Profile'}).click();
+  await page.getByRole('button',{name:'Set as Default Nexora AI Profile'}).click();
   await expect(page.getByText('NLI uses only profile', {exact:false})).toBeVisible();
   expect(pinned).toBe('second');
   const second=page.locator('#ai-route-order [data-profile-id=second]');
@@ -1029,7 +1029,7 @@ test('Guided Parser Repair Studio inspects retained failures, uses AI only after
   await page.locator('[data-wizard-step="6"] button').click();
   await page.getByRole('button', { name: /Run deterministic preview/ }).click();
   await expect(page.getByTestId('gprs-preview')).toContainText('records_tested');
-  await expect(page.getByRole('button', { name: 'Ask AI to diagnose and propose a fix' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ask Nexora AI to diagnose and propose a fix' })).toBeVisible();
   expect(mock.observed).toContain('POST /api/v1/quarantine/records/q-1/analyze');
   expect(mock.assuranceCorpora.at(-1).cases[0].desired).toEqual({ user: 'exact' });
   await page.getByRole('button', { name: 'Edit generated candidate' }).click();
@@ -1160,7 +1160,7 @@ test('FieldSense requests guidance before native preview and preserves the edita
   await page.getByRole('button',{name:'Add Custom Field',exact:true}).click();
   await page.locator('[data-qrw-key=name]').fill('my_status');
   await page.getByText('Optional configured AI help · review only',{exact:true}).click();
-  await page.getByRole('button',{name:'Ask configured AI for review-only help',exact:true}).click();
+  await page.getByRole('button',{name:'Ask configured Nexora AI for review-only help',exact:true}).click();
   const dialog=page.getByRole('dialog');
   await dialog.getByRole('textbox',{name:'What do you need help with?'}).fill('How should I map status?');
   await dialog.getByRole('button',{name:'Get guidance'}).click();
@@ -2600,25 +2600,25 @@ test('AI profile removal confirms exact ID, disables cleared credentials and pre
   expect(mutations).toEqual([['clear','removable'],['delete','removable']]);
 });
 
-test('Suggest with AI preserves manual mappings, checks readiness and imports only a reviewed current proposal',async({page})=>{
+test('Suggest with Nexora AI preserves manual mappings, checks readiness and imports only a reviewed current proposal',async({page})=>{
  await mockController(page);let ready=false;const requests=[];
  await page.route('**/api/v1/ai/capabilities',route=>route.fulfill({json:{available:ready,status:ready?'configured':'not_configured'}}));
  const plan={version:1,fields:[{name:'ai_status',method:'key_value',source:'status',type:'string',policy:'required',operations:[]}]};
  await page.route('**/api/v1/field-mapping/ai-suggest',route=>{requests.push(route.request().postDataJSON());return route.fulfill({json:{proposal:{plan},validation:{syntax_valid:true,extraction_valid:true,desired_match:false,publication_validated:false},raw_sha256:'synthetic-exact-source-hash',review_only:true,persisted:false,activated:false}});});
  await login(page);await page.getByTestId('nav-field-mapping').click();await page.locator('#nfi-raw').fill('status=FAILED');await page.getByRole('button',{name:'Add Custom Field',exact:true}).click();await page.locator('[data-qrw-key=name]').fill('manual_preserved');
- const host=page.locator('[data-ai-mapping-host]');await host.getByRole('button',{name:'Suggest with AI',exact:true}).click();await expect(page.locator('#toast-region')).toContainText('unconfigured');expect(requests).toHaveLength(0);
- ready=true;await host.getByRole('button',{name:'Suggest with AI',exact:true}).click();await expect(host.locator('[data-ai-mapping-proposal]')).toBeVisible();await expect(page.locator('[data-qrw-key=name]')).toHaveValue('manual_preserved');expect(requests[0].plan.fields[0].name).toBe('manual_preserved');await expect(host.locator('[data-ai-mapping-json]')).toContainText('"desired_match": false');
+ const host=page.locator('[data-ai-mapping-host]');await host.getByRole('button',{name:'Suggest with Nexora AI',exact:true}).click();await expect(page.locator('#toast-region')).toContainText('unconfigured');expect(requests).toHaveLength(0);
+ ready=true;await host.getByRole('button',{name:'Suggest with Nexora AI',exact:true}).click();await expect(host.locator('[data-ai-mapping-proposal]')).toBeVisible();await expect(page.locator('[data-qrw-key=name]')).toHaveValue('manual_preserved');expect(requests[0].plan.fields[0].name).toBe('manual_preserved');await expect(host.locator('[data-ai-mapping-json]')).toContainText('"desired_match": false');
  page.once('dialog',dialog=>dialog.dismiss());await host.getByRole('button',{name:'Import proposed mapping',exact:true}).click();await expect(page.locator('[data-qrw-key=name]')).toHaveValue('manual_preserved');
  await page.locator('#nfi-raw').fill('status=NEW');await expect(host.locator('[data-ai-mapping-proposal]')).toBeHidden();await page.evaluate(()=>document.querySelector('[data-action=mapping-ai-import]').click());await expect(page.locator('#toast-region')).toContainText('Raw evidence changed');await expect(page.locator('[data-qrw-key=name]')).toHaveValue('manual_preserved');
- await host.getByRole('button',{name:'Suggest with AI',exact:true}).click();await expect(host.locator('[data-ai-mapping-proposal]')).toBeVisible();page.once('dialog',dialog=>dialog.accept());await host.getByRole('button',{name:'Import proposed mapping',exact:true}).click();await expect(page.locator('[data-qrw-key=name]')).toHaveValue('ai_status');
+ await host.getByRole('button',{name:'Suggest with Nexora AI',exact:true}).click();await expect(host.locator('[data-ai-mapping-proposal]')).toBeVisible();page.once('dialog',dialog=>dialog.accept());await host.getByRole('button',{name:'Import proposed mapping',exact:true}).click();await expect(page.locator('[data-qrw-key=name]')).toHaveValue('ai_status');
  expect(requests).toHaveLength(2);expect(requests[1].raw).toBe('status=NEW');
 });
 
 test('AI mapping controls are shared by evidence authoring editors and discard late stale responses',async({page})=>{
- await mockController(page);await page.route('**/api/v1/ai/capabilities',route=>route.fulfill({json:{available:true}}));let pending;await page.route('**/api/v1/field-mapping/ai-suggest',route=>{pending=route;});await login(page);await page.getByTestId('nav-parser-workspace').click();const form=page.locator('#parser-workspace-form');await expect(form.getByRole('button',{name:'Suggest with AI',exact:true})).toBeVisible();await form.locator('[name=samples]').fill('first sample');await form.getByRole('button',{name:'Suggest with AI',exact:true}).click();await expect.poll(()=>!!pending).toBe(true);await form.locator('[name=samples]').fill('second sample');await pending.fulfill({json:{proposal:{plan:{version:1,fields:[{name:'forbidden_stale',method:'raw',type:'string'}]}},validation:{syntax_valid:true,extraction_valid:true}}});await expect(form.locator('[data-ai-mapping-status]')).toContainText('stale');await expect(form.locator('[data-ai-mapping-proposal]')).toBeHidden();
- pending=null;await form.getByRole('button',{name:'Suggest with AI',exact:true}).click();await expect.poll(()=>!!pending).toBe(true);await pending.fulfill({json:{proposal:{plan:{version:1,fields:[{name:'reviewed_message',method:'raw',source:'',type:'string',policy:'required'}]},parser:{service_scope:'custom-service'}},validation:{syntax_valid:true,extraction_valid:true}}});await expect(form.locator('[data-ai-mapping-proposal]')).toBeVisible();await expect(form.locator('[name=samples]')).toHaveValue('second sample');page.once('dialog',dialog=>dialog.accept());await form.getByRole('button',{name:'Open proposed mapping in FieldSense',exact:true}).click();await expect(page.locator('#nfi-raw')).toHaveValue('second sample');await expect(page.locator('[data-qrw-key=name]')).toHaveValue('reviewed_message');await expect(page.locator('#nfi-service')).toHaveValue('custom-service');
- for(const route of ['studio','regex']){await page.getByTestId(`nav-${route}`).click();await expect(page.locator('[data-ai-mapping-raw]')).toBeVisible();await expect(page.getByRole('button',{name:'Suggest with AI',exact:true})).toBeVisible();}
- await page.getByTestId('nav-assurance').click();await page.getByRole('tab',{name:'Parser Creation Helper',exact:true}).click();await expect(page.locator('#parser-helper-form').getByRole('button',{name:'Suggest with AI',exact:true})).toBeVisible();
+ await mockController(page);await page.route('**/api/v1/ai/capabilities',route=>route.fulfill({json:{available:true}}));let pending;await page.route('**/api/v1/field-mapping/ai-suggest',route=>{pending=route;});await login(page);await page.getByTestId('nav-parser-workspace').click();const form=page.locator('#parser-workspace-form');await expect(form.getByRole('button',{name:'Suggest with Nexora AI',exact:true})).toBeVisible();await form.locator('[name=samples]').fill('first sample');await form.getByRole('button',{name:'Suggest with Nexora AI',exact:true}).click();await expect.poll(()=>!!pending).toBe(true);await form.locator('[name=samples]').fill('second sample');await pending.fulfill({json:{proposal:{plan:{version:1,fields:[{name:'forbidden_stale',method:'raw',type:'string'}]}},validation:{syntax_valid:true,extraction_valid:true}}});await expect(form.locator('[data-ai-mapping-status]')).toContainText('stale');await expect(form.locator('[data-ai-mapping-proposal]')).toBeHidden();
+ pending=null;await form.getByRole('button',{name:'Suggest with Nexora AI',exact:true}).click();await expect.poll(()=>!!pending).toBe(true);await pending.fulfill({json:{proposal:{plan:{version:1,fields:[{name:'reviewed_message',method:'raw',source:'',type:'string',policy:'required'}]},parser:{service_scope:'custom-service'}},validation:{syntax_valid:true,extraction_valid:true}}});await expect(form.locator('[data-ai-mapping-proposal]')).toBeVisible();await expect(form.locator('[name=samples]')).toHaveValue('second sample');page.once('dialog',dialog=>dialog.accept());await form.getByRole('button',{name:'Open proposed mapping in FieldSense',exact:true}).click();await expect(page.locator('#nfi-raw')).toHaveValue('second sample');await expect(page.locator('[data-qrw-key=name]')).toHaveValue('reviewed_message');await expect(page.locator('#nfi-service')).toHaveValue('custom-service');
+ for(const route of ['studio','regex']){await page.getByTestId(`nav-${route}`).click();await expect(page.locator('[data-ai-mapping-raw]')).toBeVisible();await expect(page.getByRole('button',{name:'Suggest with Nexora AI',exact:true})).toBeVisible();}
+ await page.getByTestId('nav-assurance').click();await page.getByRole('tab',{name:'Parser Creation Helper',exact:true}).click();await expect(page.locator('#parser-helper-form').getByRole('button',{name:'Suggest with Nexora AI',exact:true})).toBeVisible();
 });
 
 test('AI remediation proposals can be rejected or removed without publishing a parser',async({page})=>{

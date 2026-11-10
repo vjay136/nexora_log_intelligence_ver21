@@ -22,7 +22,7 @@ func mappingAIProviderFixture(t *testing.T, f *apiFixture, reply string, inspect
 	t.Setenv("NLI_AI_ALLOW_LOOPBACK", "true")
 	calls := new(atomic.Int32)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+		attempt := int(calls.Add(1))
 		var request map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
@@ -32,7 +32,7 @@ func mappingAIProviderFixture(t *testing.T, f *apiFixture, reply string, inspect
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if len(status) > 0 {
-			w.WriteHeader(status[0])
+			w.WriteHeader(status[min(attempt-1, len(status)-1)])
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": reply}, "finish_reason": "stop"}}})
 	}))
@@ -312,7 +312,7 @@ func TestFieldMappingAIProviderFailureKeepsVerifiedNativePreview(t *testing.T) {
 	response, body := f.request(http.MethodPost, "/api/v1/field-mapping/ai-suggest", map[string]any{
 		"raw": raw, "service": "smtp", "native_fallback": true,
 	})
-	if response.StatusCode != http.StatusOK || calls.Load() != 1 {
+	if response.StatusCode != http.StatusOK || calls.Load() != 2 {
 		t.Fatalf("provider failure did not return native fallback: %d %s", response.StatusCode, body)
 	}
 	result := decodeMap(t, body)
@@ -321,5 +321,20 @@ func TestFieldMappingAIProviderFailureKeepsVerifiedNativePreview(t *testing.T) {
 	if result["proposal_origin"] != "native_fallback" || validation["extraction_valid"] != true ||
 		actual["status"] != "failed" || actual["reason"] != "notneeded" || actual["server"] != "cloud" {
 		t.Fatalf("unverified or mislabeled fallback: %s", body)
+	}
+}
+
+func TestFieldMappingAIRecoversFromTransientProviderFailure(t *testing.T) {
+	f := newAPIFixture(t)
+	calls := mappingAIProviderFixture(t, f, `{"renames":{}}`, nil, http.StatusServiceUnavailable, http.StatusOK)
+	response, body := f.request(http.MethodPost, "/api/v1/field-mapping/ai-suggest", map[string]any{
+		"raw": "status=failed reason=notneeded", "native_fallback": true,
+	})
+	if response.StatusCode != http.StatusOK || calls.Load() != 2 {
+		t.Fatalf("provider retry failed: %d %s", response.StatusCode, body)
+	}
+	result := decodeMap(t, body)
+	if result["proposal_origin"] != "ai" || result["provider_attempts"] != float64(2) {
+		t.Fatalf("retry outcome was not reported accurately: %s", body)
 	}
 }

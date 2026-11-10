@@ -1,5 +1,10 @@
 # Changelog
 
+## 22.9.0-0
+
+- Start verified mapping from pasted and quarantined samples with Suggest & map with Nexora AI.
+- Add bounded retries for transient provider failures, native mapping previews, and Controller Gateway diagnostics.
+
 ## [22.8.0-0]
 
 - Improve AI assistance and field mapping reliability.

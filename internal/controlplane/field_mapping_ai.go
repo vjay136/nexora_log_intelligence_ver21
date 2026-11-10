@@ -503,9 +503,23 @@ func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProvi
 	}
 	attempts := 0
 	var lastErr error
-	for _, profile := range orderedAIProviderRoute(profiles, primary.RoutingOrder) {
+	route := orderedAIProviderRoute(profiles, primary.RoutingOrder)
+	var retry *aiprovider.Profile
+	for i := 0; i < len(route) || retry != nil; i++ {
 		if attempts >= 3 || ctx.Err() != nil {
 			break
+		}
+		isRetry := i == len(route)
+		var profile aiprovider.Profile
+		if isRetry {
+			profile, retry = *retry, nil
+			select {
+			case <-ctx.Done():
+				continue
+			case <-time.After(200 * time.Millisecond):
+			}
+		} else {
+			profile = route[i]
 		}
 		attempts++
 		cfg := byID[profile.ID]
@@ -527,6 +541,13 @@ func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProvi
 			return text, profile.ID, attempts, nil
 		}
 		lastErr = callErr
+		var status *aiprovider.HTTPStatusError
+		if !isRetry && retry == nil && errors.As(callErr, &status) {
+			switch status.StatusCode {
+			case 500, 502, 503, 504:
+				retry = &profile
+			}
+		}
 	}
 	if ctx.Err() != nil {
 		lastErr = ctx.Err()

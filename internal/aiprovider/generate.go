@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+// HTTPStatusError reports only the HTTP status, without exposing provider content.
+type HTTPStatusError struct {
+	StatusCode int
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("provider returned HTTP %d", e.StatusCode)
+}
+
 // Generate uses the same provider adapter and network/credential policy as the
 // explicit connection test. It never persists secrets or activates a parser.
 func Generate(ctx context.Context, profile Profile, resolver SecretResolver, policy ValidationPolicy, prompt string, options RequestOptions) (string, error) {
@@ -62,7 +71,7 @@ func GenerateWithCredential(ctx context.Context, profile Profile, credential str
 		return "", errors.New("provider response exceeded configured limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", fmt.Errorf("provider returned HTTP %d", response.StatusCode)
+		return "", &HTTPStatusError{StatusCode: response.StatusCode}
 	}
 	return ResponseText(profile.Kind, data)
 }
