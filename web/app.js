@@ -902,7 +902,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   }
   const WORKSPACE_ARTIFACTS=[['mapping','Field mapping'],['parser','Full parser pack'],['regex','Regex'],['template','Template'],['pattern','Pattern'],['kv_template','KV pair template'],['key_pack','Key pack'],['keys','Known keys']];
   function workspaceAISample(button) {
-    if(button.hasAttribute('data-map-sample')){
+    if(button.hasAttribute?.('data-map-sample')){
       const input=button.closest('form')?.querySelector('textarea[name=samples],textarea[name=raw_evidence],textarea[name=raw]');
       if(input)return input.value;
     }
