@@ -1299,7 +1299,18 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     if (!response.ok) throw new Error('Unable to establish CSRF protection');
     state.csrf = (await response.json()).csrf_token; return state.csrf;
   }
-  async function api(path, options = {}) {
+  const activeAIRequests=new Map();
+  function api(path,options={}){
+    const request=controllerAPI(path,options);
+    if(options.method!=='POST'||!['/ai/workspace','/field-mapping/ai-suggest','/assurance/ai-proposal'].includes(path))return request;
+    const owner=state.page;
+    activeAIRequests.set(request,owner);
+    // Keep unsaved input and its eventual result on this page until the
+    // operator leaves or explicitly refreshes after the request settles.
+    page.dataset.dirty='true';
+    return request.finally(()=>activeAIRequests.delete(request));
+  }
+  async function controllerAPI(path, options = {}) {
     if (path === '/auth/login' && !state.controllerReady) throw new Error(CONTROLLER_REQUIRED);
     const method = options.method || 'GET'; const headers = { Accept: 'application/json', ...(options.headers || {}) };
     let body = options.body;
@@ -3479,7 +3490,29 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   page.addEventListener('change',async event=>{if(event.target.id!=='nfi-sample-file')return;const file=event.target.files?.[0];if(!file)return;try{if(file.size>1048576)throw new Error('Sample file exceeds the 1 MiB mapping limit.');const text=await file.text();state.nfiCorpus=text;state.nfiRaw=text.split(/\r?\n/).find(line=>line.trim())||'';el('nfi-raw').value=state.nfiRaw;el('nfi-corpus').value=text;el('nfi-inspector-host').innerHTML=qrwRawInspector();toast('Sample loaded locally. Learn structures or map the selected raw record.');}catch(error){toast(error.message,true);}});
   page.addEventListener('click',event=>{const button=event.target.closest('[data-action]');if(button?.dataset.action==='parser-helper-generate'){try{generateParserHelper(button.closest('form'));}catch(error){toast(error.message,true);}}});
   page.addEventListener('keydown',event=>{const tab=event.target.closest('[role=tab][data-assurance-tab],[role=tab][data-ai-tab],[role=tab][data-monitoring-tab]');if(!tab||!['ArrowRight','ArrowLeft','Home','End'].includes(event.key))return;event.preventDefault();const selector=tab.hasAttribute('data-ai-tab')?'[role=tab][data-ai-tab]':tab.hasAttribute('data-monitoring-tab')?'[role=tab][data-monitoring-tab]':'[role=tab][data-assurance-tab]',tabs=[...page.querySelectorAll(selector)],index=tabs.indexOf(tab),next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:tabs.length-1))%tabs.length;tabs[next].focus();tabs[next].click();});
-  el('refresh').addEventListener('click',()=>navigate(state.page)); el('logout').addEventListener('click',()=>signOut(true)); el('menu-toggle').addEventListener('click',()=>el('sidebar').classList.toggle('open'));
+  async function refreshCurrentWorkspace(){
+    const button=el('refresh'),status=el('refresh-progress');
+    if(button.disabled||!state.user)return;
+    const workspace=state.page,user=state.user;
+    const pending=[...activeAIRequests].filter(([,owner])=>owner===workspace).map(([request])=>request);
+    button.disabled=true;button.setAttribute('aria-busy','true');
+    button.dataset.refreshing='true';
+    status.textContent=pending.length?'Waiting for the current AI request to finish.':'Refreshing the current workspace.';
+    try{
+      if(pending.length){
+        await Promise.allSettled(pending);
+        if(state.user!==user||state.page!==workspace)return;
+        await Promise.allSettled([refreshNavigationBadges(),refreshNotificationBell()]);
+        status.textContent='AI request finished. Its result remains in the current workspace.';
+      }else{
+        await navigate(workspace);
+        status.textContent='Refresh finished.';
+      }
+    }finally{
+      button.disabled=false;button.removeAttribute('aria-busy');delete button.dataset.refreshing;
+    }
+  }
+  el('refresh').addEventListener('click',refreshCurrentWorkspace); el('logout').addEventListener('click',()=>signOut(true)); el('menu-toggle').addEventListener('click',()=>el('sidebar').classList.toggle('open'));
   el('notification-bell').addEventListener('click',()=>{const panel=el('notification-panel');panel.hidden=!panel.hidden;el('notification-bell').setAttribute('aria-expanded',String(!panel.hidden));if(!panel.hidden)refreshNotificationBell();});
   el('notification-list').addEventListener('click',async event=>{const button=event.target.closest('[data-notification-action]');if(!button)return;button.disabled=true;try{const action=button.dataset.notificationAction;if(action==='dismissed')await api(`/notifications/audit-${encodeURIComponent(button.dataset.id)}`,{method:'DELETE',body:{}});else await updateNotificationState(button.dataset.id,action);await refreshNotificationBell();}catch(error){toast(error.message,true);}finally{button.disabled=false;}});
   el('clear-notifications').addEventListener('click',async()=>{const button=el('clear-notifications');button.disabled=true;try{const unread=(state.controllerNotifications||[]).filter(note=>!note.read&&note.status!=='read');await Promise.all(unread.map(note=>api(`/notifications/audit-${encodeURIComponent(note.sequence)}`,{method:'POST',body:{action:'read'}})));state.notifications=[];await refreshNotificationBell();}catch(error){toast(error.message,true);}finally{button.disabled=false;}});
