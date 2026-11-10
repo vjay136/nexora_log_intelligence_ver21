@@ -61,6 +61,35 @@ test('Auto Fix sends the current sample directly and offers an editable draft', 
   expect(calls).toBe(1);
 });
 
+test('Suggest Mappings with AI previews a labeled native fallback before import', async ({page})=>{
+  await mockController(page);
+  const raw='smtp status=failed';
+  let calls=0;
+  await page.route('**/api/v1/ai/workspace',route=>{
+    calls++;
+    expect(route.request().postDataJSON()).toMatchObject({workspace:'field-mapping',mode:'fix',artifact:'mapping',raw,native_fallback:true});
+    return route.fulfill({json:{
+      answer:'The provider returned an invalid mapping plan. This is a native FieldSense draft.',
+      proposal_origin:'native_fallback',
+      proposal:{plan:{version:1,fields:[{name:'status',type:'string',method:'key_value',source:'status'}]}},
+      validation:{actual:{status:'failed'},syntax_valid:true,extraction_valid:true},
+      review_only:true,persisted:false,activated:false,
+    }});
+  });
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  await page.locator('#nfi-raw').fill(raw);
+  await page.getByRole('button',{name:'Suggest Mappings with AI',exact:true}).click();
+  const draft=page.locator('[data-workspace-ai-auto-panel]');
+  await expect(draft.getByRole('status')).toContainText('native FieldSense draft');
+  await expect(draft.getByRole('status')).toContainText('"status": "failed"');
+  await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveCount(0);
+  page.once('dialog',dialog=>dialog.accept());
+  await draft.getByRole('button',{name:'Apply mapping to editor'}).click();
+  await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveValue('status');
+  expect(calls).toBe(1);
+});
+
 test('Building Blocks adds pieces by drag and keyboard, reorders, and checks exact output',async({page})=>{
   await mockController(page);
   let request;
@@ -82,6 +111,35 @@ test('Building Blocks adds pieces by drag and keyboard, reorders, and checks exa
   await page.getByRole('button',{name:'Verify output preview'}).click();
   await expect(page.locator('#block-preview')).toContainText('"status": "failed"');
   expect(request.plan.fields.map(({name,source,source_end})=>[name,source,source_end])).toEqual([['separator','5','5'],['status','6','11']]);
+});
+
+test('Building Blocks automatically previews native KV output and refreshes after a policy edit',async({page})=>{
+  await mockController(page);
+  const raw='smtp status=failed|reason=greylisted';
+  await page.route('**/api/v1/field-mapping/suggest',route=>route.fulfill({json:{fields:[{
+    name:'details',method:'kv_eol',type:'object',policy:'required',source:'2',unit:'token',
+    kv_pair_separators:['|'],assignment_separators:['='],
+  }]}}));
+  await page.route('**/api/v1/assurance/mapping-preview',route=>{
+    const request=route.request().postDataJSON();
+    expect(request).toMatchObject({raw,plan:{version:1,fields:[{
+      name:'details',method:'kv_all',type:'object',source:'2',unit:'token',end_of_line:true,
+      kv_pair_separators:['|'],assignment_separators:['='],
+    }]}});
+    const fields={status:'failed',reason:'greylisted'};
+    const actual=request.plan.fields[0].output_policy==='flatten'?fields:{details:fields};
+    return route.fulfill({json:{passed:true,actual}});
+  });
+  await login(page);
+  await page.getByTestId('nav-building-blocks').click();
+  await page.getByLabel('Raw record').fill(raw);
+  await page.getByRole('button',{name:'Sense and populate fields'}).click();
+  await expect(page.locator('#block-fields .block-value')).toContainText('"reason": "greylisted"');
+  await expect(page.locator('#block-preview')).toContainText('"details": {');
+  await page.getByText('Edit piece',{exact:true}).click();
+  await page.locator('[data-block-output]').selectOption('flatten');
+  await expect(page.locator('#block-order')).toContainText('Keys merged into the output object');
+  await expect(page.locator('#block-preview')).toHaveText('{\n  "status": "failed",\n  "reason": "greylisted"\n}');
 });
 
 test('Manual test samples can be retained and reopened through encrypted fixture history',async({page})=>{

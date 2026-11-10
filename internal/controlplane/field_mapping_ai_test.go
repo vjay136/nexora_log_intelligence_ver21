@@ -234,3 +234,35 @@ func TestFieldMappingAIPromptSchemaExamplesAndManualPrivacy(t *testing.T) {
 		t.Fatal("system context exceeded its bounded budget")
 	}
 }
+
+func TestFieldMappingAISeedFallbackOnInvalidProviderReply(t *testing.T) {
+	const raw = "20250812 130035121+0100 aaa-gmailrgo009 smtp 3609 0 140293780948736 Note;SmtpServerEHLO(2001/4) " +
+		`|GW-EU-07|DEFER|sid=5f9e\|2c1a|reason=4.7.1 greylisted; retry after 300s|hex=doted, key=normal, fan=texe`
+	for _, tc := range []struct{ name, reply, origin, field string }{
+		{"invalid plan", `{"plan":{"unknown":true}}`, "native_fallback", "field1"},
+		{"invalid extraction", `{"plan":{"version":1,"fields":[{"name":"missing","method":"position","source":"99"}]}}`, "native_fallback", "field1"},
+		{"seed rename", `{"renames":{"field1":"gateway"}}`, "ai", "gateway"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAPIFixture(t)
+			calls := mappingAIProviderFixture(t, f, tc.reply, func(request map[string]any) {
+				encoded, _ := json.Marshal(request)
+				if !bytes.Contains(encoded, []byte("Native FieldSense seed: verified")) {
+					t.Error("provider did not receive native mapping structure")
+				}
+			})
+			response, body := f.request(http.MethodPost, "/api/v1/field-mapping/ai-suggest", map[string]any{"raw": raw, "service": "smtp", "native_fallback": true})
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("suggestion status %d: %s", response.StatusCode, body)
+			}
+			result := decodeMap(t, body)
+			validation := result["validation"].(map[string]any)
+			actual := validation["actual"].(map[string]any)
+			if calls.Load() != 1 || result["proposal_origin"] != tc.origin || validation["extraction_valid"] != true ||
+				result["activated"] != false || result["persisted"] != false || actual[tc.field] != "GW-EU-07" ||
+				actual["sid"] != "5f9e|2c1a" || actual["reason"] != "4.7.1 greylisted; retry after 300s" {
+				t.Fatalf("incorrect proposal: %s", body)
+			}
+		})
+	}
+}

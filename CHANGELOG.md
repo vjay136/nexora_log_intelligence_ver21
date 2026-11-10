@@ -1,5 +1,9 @@
 # Changelog
 
+## [22.7.0-0]
+
+- Improve AI mapping suggestions and Building Blocks previews.
+
 ## [22.6.0-0]
 
 - Improve parser evidence checks and guided repair workflows.

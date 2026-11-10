@@ -21,11 +21,12 @@ import (
 )
 
 type fieldMappingAIRequest struct {
-	Raw          string          `json:"raw"`
-	Service      string          `json:"service"`
-	Desired      map[string]any  `json:"desired,omitempty"`
-	Instructions string          `json:"instructions,omitempty"`
-	Plan         json.RawMessage `json:"plan,omitempty"`
+	Raw            string          `json:"raw"`
+	Service        string          `json:"service"`
+	Desired        map[string]any  `json:"desired,omitempty"`
+	Instructions   string          `json:"instructions,omitempty"`
+	Plan           json.RawMessage `json:"plan,omitempty"`
+	NativeFallback bool            `json:"native_fallback,omitempty"`
 }
 
 // This endpoint is an explicit, ephemeral alternative to native suggestions.
@@ -91,49 +92,92 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 	if reference != nil {
 		prompt += "\nExisting NLI reference (untrusted structural evidence): " + s.maskAIWorkspaceContext(reference, 4<<10)
 	}
+	var seed fieldmapping.Plan
+	var seedResult fieldmapping.Result
+	if input.NativeFallback {
+		_, fields, suggestErr := nfiSuggestRecord(ctx, input.Raw, "")
+		if suggestErr == nil {
+			seed = fieldmapping.Plan{Version: 1, Fields: fields}
+			if check, checkErr := validateAIMappingExtraction(ctx, seed, input.Raw); checkErr == nil {
+				seedResult = check
+				prompt += "\nNative FieldSense seed: verified on the exact source. Its extraction structure is below (values withheld). Prefer retaining the selectors and field types. " + s.maskAIWorkspaceContext(mappingAIManualStructure(seed), 8<<10)
+			} else {
+				seed = fieldmapping.Plan{}
+			}
+		}
+	}
 	started := time.Now()
 	success := false
 	defer func() { s.aiMetrics.record(success, time.Since(started)) }()
-	text, provider, attempts, err := s.callConfiguredAIWithSystem(ctx, cfg, prompt, mappingAISystemPrompt())
-	if err != nil {
-		writeAIWorkspaceFailure(w, err, attempts)
-		return
+	system := mappingAISystemPrompt()
+	if len(seed.Fields) > 0 {
+		system = strings.Replace(system, "Return ONLY JSON ", "The full-plan response format is ", 1)
+		system += " When the verified seed already extracts the requested fields, prefer returning only {\"renames\":{\"existing_seed_name\":\"new_name\"}} instead of rewriting the plan. An empty renames object keeps the seed. Do not rename dependencies, intermediate fields, or flatten containers. For other changes return the native plan object."
 	}
+	text, provider, attempts, err := s.callConfiguredAIWithSystem(ctx, cfg, prompt, system)
 	digest := sha256.Sum256([]byte(input.Raw))
 	rawHash := hex.EncodeToString(digest[:])
-	plan, err := decodeAIMappingPlan(aiReplyJSON(text))
+	origin, fallbackReason := "ai", ""
+	var plan fieldmapping.Plan
+	var result fieldmapping.Result
 	if err != nil {
-		mappingAIInvalid(w, "AI returned an invalid native mapping plan", false, false, rawHash, err)
-		return
+		if len(seed.Fields) == 0 || r.Context().Err() != nil {
+			writeAIWorkspaceFailure(w, err, attempts)
+			return
+		}
+		fallbackReason = "The provider could not complete the request."
+	} else {
+		plan, err = decodeAISeedOrMapping(aiReplyJSON(text), seed)
+		if err != nil {
+			if len(seed.Fields) == 0 {
+				mappingAIInvalid(w, "AI returned an invalid native mapping plan", false, false, rawHash, err)
+				return
+			}
+			fallbackReason = "The provider returned an invalid mapping plan."
+		} else {
+			result, err = validateAIMappingExtraction(ctx, plan, input.Raw)
+			if err != nil {
+				if len(seed.Fields) == 0 {
+					mappingAIInvalid(w, "AI mapping could not extract this exact source record", true, false, rawHash, err)
+					return
+				}
+				fallbackReason = "The AI mapping did not pass native extraction on the exact sample."
+			}
+		}
+	}
+	if fallbackReason == "" && len(seed.Fields) > 0 {
+		if len(input.Desired) > 0 {
+			aiDiff, _ := structuralDiff(result.Values, input.Desired)
+			nativeDiff, _ := structuralDiff(seedResult.Values, input.Desired)
+			if len(aiDiff) > 0 && len(nativeDiff) == 0 {
+				fallbackReason = "Only the native mapping matched the requested JSON."
+			}
+		} else if strings.TrimSpace(input.Instructions) == "" && !retainsNativeMappingValues(seedResult.Values, result.Values) {
+			fallbackReason = "The AI mapping changed or omitted values observed by native FieldSense."
+		}
+	}
+	if fallbackReason != "" {
+		plan, result, origin = seed, seedResult, "native_fallback"
 	}
 	for i := range plan.Fields {
 		plan.Fields[i].Confirmed = false
 	}
-	previewPlan := mappingAIPreviewPlan(plan)
-	compiled, err := fieldmapping.Compile(previewPlan)
-	if err != nil {
-		mappingAIInvalid(w, "AI mapping selectors or operations are invalid", false, false, rawHash, err)
-		return
-	}
-	result, err := compiled.ExecuteTrace(ctx, input.Raw)
-	if err == nil {
-		err = compiled.ValidateComplete(input.Raw, result)
-	}
-	if ctx.Err() != nil {
-		jsonError(w, "Mapping validation deadline reached; no parser changed", 504)
-		return
-	}
-	if err != nil || len(result.Values) == 0 {
-		if err == nil {
-			err = errors.New("the plan emits no output fields")
-		}
-		mappingAIInvalid(w, "AI mapping could not extract this exact source record", true, false, rawHash, err)
-		return
-	}
 	parser, err := canonicalAIMappingParser(plan, request, rawHash)
+	if err != nil && origin == "ai" && len(seed.Fields) > 0 {
+		plan, result, origin = seed, seedResult, "native_fallback"
+		fallbackReason = "The AI mapping could not be represented as a native parser candidate."
+		for i := range plan.Fields {
+			plan.Fields[i].Confirmed = false
+		}
+		parser, err = canonicalAIMappingParser(plan, request, rawHash)
+	}
 	if err != nil {
-		mappingAIInvalid(w, "AI mapping is incompatible with the native candidate schema", true, true, rawHash, err)
+		mappingAIInvalid(w, "Mapping is incompatible with the native candidate schema", true, true, rawHash, err)
 		return
+	}
+	if origin == "native_fallback" {
+		provenance := parser["provenance"].(map[string]any)
+		provenance["kind"] = "fieldsense_native_fallback"
 	}
 	var desiredMatch any
 	diff := []map[string]any{}
@@ -145,9 +189,13 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 	if desiredMatch == false {
 		errors = append(errors, "Proposed extraction differs from the requested JSON; inspect and repair it before candidate validation")
 	}
-	success = true
+	success = origin == "ai"
+	answer := "NLI ran the AI mapping against your exact sample. Review the extracted values and field names before adding the draft."
+	if origin == "native_fallback" {
+		answer = fallbackReason + " This is a native FieldSense draft tested on your exact sample. AI preferences may not have been applied. Review it before importing."
+	}
 	jsonOK(w, map[string]any{
-		"answer":     "NLI ran the proposed mapping against your exact sample. Review the extracted values and field names before adding the draft.",
+		"answer": answer, "proposal_origin": origin, "fallback_reason": fallbackReason,
 		"proposal":   map[string]any{"kind": "mapping", "plan": plan, "parser": parser},
 		"validation": map[string]any{"syntax_valid": true, "extraction_valid": true, "desired_provided": len(input.Desired) > 0, "desired_match": desiredMatch, "diff": diff, "errors": errors, "actual": result.Values, "evidence": result.Evidence, "trace": result.Trace, "assessment": assessMappingEvidence(result, len(input.Raw)), "publication_validated": false, "ready_for_publish": false, "operator_confirmation_required": true, "confirmation_mode": "mechanical_preview_only"},
 		"raw_sha256": rawHash, "provider_id": provider, "provider_attempts": attempts,
@@ -155,6 +203,77 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 		"review_only": true, "persisted": false, "activated": false, "requires_human_approval": true, "operator_confirmation_required": true,
 		"next_step": "Inspect the separate proposal, explicitly import it into your draft, verify exact desired JSON and regression fixtures, then use normal approval, publication and client acknowledgement. This reply changes no parser.",
 	})
+}
+
+// Names can change without changing the observed values, but replacing an
+// observed value with a different one is not a default mapping suggestion.
+func retainsNativeMappingValues(native, proposed map[string]any) bool {
+	counts := make(map[string]int, len(proposed))
+	for _, value := range proposed {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return false
+		}
+		counts[string(encoded)]++
+	}
+	for _, value := range native {
+		encoded, err := json.Marshal(value)
+		if err != nil || counts[string(encoded)] == 0 {
+			return false
+		}
+		counts[string(encoded)]--
+	}
+	return true
+}
+
+func decodeAISeedOrMapping(data []byte, seed fieldmapping.Plan) (fieldmapping.Plan, error) {
+	if len(seed.Fields) == 0 {
+		return decodeAIMappingPlan(data)
+	}
+	var edits struct {
+		Renames map[string]string `json:"renames"`
+	}
+	if strictJSON(data, &edits) != nil || edits.Renames == nil {
+		return decodeAIMappingPlan(data)
+	}
+	if len(edits.Renames) > len(seed.Fields) {
+		return fieldmapping.Plan{}, errors.New("too many seed renames")
+	}
+	plan := seed
+	plan.Fields = append([]fieldmapping.Field(nil), seed.Fields...)
+	found := 0
+	for i := range plan.Fields {
+		field := &plan.Fields[i]
+		name, ok := edits.Renames[field.Name]
+		if !ok {
+			continue
+		}
+		if field.OutputPolicy == "flatten" || field.OutputPolicy == "intermediate" || field.OutputPolicy == "omit" {
+			return fieldmapping.Plan{}, errors.New("only direct output fields can be renamed")
+		}
+		field.Name, field.Label = name, name
+		found++
+	}
+	if found != len(edits.Renames) {
+		return fieldmapping.Plan{}, errors.New("rename refers to an unknown seed field")
+	}
+	return plan, nil
+}
+
+func validateAIMappingExtraction(ctx context.Context, plan fieldmapping.Plan, raw string) (fieldmapping.Result, error) {
+	var result fieldmapping.Result
+	compiled, err := fieldmapping.Compile(mappingAIPreviewPlan(plan))
+	if err != nil {
+		return result, err
+	}
+	result, err = compiled.ExecuteTrace(ctx, raw)
+	if err == nil {
+		err = compiled.ValidateComplete(raw, result)
+	}
+	if err == nil && len(result.Values) == 0 {
+		err = errors.New("the plan emits no output fields")
+	}
+	return result, err
 }
 
 func mappingAIInvalid(w http.ResponseWriter, message string, syntax, extraction bool, hash string, err error) {
@@ -251,9 +370,7 @@ func mappingAIPreviewPlan(plan fieldmapping.Plan) fieldmapping.Plan {
 	copy := plan
 	copy.Fields = append([]fieldmapping.Field(nil), plan.Fields...)
 	for i := range copy.Fields {
-		if copy.Fields[i].Method == "delimiter" {
-			copy.Fields[i].Confirmed = true
-		}
+		copy.Fields[i].Confirmed = copy.Fields[i].Method == "delimiter"
 	}
 	return copy
 }
