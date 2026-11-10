@@ -1,5 +1,9 @@
 # Changelog
 
+## 22.10.0-0
+
+- Add hosted AI provider presets, editable model IDs and ordered provider failover.
+
 ## 22.9.0-0
 
 - Start verified mapping from pasted and quarantined samples with Suggest & map with Nexora AI.
