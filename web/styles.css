@@ -419,4 +419,3 @@ button[data-qrw-action-step="9"] { outline-color: var(--green); }
 #refresh[data-refreshing] .refresh-spinner { display: inline-block; animation: nli-refresh-spin .7s linear infinite; }
 @keyframes nli-refresh-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { #refresh[data-refreshing] .refresh-spinner { animation: none; } }
-.refresh-announcement { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

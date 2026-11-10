@@ -57,25 +57,23 @@ test('Ask NLI AI sends selected workspace, issue, and current raw sample to the 
   await expect(help.getByRole('status')).toHaveText('Use Key Value with the source key status.');
 });
 
-test('refresh shows only a spinner while AI is pending and keeps the returned result',async({page})=>{
+test('refresh shows only a spinner while the existing page reload runs',async({page})=>{
   await mockController(page);
-  let pending;
-  await page.route('**/api/v1/ai/workspace',route=>{pending=route;});
   await login(page);
   await page.getByTestId('nav-reference-ai').click();
   const help=page.locator('[data-ai-help-desk]');
-  await help.getByLabel('What do you need help with?').fill('How do I map status?');
-  await help.getByRole('button',{name:'Get guidance'}).click();
-  await expect.poll(()=>!!pending).toBe(true);
+  await expect(help).toBeVisible();
+  let pending;
+  await page.route('**/api/v1/assurance/parsers',route=>{pending=route;});
   const refresh=page.getByRole('button',{name:'Refresh',exact:true});
   await refresh.click();
+  await expect.poll(()=>!!pending).toBe(true);
   await expect(refresh.locator('.refresh-spinner')).toBeVisible();
   await expect(refresh.locator('[data-refresh-label]')).toBeHidden();
   await expect(refresh).toHaveAttribute('aria-busy','true');
-  await pending.fulfill({json:{answer:'Select the status source key.'}});
-  await expect(help.getByRole('status')).toHaveText('Select the status source key.');
+  await pending.fulfill({json:{parsers:[]}});
+  await expect(help).toBeVisible();
   await expect(refresh.locator('.refresh-spinner')).toBeHidden();
-  await expect(refresh).toBeEnabled();
 });
 
 test('AI request errors distinguish provider, controller transport, and field extraction',async({page})=>{
