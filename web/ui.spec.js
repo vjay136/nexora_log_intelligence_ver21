@@ -347,7 +347,7 @@ test('Nexora AI provider preset fills a fresh profile and requires the Cloudflar
     provider:{id:'old',name:'Old',provider:'openai_compatible'},
     profiles:[{id:'groq',name:'Existing Groq'}],
     templates:[
-      {id:'groq',name:'Groq',kind:'openai_compatible',base_url:'https://api.groq.com/openai/v1',model_hint:'openai/gpt-oss-20b',fill_model:true,credential_source:'encrypted_inline'},
+      {id:'groq',name:'Groq',kind:'openai_compatible',base_url:'https://api.groq.com/openai/v1',model_hint:'openai/gpt-oss-20b',models:['openai/gpt-oss-120b'],fill_model:true,credential_source:'encrypted_inline'},
       {id:'cloudflare-workers-ai',name:'Cloudflare Workers AI',kind:'openai_compatible',base_url:'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1',model_hint:'@cf/meta/llama-3.1-8b-instruct',fill_model:true,credential_source:'encrypted_inline'},
     ],
   }}));
@@ -360,6 +360,9 @@ test('Nexora AI provider preset fills a fresh profile and requires the Cloudflar
   await start.click();
   await expect(form.locator('[name=id]')).toHaveValue('groq-2');
   await expect(form.locator('[name=model]')).toHaveValue('openai/gpt-oss-20b');
+  await expect(form.locator('#ai-model-options option')).toHaveCount(2);
+  await form.locator('[name=model]').fill('vendor/custom-chat-model');
+  await expect(form.locator('[name=model]')).toHaveValue('vendor/custom-chat-model');
   await expect(form.locator('[name=api_key]')).toHaveValue('');
   await form.locator('#ai-provider-preset').selectOption('cloudflare-workers-ai');
   await start.click();
