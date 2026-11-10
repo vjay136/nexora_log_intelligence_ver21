@@ -41,6 +41,7 @@ type aiProviderConfig struct {
 	MaxResponseBytes  int64                 `json:"max_response_bytes,omitempty"`
 	CredentialRemoved bool                  `json:"credential_removed,omitempty"`
 	Exclusive         bool                  `json:"-"`
+	RoutingOrder      []string              `json:"-"`
 }
 type sealedAIProvider struct {
 	Nonce        string     `json:"nonce"`
@@ -268,8 +269,8 @@ func (s *Server) handleAIProvider(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete, http.MethodPost:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		actionName := r.URL.Query().Get("action")
-		if r.Method == http.MethodPost && (actionName == "set-default" || actionName == "clear-default") {
-			s.handleAIProviderDefault(w, r, p, actionName, id)
+		if r.Method == http.MethodPost && (actionName == "set-default" || actionName == "clear-default" || actionName == "set-order") {
+			s.handleAIProviderRouting(w, r, p, actionName, id)
 			return
 		}
 		if !validAIProfileRemovalID(id) {
@@ -278,7 +279,7 @@ func (s *Server) handleAIProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		clear := r.Method == http.MethodPost
 		if clear && actionName != "clear-credential" {
-			jsonError(w, "Supported POST actions are clear-credential, set-default and clear-default", 405)
+			jsonError(w, "Supported POST actions are clear-credential, set-default, clear-default and set-order", 405)
 			return
 		}
 		result, err := s.removeAIProviderCredential(r.Context(), id, p.Username, clear)
@@ -463,7 +464,7 @@ func (s *Server) handleAIProviderTest(w http.ResponseWriter, r *http.Request) {
 	if input.ID != "" {
 		cfg, _, loadErr = s.loadAIProviderByID(r.Context(), input.ID)
 	} else {
-		cfg, _, loadErr = s.loadAutomaticAIProvider(r.Context())
+		cfg, _, loadErr = s.loadAutomaticAIProvider(r.Context(), nil)
 	}
 	if loadErr != nil {
 		cfg = aiProviderConfig{Enabled: true}

@@ -62,6 +62,13 @@ type failingAIProviderListStore struct {
 	metastore.Store
 }
 
+func (s failingAIProviderListStore) Get(ctx context.Context, collection, id string, revision int) (metastore.Document, error) {
+	if collection == aiProviderRoutingCollection {
+		return metastore.Document{}, errors.New("test internal routing store detail")
+	}
+	return s.Store.Get(ctx, collection, id, revision)
+}
+
 func (s failingAIProviderListStore) List(ctx context.Context, collection string, query metastore.Query) ([]metastore.Document, error) {
 	if collection == "ai-provider" {
 		return nil, errors.New("test internal provider store detail")

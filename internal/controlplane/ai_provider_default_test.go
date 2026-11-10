@@ -34,20 +34,39 @@ func TestAIProviderDefaultIsExclusiveAndExplicitProbeIsIndependent(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	response, body := f.request(http.MethodPost, "/api/v1/admin/ai-provider?action=set-default&id=exclusive", map[string]any{})
+	response, body := f.request(http.MethodPost, "/api/v1/admin/ai-provider?action=set-order", map[string]any{"profile_order": []string{"exclusive", "alternate"}})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("provider order was not saved: %d %s", response.StatusCode, body)
+	}
+	cfg, _, err := f.server.loadAIProvider(ctx)
+	if err != nil || cfg.ID != "exclusive" || cfg.Exclusive {
+		t.Fatalf("saved order did not override numeric priority: %#v %v", cfg.ID, err)
+	}
+	if _, used, attempts, err := f.server.callConfiguredAI(ctx, cfg, "synthetic test"); err != nil || used != "alternate" || attempts != 2 {
+		t.Fatalf("automatic fallback did not try providers in saved order: %s %d %v", used, attempts, err)
+	}
+	defaultCalls.Store(0)
+	alternateCalls.Store(0)
+	response, body = f.request(http.MethodPost, "/api/v1/admin/ai-provider?action=set-default&id=exclusive", map[string]any{})
 	if response.StatusCode != http.StatusOK || decodeMap(t, body)["default_profile_id"] != "exclusive" {
 		t.Fatalf("default was not saved: %d %s", response.StatusCode, body)
 	}
+	response, body = f.request(http.MethodPost, "/api/v1/admin/ai-provider?action=set-order", map[string]any{"profile_order": []string{"alternate", "exclusive"}})
+	if response.StatusCode != http.StatusOK || decodeMap(t, body)["default_profile_id"] != "exclusive" {
+		t.Fatalf("order update dropped default: %d %s", response.StatusCode, body)
+	}
 	_, body = f.request(http.MethodGet, "/api/v1/admin/ai-provider", nil)
 	catalog := decodeMap(t, body)
-	if catalog["default_profile_id"] != "exclusive" || catalog["provider"].(map[string]any)["model"] != "pinned-model" {
+	order := catalog["profile_order"].([]any)
+	if catalog["default_profile_id"] != "exclusive" || catalog["provider"].(map[string]any)["model"] != "pinned-model" ||
+		len(order) != 2 || order[0] != "alternate" || order[1] != "exclusive" {
 		t.Fatalf("catalog did not report persisted selection: %s", body)
 	}
 	response, _ = f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{"mode": "ask", "workspace": "field-mapping", "question": "What can I map?"})
 	if response.StatusCode < 400 || defaultCalls.Load() != 1 || alternateCalls.Load() != 0 {
 		t.Fatal("workspace AI fell back from the selected provider")
 	}
-	cfg, _, err := f.server.loadAIProvider(ctx)
+	cfg, _, err = f.server.loadAIProvider(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +97,8 @@ func TestAIProviderDefaultIsExclusiveAndExplicitProbeIsIndependent(t *testing.T)
 		t.Fatal("deleted default fell back to the alternate")
 	}
 	response, body = f.request(http.MethodPost, "/api/v1/admin/ai-provider?action=clear-default", map[string]any{})
-	if response.StatusCode != http.StatusOK || decodeMap(t, body)["default_profile_id"] != "" {
+	restored := decodeMap(t, body)
+	if response.StatusCode != http.StatusOK || restored["default_profile_id"] != "" || len(restored["profile_order"].([]any)) != 2 {
 		t.Fatalf("automatic routing was not restored: %d %s", response.StatusCode, body)
 	}
 	cfg, _, err = f.server.loadAIProvider(ctx)

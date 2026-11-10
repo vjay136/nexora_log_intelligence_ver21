@@ -316,7 +316,7 @@ func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProvi
 	}
 	attempts := 0
 	var lastErr error
-	for _, profile := range aiprovider.Route(profiles, "") {
+	for _, profile := range orderedAIProviderRoute(profiles, primary.RoutingOrder) {
 		if attempts >= 3 || ctx.Err() != nil {
 			break
 		}

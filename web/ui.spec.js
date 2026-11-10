@@ -67,16 +67,19 @@ test('Provider storage failure keeps the provider manager and recovery control v
   await expect(page.getByRole('button',{name:'Retry loading profiles'})).toBeVisible();
 });
 
-test('A saved AI profile can be pinned exclusively and cleared back to automatic routing',async({page})=>{
+test('AI model order and exclusive default can be saved independently',async({page})=>{
   await mockController(page);
   let pinned='';
+  let order=[];
+  const first={id:'first',name:'First model',model:'first-model',provider:'openai',enabled:true,priority:1};
   const profile={id:'second',name:'Second model',model:'example-model',provider:'openai',enabled:true};
   await page.route(/\/api\/v1\/admin\/ai-provider(?:\?|$)/,route=>{
     const query=new URL(route.request().url()).searchParams;
     if(route.request().method()==='POST'){
-      pinned=query.get('action')==='set-default'?query.get('id'):'';
+      if(query.get('action')==='set-order')order=route.request().postDataJSON().profile_order;
+      else pinned=query.get('action')==='set-default'?query.get('id'):'';
     }
-    return route.fulfill({json:{provider:profile,profiles:[profile],default_profile_id:pinned}});
+    return route.fulfill({json:{provider:profile,profiles:[first,profile],default_profile_id:pinned,profile_order:order}});
   });
   await login(page);
   await page.getByTestId('nav-ai').click();
@@ -84,9 +87,16 @@ test('A saved AI profile can be pinned exclusively and cleared back to automatic
   await page.getByRole('button',{name:'Set as Default AI Profile'}).click();
   await expect(page.getByText('NLI uses only profile', {exact:false})).toBeVisible();
   expect(pinned).toBe('second');
+  const second=page.locator('#ai-route-order [data-profile-id=second]');
+  await second.getByRole('button',{name:'Move down'}).click();
+  await page.getByRole('button',{name:'Save model order'}).click();
+  await expect(page.locator('#ai-route-order li').first()).toContainText('First model');
+  expect(order).toEqual(['first','second']);
+  expect(pinned).toBe('second');
   await page.getByRole('button',{name:'Use automatic routing'}).click();
   await expect(page.getByText('Automatic routing is active.', {exact:false})).toBeVisible();
   expect(pinned).toBe('');
+  expect(order).toEqual(['first','second']);
 });
 
 async function mockController(page, { role = 'admin', healthIdentity = 'v21', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [], rolloutSeed = [], rolloutApprovalFailure = null, replayFailure = null, replayPending = false } = {}) {

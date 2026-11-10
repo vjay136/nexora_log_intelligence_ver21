@@ -6,4 +6,5 @@ This release upgrades 22.4.0-0. Install from the versioned archive with its comp
 - **FieldSense** uses the same editable mapping plan for manually arranged pieces and suggested fields. Preview the sample against the native parser before creating or publishing a parser pack.
 - **AI Resolution & Providers** displays the provider store status and keeps available settings accessible when catalog reads fail. Connection tests and configuration changes report their own errors.
 - **Set as Default AI Profile** pins one saved profile and its model for AI requests. If that profile is unavailable, NLI reports the failure. Use automatic routing restores priority and fallback selection.
+- **Model priority order** lets administrators arrange enabled profiles in a single list. In automatic mode, fallbacks follow the saved order within the first profile's group.
 - **API monitoring** retains visibility into unavailable services while reducing repeated alerts for the same failure.

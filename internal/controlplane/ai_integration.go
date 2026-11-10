@@ -88,14 +88,14 @@ func (s *Server) loadAIProviders(ctx context.Context) ([]aiProviderConfig, error
 	return snapshot.configs, nil
 }
 func (s *Server) loadAIProvider(ctx context.Context) (aiProviderConfig, sealedAIProvider, error) {
-	id, err := s.aiProviderDefaultID(ctx)
+	routing, err := s.loadAIProviderRouting(ctx)
 	if err != nil {
 		return aiProviderConfig{}, sealedAIProvider{}, err
 	}
-	if id == "" {
-		return s.loadAutomaticAIProvider(ctx)
+	if routing.DefaultProfileID == "" {
+		return s.loadAutomaticAIProvider(ctx, routing.ProfileOrder)
 	}
-	cfg, sealed, err := s.loadAIProviderByID(ctx, id)
+	cfg, sealed, err := s.loadAIProviderByID(ctx, routing.DefaultProfileID)
 	if err != nil || !cfg.Enabled {
 		return aiProviderConfig{}, sealedAIProvider{}, errors.New("default AI provider profile is unavailable")
 	}
@@ -103,7 +103,7 @@ func (s *Server) loadAIProvider(ctx context.Context) (aiProviderConfig, sealedAI
 	return cfg, sealed, nil
 }
 
-func (s *Server) loadAutomaticAIProvider(ctx context.Context) (aiProviderConfig, sealedAIProvider, error) {
+func (s *Server) loadAutomaticAIProvider(ctx context.Context, order []string) (aiProviderConfig, sealedAIProvider, error) {
 	snapshot, err := s.readAIProviderSnapshot(ctx)
 	if err != nil {
 		return aiProviderConfig{}, sealedAIProvider{}, err
@@ -111,19 +111,20 @@ func (s *Server) loadAutomaticAIProvider(ctx context.Context) (aiProviderConfig,
 	if len(snapshot.configs) == 0 && len(snapshot.blocked) > 0 {
 		return aiProviderConfig{}, sealedAIProvider{}, errors.New("AI provider configurations could not be decrypted")
 	}
-	cfg, ok := primaryAIProvider(snapshot.configs)
+	cfg, ok := primaryAIProvider(snapshot.configs, order)
 	if !ok {
 		return aiProviderConfig{}, sealedAIProvider{}, os.ErrNotExist
 	}
+	cfg.RoutingOrder = order
 	return cfg, snapshot.envelopes[cfg.ID], nil
 }
 
-func primaryAIProvider(configs []aiProviderConfig) (aiProviderConfig, bool) {
+func primaryAIProvider(configs []aiProviderConfig, order []string) (aiProviderConfig, bool) {
 	profiles := make([]aiprovider.Profile, 0, len(configs))
 	for _, cfg := range configs {
 		profiles = append(profiles, profileFromConfig(cfg))
 	}
-	route := aiprovider.Route(profiles, "")
+	route := orderedAIProviderRoute(profiles, order)
 	if len(route) == 0 {
 		if len(configs) == 0 {
 			return aiProviderConfig{}, false
@@ -153,7 +154,8 @@ func (s *Server) aiProviderReady(cfg aiProviderConfig) bool {
 }
 func (s *Server) aiProviderCatalog(ctx context.Context, selectedID string) map[string]any {
 	snapshot, err := s.readAIProviderSnapshot(ctx)
-	defaultID, routingErr := s.aiProviderDefaultID(ctx)
+	routing, routingErr := s.loadAIProviderRouting(ctx)
+	defaultID := routing.DefaultProfileID
 	status, message := "available", ""
 	switch {
 	case err != nil:
@@ -169,7 +171,7 @@ func (s *Server) aiProviderCatalog(ctx context.Context, selectedID string) map[s
 	provider := map[string]any{"provider": "", "model": "", "endpoint": "", "configured": false, "key_last4": "", "enabled": false, "status": "not_configured", "last_test_at": nil, "credential_source": "encrypted_inline"}
 	if selectedID == "" {
 		selectedID = defaultID
-		if selected, ok := primaryAIProvider(snapshot.configs); ok && selectedID == "" {
+		if selected, ok := primaryAIProvider(snapshot.configs, routing.ProfileOrder); ok && selectedID == "" {
 			selectedID = selected.ID
 		}
 	}
@@ -201,6 +203,7 @@ func (s *Server) aiProviderCatalog(ctx context.Context, selectedID string) map[s
 	result := providerCatalogResponse(provider)
 	result["store_status"], result["store_message"] = status, message
 	result["default_profile_id"] = defaultID
+	result["profile_order"] = routing.ProfileOrder
 	result["blocked_profile_count"] = len(snapshot.blocked)
 	result["profiles_unavailable"] = err != nil || s.assurance.providerAEAD == nil
 	result["profiles"] = profiles
@@ -209,7 +212,8 @@ func (s *Server) aiProviderCatalog(ctx context.Context, selectedID string) map[s
 }
 func (s *Server) aiCapabilities(ctx context.Context) map[string]any {
 	configs, err := s.loadAIProviders(ctx)
-	defaultID, routingErr := s.aiProviderDefaultID(ctx)
+	routing, routingErr := s.loadAIProviderRouting(ctx)
+	defaultID := routing.DefaultProfileID
 	enabled, ready := 0, 0
 	for _, cfg := range configs {
 		if cfg.Enabled {
@@ -262,7 +266,7 @@ func (s *Server) callConfiguredAI(ctx context.Context, primary aiProviderConfig,
 		profiles = append(profiles, profileFromConfig(cfg))
 		byID[cfg.ID] = cfg
 	}
-	route := aiprovider.Route(profiles, "")
+	route := orderedAIProviderRoute(profiles, primary.RoutingOrder)
 	attempts := 0
 	for _, profile := range route {
 		if attempts >= 3 || ctx.Err() != nil {
