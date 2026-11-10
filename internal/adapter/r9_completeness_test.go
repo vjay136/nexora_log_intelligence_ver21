@@ -24,12 +24,11 @@ func TestR9BaselineMailCompletenessTrace(t *testing.T) {
 	}
 	for _, raw := range r9MailSamples {
 		result := a.TryParseV5Production(raw, engine.Source{Service: "smtp"})
-		if result.Success || !result.Quarantined {
-			t.Fatalf("built-in header-only success: %+v", result)
+		if !result.Success || result.Quarantined {
+			t.Fatalf("built-in complete mail pack failed: %+v", result.ParseTelemetry)
 		}
-		t.Logf("success=%v quarantine=%v result=%+v", result.Success, result.Quarantined, result.ParseTelemetry)
-		if result.EventPayload != nil {
-			t.Logf("payload=%+v", result.EventPayload.Fields)
+		if result.EventPayload.Fields["status"] != "failed" || result.EventPayload.Fields["reason"] == "" {
+			t.Fatalf("built-in parser discarded a source value: %+v", result.EventPayload.Fields)
 		}
 	}
 }
@@ -75,6 +74,13 @@ func TestR9ManagedHeaderOnlyQuarantinesAllFourReportedLines(t *testing.T) {
 			t.Fatal("managed-only completeness failure allowed generic fallback")
 		}
 		routed := engine.Parse(raw, engine.Source{Service: "smtp"}, deps)
+		if parserpolicy.HasCompleteSMTPMailTail(raw) {
+			if string(routed.Meta.Route) != "normal" || routed.Data["status"] != "failed" || routed.Data["reason"] == nil ||
+				(strings.Contains(raw, "server") && routed.Data["server"] != "cloud") {
+				t.Fatalf("complete fallback lost a source field: %+v", routed)
+			}
+			continue
+		}
 		if string(routed.Meta.Route) != "quarantine" {
 			t.Fatalf("production route lost suffix: %+v", routed)
 		}
@@ -127,8 +133,10 @@ func TestR9DynamicTailProductionAndNewKeys(t *testing.T) {
 			if string(r.Meta.Route) == "quarantine" || r.Data["future_key"] != "0042" || r.Data["status"] != "failed" {
 				t.Fatalf("dynamic payload lost: %+v", r)
 			}
-		} else if string(r.Meta.Route) != "quarantine" {
-			t.Fatalf("ambiguous default normalized: %+v", r)
+		} else {
+			if string(r.Meta.Route) != "normal" || r.Data["status"] != "failed" || r.Data["reason"] != "notneeded" || r.Data["server"] != "cloud" {
+				t.Fatalf("built-in mail pack lost the pipe tail: %+v", r)
+			}
 		}
 	}
 }

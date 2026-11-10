@@ -1157,13 +1157,16 @@ if source.count(placeholder) != 1:
 digest = os.environ["NLI_SETUP_SUPABASE_HASH"]
 if not re.fullmatch(r"[0-9a-f]{64}", digest):
     raise SystemExit("Supabase controller digest must be SHA-256 hex")
+release = re.search(r"'bootstrap_release', '([0-9]+[.][0-9]+[.][0-9]+-[0-9]+)'", source)
+if not release:
+    raise SystemExit("Supabase schema template is missing a valid bootstrap release")
 rendered = source.replace(placeholder, digest)
 rendered = rendered.replace(
     "-- Do not run this template directly. `sudo nli-controller-setup` renders an\n"
     "-- installation-specific copy at /root/nli-supabase-bootstrap.sql.",
-    "-- Generated installation-specific bootstrap for Ver21 R10 (21.0.0-10).\n"
+    f"-- Generated installation-specific bootstrap for NLI {release[1]}.\n"
     "-- Run this COMPLETE generated file in this project's Supabase SQL Editor.\n"
-    "-- RPC schema version 1 remains compatible with existing R7 metadata."
+    "-- RPC schema version 1 preserves existing revisioned metadata."
 )
 if placeholder in rendered:
     raise SystemExit("Supabase bootstrap contains an unresolved placeholder")

@@ -277,6 +277,36 @@ func TestExpiredSessionProbeWithStaleActorIsNotNotified(t *testing.T) {
 	}
 }
 
+func TestAuthoringFailureNotificationsDistinguishInlineErrorsAndDeduplicate(t *testing.T) {
+	f := newAPIFixture(t)
+	const preview = "/api/v1/assurance/mapping-preview"
+	const drafts = "/api/v1/assurance/parsers"
+	const ai = "/api/v1/assurance/ai-proposal"
+	for _, example := range []struct{ path, status string }{
+		{preview, "400"}, {preview, "408"}, {drafts, "409"}, {ai, "422"}, {ai, "429"},
+		{drafts, "503"}, {drafts, "503"}, {ai, "502"},
+	} {
+		if _, err := f.server.audit.Append(auditlog.Event{
+			Action: http.MethodPost, Resource: example.path, Outcome: "failure", Actor: "admin",
+			Details: map[string]string{"detail": "status=" + example.status + " duration_ms=1"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response, body := f.request(http.MethodGet, "/api/v1/notifications?limit=100", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("notification feed %d: %s", response.StatusCode, body)
+	}
+	counts := map[string]int{}
+	for _, item := range decodeMap(t, body)["notifications"].([]any) {
+		resource, _ := item.(map[string]any)["resource"].(string)
+		counts[resource]++
+	}
+	if counts[preview] != 0 || counts[drafts] != 1 || counts[ai] != 1 {
+		t.Fatalf("expected only distinct operational errors: %s", body)
+	}
+}
+
 func TestAuthenticatedAuthFailureRemainsActionable(t *testing.T) {
 	event := auditlog.Event{
 		Action:   http.MethodGet,

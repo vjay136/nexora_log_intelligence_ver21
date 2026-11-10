@@ -92,7 +92,7 @@ func resolve(directory string, isolateInvalid bool) ([]Profile, []ManagedPackDia
 	}
 	managedIDs := make(map[string]struct{}, len(managed))
 	for _, profile := range managed {
-		if _, builtin := expectedBuiltinIDs[profile.Pack.ID]; builtin || profile.Pack.ID == "smtp_native_v5" {
+		if IsBuiltinPackID(profile.Pack.ID) {
 			reason := fmt.Sprintf("managed add-on identity %q conflicts with a protected built-in parser", profile.Pack.ID)
 			if !isolateInvalid {
 				return nil, diagnostics, fmt.Errorf("%s", reason)
@@ -353,7 +353,7 @@ func CompileManagedPayloadContext(ctx context.Context, name string, data []byte)
 
 func IsBuiltinPackID(id string) bool {
 	_, ok := expectedBuiltinIDs[id]
-	return ok || id == "smtp_native_v5"
+	return ok || id == "smtp_native_v5" || id == parserpolicy.MailTailPackID
 }
 
 func runApprovedRegressions(pack *parserpolicy.ParserPack, executor *parserpolicy.ParserPackExecutor) error {

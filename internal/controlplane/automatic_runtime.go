@@ -137,7 +137,7 @@ func (s *Server) automaticParserRuntime(ctx context.Context) (*automaticRuntimeS
 	if err != nil {
 		return nil, err
 	}
-	builtinIDs := []string{}
+	builtinIDs := []string{parserpolicy.MailTailPackID}
 	for _, profile := range builtins {
 		builtinIDs = append(builtinIDs, profile.Pack.ID)
 	}

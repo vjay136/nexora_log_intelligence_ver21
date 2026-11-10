@@ -67,3 +67,27 @@ func TestAIWorkspaceRejectsRegexThatOnlyMatchesPartOfSample(t *testing.T) {
 		t.Fatalf("partial regex was accepted: %d %s", response.StatusCode, body)
 	}
 }
+
+func TestAIWorkspaceKVTemplatePreservesCompleteValues(t *testing.T) {
+	f := newAPIFixture(t)
+	reply := `{"answer":"Use pipe boundaries.","config":{"pair_separators":["|"],"assignment_separators":["="],"duplicate_policy":"array","max_fields":256}}`
+	mappingAIProviderFixture(t, f, reply, nil)
+	response, body := f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{
+		"mode": "fix", "workspace": "kv-templates", "artifact": "kv_template", "raw": `|sid=a\|b|hdr=first|hdr=second`,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("KV template %d: %s", response.StatusCode, body)
+	}
+	draft := decodeMap(t, body)
+	values := draft["validation"].(map[string]any)["actual"].(map[string]any)
+	hdr, _ := values["hdr"].([]any)
+	if values["sid"] != "a|b" || len(hdr) != 2 || hdr[0] != "first" || hdr[1] != "second" || draft["persisted"] != false {
+		t.Fatalf("unexpected KV values or lifecycle result: %s", body)
+	}
+	response, body = f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{
+		"mode": "fix", "workspace": "kv-templates", "artifact": "kv_template", "raw": `|sid=a|unnamed-segment`,
+	})
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("partial KV template %d: %s", response.StatusCode, body)
+	}
+}

@@ -17,6 +17,15 @@ loaded alongside the reviewed packs.
 | `nli-reviewed-smtp-out.parserpack.json` | `smtp-out` | `smtp-out`, `smtp` | `/var/log/nli/input/smtp-out.log` | `20261010 123456789+0530 rgo01 SMTP policy=outbound ...` |
 | `nli-reviewed-webtop-webmail.parserpack.json` | `webtop-webmail` | `webtop-webmail`, `webtop`, `webmail` | `/var/log/nli/input/webtop-webmail.log` | `2026-10-10 15:20:11:123+0530 user=... action=...` |
 
+The Ver22.6 controller and client also embed the reviewed SMTP parser
+`nli_reviewed_smtp_complete_tail/smtp_complete_tail` in the binaries. It covers
+continued assignments, explicitly pipe-delimited tails, and complete uncoded
+`SieveRuleMsg` key/value tails. For example, `msg=MISREPORT=eventType;misreport`
+emits `msg: "MISREPORT"` and `tailed_field: "eventType;misreport"`. Pipe tails
+keep repeated names as arrays and assign names such as `field1` to unlabeled
+segments. An address that contains literal angle brackets in the source still
+contains them after decoding JSON escapes such as `\u003c` and `\u003e`.
+
 Run the guided installer and enter `automatic` for log paths to create all
 eight suggested files and associate each with its family parser. Those empty
 files are examples; replace them with real inputs or edit the client config

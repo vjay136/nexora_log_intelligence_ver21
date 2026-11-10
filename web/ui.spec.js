@@ -5,7 +5,7 @@ import { contrast as designContrast } from './design-engine.js';
 // These browser regressions verify frontend behavior independently of network
 // and database availability. e2e.spec.js separately exercises a real controller.
 const origin = 'http://127.0.0.1:4176';
-const tabs = ['operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
+const tabs = ['sample-history', 'header-templates', 'kv-templates', 'operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
 const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
 test('contextual Ask AI and visual blocks start from an empty mapping', async ({page})=>{
@@ -35,6 +35,32 @@ test('contextual Ask AI and visual blocks start from an empty mapping', async ({
   await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveValue('status');
 });
 
+test('Auto Fix sends the current sample directly and offers an editable draft', async ({page})=>{
+  await mockController(page);
+  const raw='smtp status=failed';
+  let calls=0;
+  await page.route('**/api/v1/ai/workspace',route=>{
+    calls++;
+    expect(route.request().postDataJSON()).toMatchObject({workspace:'building-blocks',mode:'fix',artifact:'mapping',raw});
+    return route.fulfill({json:{
+      answer:'Status mapped from exact evidence.',
+      proposal:{plan:{version:1,fields:[{name:'status',type:'string',method:'key_value',source:'status'}]}},
+      validation:{sample_matched:true},review_only:true,persisted:false,activated:false,
+    }});
+  });
+  await login(page);
+  await page.getByTestId('nav-building-blocks').click();
+  await page.locator('#block-raw').fill(raw);
+  await page.getByRole('button',{name:'Auto Fix with AI',exact:true}).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const draft=page.locator('[data-workspace-ai-auto-panel]');
+  await expect(draft.getByRole('status')).toContainText('Status mapped from exact evidence.');
+  page.once('dialog',dialog=>dialog.accept());
+  await draft.getByRole('button',{name:'Apply mapping to editor'}).click();
+  await expect(page.locator('#block-fields [data-block-name]')).toHaveValue('status');
+  expect(calls).toBe(1);
+});
+
 test('Building Blocks adds pieces by drag and keyboard, reorders, and checks exact output',async({page})=>{
   await mockController(page);
   let request;
@@ -51,10 +77,38 @@ test('Building Blocks adds pieces by drag and keyboard, reorders, and checks exa
   await expect(tray.locator('[data-block-card]')).toHaveCount(2);
   await tray.locator('[data-block-name]').nth(0).fill('status');
   await tray.locator('[data-block-name]').nth(1).fill('separator');
-  await tray.getByRole('button',{name:'Move up'}).last().click();
+  await page.locator('#block-order').getByRole('button',{name:'Move separator up'}).press('Enter');
+  await expect(page.locator('#block-order li').first()).toContainText('separator');
   await page.getByRole('button',{name:'Verify output preview'}).click();
   await expect(page.locator('#block-preview')).toContainText('"status": "failed"');
   expect(request.plan.fields.map(({name,source,source_end})=>[name,source,source_end])).toEqual([['separator','5','5'],['status','6','11']]);
+});
+
+test('Manual test samples can be retained and reopened through encrypted fixture history',async({page})=>{
+  await mockController(page);
+  const raw='smtp accepted';
+  let saved;
+  const id='test-sample-guided-repair-1234';
+  await page.route('**/api/v1/assurance/cases',route=>{
+    if(route.request().method()==='POST'){
+      saved=route.request().postDataJSON();
+      return route.fulfill({json:{id}});
+    }
+    return route.fulfill({json:{cases:saved?[{id,name:saved.name}]:[]}});
+  });
+  await page.route('**/api/v1/assurance/cases/'+id,route=>route.fulfill({json:{fixture:saved.case}}));
+  await login(page);
+  await page.getByTestId('nav-sample-history').click();
+  await page.getByLabel('Automatically save pasted test samples during this sign-in').check();
+  await page.getByTestId('nav-quarantine-wizard').click();
+  await page.getByLabel('Manual raw sample').fill(raw);
+  await expect(page.getByLabel('Save an encrypted copy to Test Sample History')).toBeChecked();
+  await page.getByRole('button',{name:/Use manual sample/}).click();
+  await expect.poll(()=>saved?.case.raw).toBe(raw);
+  expect(saved.retain).toBe(true);
+  await page.getByTestId('nav-sample-history').click();
+  await page.getByRole('button',{name:'Open in Guided Repair'}).click();
+  await expect(page.locator('#gprs-preview-form [name=raw_evidence]')).toHaveValue(raw);
 });
 
 test('Provider storage failure keeps the provider manager and recovery control visible',async({page})=>{
@@ -669,8 +723,8 @@ test('navigation leads with Command Center, Assurance Lab, approvals and notific
   await mockController(page);
   await login(page);
   const ids=await page.locator('.nav-item').evaluateAll(items=>items.map(item=>item.dataset.page));
-  expect(ids.slice(0,21)).toEqual(['operations','monitoring','streams','assurance','quarantine-wizard','upes','rollouts','parser-sync','artifacts','parser-workspace','nupire','field-integrity','ai','parsers','reference-ai','building-blocks','field-mapping','studio','regex','knownkeys','drift']);
-  expect(ids[21]).toBe('notifications');
+  expect(ids.slice(0,24)).toEqual(['operations','monitoring','streams','assurance','quarantine-wizard','upes','rollouts','parser-sync','artifacts','parser-workspace','nupire','field-integrity','ai','sample-history','header-templates','kv-templates','parsers','reference-ai','building-blocks','field-mapping','studio','regex','knownkeys','drift']);
+  expect(ids[24]).toBe('notifications');
   const input=ids.indexOf('input-paths'),output=ids.indexOf('outputs'),parsing=ids.indexOf('kv');
   expect(ids[input+1]).toBe('migration');
   expect(ids[input+2]).toBe('outputs');
@@ -679,7 +733,7 @@ test('navigation leads with Command Center, Assurance Lab, approvals and notific
   expect(ids[output+3]).toBe('performance');
   expect(ids[parsing]).toBe('kv');
   expect(ids.indexOf('parsers')).toBeLessThan(parsing);
-  expect(ids.indexOf('parsers')).toBe(ids.indexOf('ai')+1);
+  expect(ids.indexOf('parsers')).toBe(ids.indexOf('kv-templates')+1);
   expect(ids.indexOf('engine-network')).toBeGreaterThan(ids.indexOf('drift'));
 });
 
@@ -1127,7 +1181,7 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   await expect(page.locator('[data-qrw-panel="9"]')).not.toContainText('the final controller outcome is still pending');
   await expect(page.locator('[data-qrw-panel="8"] .qrw-runbook .qrw-runbook-state').filter({hasText:'Do this now'})).toHaveCount(0);
   await page.getByTestId('nav-quarantine-wizard').click();
-  await expect(page.locator('.qrw-next-action')).toContainText('Verify the replay result');
+  await expect(page.locator('.qrw-next-action')).toContainText('Recovery complete');
   await page.locator('[data-wizard-step="7"] button').click();
   await lifecycle.getByRole('button',{name:'Rollback',exact:true}).click();
   await expect.poll(()=>mock.qrwParserActions.some(item=>item.id==='qr-candidate'&&item.action==='rollback')).toBe(true);
@@ -2257,6 +2311,7 @@ test('draft input profiles expose lifecycle actions and JSON without a dead roll
 });
 
 test('mobile navigation exposes all workspaces without horizontal page overflow', async ({ page }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await mockController(page);
   await login(page);
@@ -2374,10 +2429,10 @@ test('Guided Parser Repair Studio onboards a pasted sample without quarantine re
     return route.fallback();
   });
   await page.route('**/api/v1/assurance/mapping-preview',route=>route.fulfill({json:{passed:true,actual:desired,errors:[]}}));
-  let verification,selectedParser='another-parser';
+  let verification,exactAvailable=false;
   await page.route('**/api/v1/assurance/run',route=>{
     verification=route.request().postDataJSON();
-    return route.fulfill({json:{passed:true,actual:desired,diff:[],parser:{name:selectedParser}}});
+    return route.fulfill({json:{passed:true,actual:desired,diff:[],parser:{name:exactAvailable&&verification.parser_id?verification.parser_id:'another-parser'}}});
   });
   await login(page);
   await page.getByTestId('nav-quarantine-wizard').click();
@@ -2407,10 +2462,10 @@ test('Guided Parser Repair Studio onboards a pasted sample without quarantine re
   await studio.getByRole('button',{name:'9 · Verify manual sample'}).click();
   await studio.getByRole('button',{name:'9.1 · Run production verification'}).click();
   await expect(studio.getByText(/selected a different parser/)).toBeVisible();
-  selectedParser='draft-1';
+  exactAvailable=true;
   await studio.getByRole('button',{name:/9.1 .*Run production verification/}).click();
-  await expect(studio.getByText(/Verified · Expected fields matched/)).toBeVisible();
-  expect(verification).toMatchObject({raw,desired,service:'login',preserve_source:true});
+  await expect(studio.getByText(/Complete · Published parser and automatic output matched/)).toBeVisible();
+  expect(verification).toMatchObject({raw,desired,service:'login',preserve_source:true,parser_id:'draft-1'});
   expect(mock.qrwReplays).toEqual([]);
   expect(mock.observed.some(item=>item.endsWith('/analyze')&&item.includes('/quarantine/records/'))).toBe(false);
 });

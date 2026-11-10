@@ -269,8 +269,12 @@ func TestAllReviewedCorpusRoutesThroughProductionAdapter(t *testing.T) {
 					t.Errorf("line %d did not route successfully: %+v", line, result.ParseTelemetry)
 					continue
 				}
-				if result.ParseTelemetry.ParserID != fixture.parserID {
-					t.Errorf("line %d parser = %s, want %s", line, result.ParseTelemetry.ParserID, fixture.parserID)
+				expectedParser := fixture.parserID
+				if parserpolicy.HasCompleteSMTPMailTail(raw) {
+					expectedParser = parserpolicy.MailTailPackID + "/smtp_complete_tail"
+				}
+				if result.ParseTelemetry.ParserID != expectedParser {
+					t.Errorf("line %d parser = %s, want %s", line, result.ParseTelemetry.ParserID, expectedParser)
 				}
 				if result.ParseTelemetry.AttemptCount < 1 || result.ParseTelemetry.AttemptCount > 32 || len(result.ParseTelemetry.OrderedAttempts) != result.ParseTelemetry.AttemptCount {
 					t.Errorf("line %d unbounded/incomplete attempts: %+v", line, result.ParseTelemetry)

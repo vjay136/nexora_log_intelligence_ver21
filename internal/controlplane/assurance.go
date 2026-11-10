@@ -82,6 +82,10 @@ type assuranceRequest struct {
 }
 
 func (s *Server) storeAssuranceCiphertext(ctx context.Context, ciphertext []byte) (string, string, error) {
+	return s.storeAssuranceCiphertextIn(ctx, ciphertext, "sha256")
+}
+
+func (s *Server) storeAssuranceCiphertextIn(ctx context.Context, ciphertext []byte, prefix string) (string, string, error) {
 	if s.metadata.Mode() != "supabase" {
 		return base64.StdEncoding.EncodeToString(ciphertext), "", nil
 	}
@@ -90,7 +94,7 @@ func (s *Server) storeAssuranceCiphertext(ctx context.Context, ciphertext []byte
 	}
 	digest := sha256.Sum256(ciphertext)
 	digestText := hex.EncodeToString(digest[:])
-	objectPath := "sha256/" + digestText + ".enc"
+	objectPath := prefix + "/" + digestText + ".enc"
 	if err := s.artifactStorage.PutVerified(ctx, "nli-assurance-fixtures", objectPath, bytes.NewReader(ciphertext), int64(len(ciphertext)), "application/octet-stream", digestText); err != nil {
 		return "", "", err
 	}
@@ -767,7 +771,11 @@ func (s *Server) saveAssuranceCase(w http.ResponseWriter, r *http.Request, princ
 	if !s.assurance.manual {
 		expiresAt = time.Now().UTC().Add(s.assurance.ttl)
 	}
-	storedCiphertext, objectPath, err := s.storeAssuranceCiphertext(r.Context(), ciphertext)
+	prefix := "sha256"
+	if strings.HasPrefix(id, "test-sample-") {
+		prefix = "test-sample-history/sha256"
+	}
+	storedCiphertext, objectPath, err := s.storeAssuranceCiphertextIn(r.Context(), ciphertext, prefix)
 	if err != nil {
 		jsonError(w, "encrypted fixture storage failed", http.StatusServiceUnavailable)
 		return

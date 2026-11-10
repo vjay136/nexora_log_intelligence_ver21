@@ -373,6 +373,17 @@ func InspectKeyValues(ctx context.Context, raw string, field Field) ([]KVProfile
 	if len(field.KVInputEdits) > 0 {
 		return nil, fmt.Errorf("preview the KV row to verify its configured separators and input edits")
 	}
+	return InspectScopedKeyValues(ctx, selected, start)
+}
+
+// InspectScopedKeyValues recognizes a complete already-selected payload.
+func InspectScopedKeyValues(ctx context.Context, selected string, start int) ([]KVProfile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(selected) > MaxInputBytes || !utf8.ValidString(selected) || strings.ContainsRune(selected, 0) {
+		return nil, fmt.Errorf("key/value input violates bounds or UTF-8 contract")
+	}
 	if profile, ok := InspectWrappedKeyValues(selected, start); ok {
 		return []KVProfile{profile}, nil
 	}

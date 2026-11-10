@@ -296,7 +296,8 @@ func (e *ParserPackExecutor) executeMixedKVStage(request *ExecutionRequest, rule
 		}
 		input, baseStart = text, field.Start
 	}
-	if inputField != "" {
+	uncodedSieve := stageConfig.MailTail && uncodedSieveHeader.MatchString(request.Input) && !strings.HasPrefix(input, "|") && !hasMailContinuation(input)
+	if inputField != "" && !uncodedSieve {
 		body, offset, framed, err := framedKVBody(input)
 		if err != nil {
 			return 0, 0, err
@@ -306,7 +307,14 @@ func (e *ParserPackExecutor) executeMixedKVStage(request *ExecutionRequest, rule
 			config.AllowLeadingText = false
 		}
 	}
-	parsed, err := mixedkv.Parse(input, config)
+	var parsed mixedkv.Result
+	if uncodedSieve {
+		parsed, err = parseUncodedSieveTail(request.Context, input)
+	} else if stageConfig.MailTail {
+		parsed, err = parseReviewedMailTail(input, config, stageConfig.ContinuationField)
+	} else {
+		parsed, err = mixedkv.Parse(input, config)
+	}
 	if err != nil {
 		if typed, ok := err.(*mixedkv.Error); ok {
 			return 0, 0, fail("mixed_kv_"+typed.Code, "mixed-KV parsing failed")
@@ -323,6 +331,23 @@ func (e *ParserPackExecutor) executeMixedKVStage(request *ExecutionRequest, rule
 			return 0, 0, fail("evidence_missing", "mixed-KV field has no source span")
 		}
 		captured[name] = capturedField{Value: value, Source: true, Start: baseStart + start, End: baseStart + end}
+	}
+	if stageConfig.MailTail {
+		for _, entry := range parsed.Entries {
+			if !entry.Emitted {
+				continue
+			}
+			field := captured[entry.Key]
+			field.SourceSpans = append(field.SourceSpans, mixedkv.Span{Start: baseStart + entry.ValueSpan.Start, End: baseStart + entry.ValueSpan.End})
+			captured[entry.Key] = field
+		}
+		for name, field := range captured {
+			if len(field.SourceSpans) == 1 && field.SourceSpans[0].Start < field.SourceSpans[0].End {
+				field.Start = field.SourceSpans[0].Start
+				field.End = field.SourceSpans[0].End
+				captured[name] = field
+			}
+		}
 	}
 	return mergeCaptured(rule, fields, captured, false)
 }

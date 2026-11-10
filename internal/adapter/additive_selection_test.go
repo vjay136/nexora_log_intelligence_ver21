@@ -43,7 +43,7 @@ func TestSMTPWrappedTailCannotNormalizePartially(t *testing.T) {
 	}
 }
 
-func TestSMTPPipeTailCannotNormalizePartially(t *testing.T) {
+func TestSMTPPipeTailNormalizesOnlyWithCompleteCapture(t *testing.T) {
 	const header = "20250812 130035121+0100 aaa-gmailrgo009 smtp 3609 0 140293780948736 Note;SmtpServerEHLO(2001/4) "
 	adapter, err := NewParserPackAdapter()
 	if err != nil {
@@ -57,7 +57,14 @@ func TestSMTPPipeTailCannotNormalizePartially(t *testing.T) {
 		`|DATA|sid=5f9e\|2c1a|dkim=fail(sig-expired)|spam=0.12|hdr=X-Mailer:Outlook 16.0\, Build 1234|hdr=X-Forwarded-For:198.51.100.91, 203.0.113.9`,
 		`|GW-EU-07|DEFER|sid=5f9e\|2c1a|reason=4.7.1 greylisted; retry after 300s|`,
 	} {
-		for _, service := range []string{"auto", "unrecognized-mail-service"} {
+		parsed := adapter.TryParseV5Production(header+tail, engine.Source{Service: "auto"})
+		if !parsed.Success || parsed.ParseTelemetry.PackID != parserpolicy.MailTailPackID {
+			t.Fatalf("complete pipe payload did not use the reviewed mail pack: %+v", parsed.ParseTelemetry)
+		}
+		if sid, ok := parsed.EventPayload.Get("sid"); !ok || sid != "5f9e" && sid != "5f9e|2c1a" {
+			t.Errorf("lost session identifier: %#v", sid)
+		}
+		for _, service := range []string{"unrecognized-mail-service"} {
 			result := adapter.TryParseV5Production(header+tail, engine.Source{Service: service})
 			if result.Success || !result.Quarantined || !slices.Contains(result.ParseTelemetry.ErrorCodes, "incomplete_structured_tail") {
 				t.Fatalf("partial pipe payload escaped quarantine for %s: %+v", service, result.ParseTelemetry)
@@ -67,6 +74,23 @@ func TestSMTPPipeTailCannotNormalizePartially(t *testing.T) {
 				t.Fatalf("partial pipe payload entered normalized output: %+v", routed)
 			}
 		}
+	}
+	for _, malformed := range []string{`|sid="unterminated|from=demo@example.test`, `|sid=x||user=example`} {
+		if result := adapter.TryParseV5Production(header+malformed, engine.Source{Service: "auto"}); result.Success || !result.Quarantined {
+			t.Fatalf("malformed mail tail escaped quarantine: %+v", result.ParseTelemetry)
+		}
+	}
+}
+
+func TestIncompleteSMTPContinuationCannotFallBackToTheLegacyParser(t *testing.T) {
+	const raw = "20250811 080053105+0100 mail001 smtp 3692 0 140026854221568 Note;SieveRuleMsg(2005/1) id=demo:msg=MISREPORT=|sender;<demo@example.test>|action;keep"
+	adapter, err := NewParserPackAdapter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := adapter.TryParseV5Production(raw, engine.Source{Service: "auto"})
+	if result.Success || !result.Quarantined || !slices.Contains(result.ParseTelemetry.ErrorCodes, "incomplete_structured_tail") {
+		t.Fatalf("an incomplete continued assignment escaped quarantine: %+v", result.ParseTelemetry)
 	}
 }
 

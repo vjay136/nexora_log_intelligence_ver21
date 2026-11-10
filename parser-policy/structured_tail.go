@@ -1,6 +1,7 @@
 package parserpolicy
 
 import (
+	"context"
 	"regexp"
 	"strings"
 
@@ -55,8 +56,9 @@ func validateFramedMailTail(input string, fields workingSet, projected map[strin
 	base := header[1]
 	tail := input[base:]
 	pipe := strings.HasPrefix(tail, "|")
+	uncodedSieve := uncodedSieveHeader.MatchString(input) && !pipe && !hasMailContinuation(tail)
 	body, offset, framed, err := framedKVBody(tail)
-	if err != nil || !framed && !pipe {
+	if !uncodedSieve && (err != nil || !framed && !pipe) {
 		return err
 	}
 	captured := make(map[mixedkv.Span]bool, len(fields))
@@ -64,7 +66,22 @@ func validateFramedMailTail(input string, fields workingSet, projected map[strin
 		field := fields[name]
 		if field.Source {
 			captured[mixedkv.Span{Start: field.Start - base, End: field.End - base}] = true
+			for _, span := range field.SourceSpans {
+				captured[mixedkv.Span{Start: span.Start - base, End: span.End - base}] = true
+			}
 		}
+	}
+	if uncodedSieve {
+		parsed, err := parseUncodedSieveTail(context.Background(), tail)
+		if err != nil {
+			return fail("incomplete_structured_tail", "could not verify the uncoded mail grammar")
+		}
+		for _, entry := range parsed.Entries {
+			if !captured[entry.ValueSpan] {
+				return fail("incomplete_structured_tail", "uncoded mail payload contains an unmapped value")
+			}
+		}
+		return nil
 	}
 	if pipe {
 		segments, err := mixedkv.ScanPipeTail(tail)

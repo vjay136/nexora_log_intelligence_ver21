@@ -268,6 +268,7 @@ func (s *Server) callConfiguredAI(ctx context.Context, primary aiProviderConfig,
 	}
 	route := orderedAIProviderRoute(profiles, primary.RoutingOrder)
 	attempts := 0
+	var lastErr error
 	for _, profile := range route {
 		if attempts >= 3 || ctx.Err() != nil {
 			break
@@ -277,8 +278,15 @@ func (s *Server) callConfiguredAI(ctx context.Context, primary aiProviderConfig,
 		if callErr == nil {
 			return text, profile.ID, attempts, nil
 		}
+		lastErr = callErr
 	}
-	return "", "", attempts, errors.New("configured AI providers were unavailable; no parser changed")
+	if ctx.Err() != nil {
+		lastErr = ctx.Err()
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no configured AI provider is ready")
+	}
+	return "", "", attempts, lastErr
 }
 func (s *Server) aiReviewPromptWithContext(ctx context.Context, input assuranceRequest, result map[string]any) string {
 	copy := make(map[string]any, len(result)+1)

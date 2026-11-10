@@ -135,3 +135,9 @@ The `field-mapping` primary workspace is the 45th workspace. It provides the sha
 
 - `reference-ai` opens Reference based help & Fix for reviewable AI artifact drafts.
 - `building-blocks` converts selected source ranges and ordered edits into editable FieldSense mappings.
+
+Ver22.6 adds these workspaces:
+
+- Test Sample History (`sample-history`): choose encrypted retention when testing a pasted record. Reopen it in Guided Parser Repair or download it under the existing fixture permissions.
+- Log Pattern Templates (`header-templates`): create a revisioned RE2 definition for the fixed header, leaving dynamic pairs for the KV grammar. These templates share the existing template catalog and approval workflow.
+- KV Pair Templates (`kv-templates`): draft reusable delimiter and assignment rules, such as pipe between pairs and equals between key and value. These definitions share the KV policy catalog and approval workflow.

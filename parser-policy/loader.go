@@ -132,6 +132,8 @@ func decodeStaticStageConfig(value interface{}) (staticlayout.Config, error) {
 
 type mixedKVStageConfig struct {
 	InputField           string                  `json:"input_field,omitempty"`
+	MailTail             bool                    `json:"mail_tail,omitempty"`
+	ContinuationField    string                  `json:"continuation_field,omitempty"`
 	PairSeparators       []string                `json:"pair_separators,omitempty"`
 	AssignmentSeparators []string                `json:"assignment_separators,omitempty"`
 	QuoteCharacters      string                  `json:"quote_characters,omitempty"`
@@ -156,6 +158,9 @@ func decodeMixedKVStageConfig(value interface{}) (mixedKVStageConfig, mixedkv.Co
 	var stage mixedKVStageConfig
 	if err := decodeStrictConfig(value, &stage); err != nil {
 		return stage, mixedkv.Config{}, err
+	}
+	if stage.ContinuationField != "" && (!stage.MailTail || !isValidIdentifier(stage.ContinuationField) || strings.HasPrefix(stage.ContinuationField, "_")) {
+		return stage, mixedkv.Config{}, fmt.Errorf("continuation_field requires mail_tail and a public field name")
 	}
 	config := mixedkv.Config{
 		PairSeparators: stage.PairSeparators, AssignmentSeparators: stage.AssignmentSeparators,

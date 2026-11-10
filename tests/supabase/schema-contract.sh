@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT/packaging/docker/images.env"
+source "$ROOT/packaging/release.env"
+expected_release="$NLI_VERSION-$NLI_RELEASE"
 container="nli-supabase-schema-$$"
 scratch=$(mktemp -d "${NLI_BUILD_SCRATCH:?NLI_BUILD_SCRATCH is required}/nli-supabase.XXXXXXXX")
 secret='nli-schema-contract-secret-0123456789abcdef'
@@ -43,9 +45,9 @@ SQL
 select md5(row_to_json(d)::text) from public.nli_documents d where collection='parser-packs' and document_id='r7-preserved' and revision=1;
 set role anon;
 set request.headers = '{"x-nli-controller-secret":"$secret"}';
-select public.nli_health()->>'bootstrap_release' = '21.0.0-10' and public.nli_get_document('parser-packs','r7-preserved',1)->'payload'->>'baseline' = '21.0.0-7';
+select public.nli_health()->>'bootstrap_release' = '$expected_release' and public.nli_get_document('parser-packs','r7-preserved',1)->'payload'->>'baseline' = '21.0.0-7';
 SQL
-  [[ $(tail -n1 "$scratch/r7-before-upgrade") == $(head -n1 "$scratch/r7-after-upgrade") && $(tail -n1 "$scratch/r7-after-upgrade") == 't' ]] || { echo 'Genuine previous-release to R10 SQL upgrade changed existing metadata' >&2; exit 1; }
+  [[ $(tail -n1 "$scratch/r7-before-upgrade") == $(head -n1 "$scratch/r7-after-upgrade") && $(tail -n1 "$scratch/r7-after-upgrade") == 't' ]] || { echo 'Bootstrap upgrade from the previous release changed existing metadata' >&2; exit 1; }
 fi
 
 docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres <"$scratch/schema.sql" >/dev/null
@@ -94,7 +96,7 @@ docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgre
 select md5(string_agg(row_to_json(d)::text, '|' order by collection,document_id,revision)) from public.nli_documents d;
 set role anon;
 set request.headers = '{"x-nli-controller-secret":"$secret"}';
-select public.nli_health()->>'bootstrap_release' = '21.0.0-10' and public.nli_health()->>'schema_version' = '1' and public.nli_health()->'persistence_capabilities' ? 'nfi_mapping_plan_metadata';
+select public.nli_health()->>'bootstrap_release' = '$expected_release' and public.nli_health()->>'schema_version' = '1' and public.nli_health()->'persistence_capabilities' ? 'nfi_mapping_plan_metadata';
 select public.nli_get_document('parser-packs','r7-preserved',1)->'payload'->>'baseline' = '21.0.0-7';
 select public.nli_get_document('parser-packs','nfi-r8',0)->>'state' = 'in_review' and public.nli_get_document('parser-packs','nfi-r8',0)->>'revision' = '2';
 select public.nli_get_document('parser-packs','nfi-r8',1)->'payload' = public.nli_get_document('parser-packs','nfi-r8',2)->'payload';
@@ -114,6 +116,6 @@ select public.nli_health()->'persistence_capabilities' ?& array['dynamic_kv_eol_
 select public.nli_get_document('parser-packs','nfi-r9-eol',1)->'payload'->'parser'->'mapping_plan'->'fields'->0->>'kv_profile' = 'auto';
 select public.nli_get_document('parser-trash','archive-r9',1)->'payload'->>'restore_policy' = 'new_draft';
 SQL
-[[ $(tr '\n' ' ' <"$scratch/r9-result") == '1 1 t t t ' ]] || { echo 'R10 KVIE/recovery persistence contract failed' >&2; exit 1; }
+[[ $(tr '\n' ' ' <"$scratch/r9-result") == '1 1 t t t ' ]] || { echo 'KVIE/recovery persistence contract failed' >&2; exit 1; }
 
 echo 'Supabase schema/RLS/RPC contract: PASS'

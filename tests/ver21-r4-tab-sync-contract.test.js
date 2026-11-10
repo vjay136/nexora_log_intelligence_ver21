@@ -12,7 +12,7 @@ const routes = [
   'operations', 'monitoring', 'streams',
   'assurance', 'quarantine-wizard', 'upes', 'rollouts', 'parser-sync',
   'artifacts', 'parser-workspace', 'nupire', 'field-integrity', 'ai',
-  'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'studio', 'regex', 'knownkeys', 'drift', 'notifications',
+  'sample-history', 'header-templates', 'kv-templates', 'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'studio', 'regex', 'knownkeys', 'drift', 'notifications',
   'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor',
   'input-paths', 'migration', 'outputs', 'metadata', 'unknowns', 'performance',
   'kv', 'static', 'projection', 'semantic',
@@ -49,7 +49,7 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-test('Ver22.4 declares the complete ordered 47-workspace contract', () => {
+test('Ver22.6 declares the complete ordered 50-workspace contract', () => {
   const nav = app.slice(app.indexOf('const NAV = ['), app.indexOf('const TITLES'));
   const actual = [...nav.matchAll(/\[\s*'[^']+'\s*,\s*'([^']+)'/g)].map((match) => match[1]);
   assert.deepEqual(actual, routes);

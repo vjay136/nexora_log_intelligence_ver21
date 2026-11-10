@@ -195,6 +195,7 @@ func (s *Server) handleNotificationFeed(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	items := make([]map[string]any, 0, limit)
+	recentAuthoringFailures := make(map[string]time.Time)
 	for _, event := range events {
 		resourceKey := strings.TrimSpace(strings.ToLower(event.Resource))
 		if isNotificationResolutionEvent(event) {
@@ -203,6 +204,13 @@ func (s *Server) handleNotificationFeed(w http.ResponseWriter, r *http.Request) 
 		category, severity, actionable := classifyNotificationEvent(event)
 		if !actionable || resolvedResources[resourceKey] > event.Sequence || !policyWatches(policy, category) || !notificationRecipient(policy, principal.Username, principal.Role, severity) {
 			continue
+		}
+		if status, ok := authoringFailureStatus(event); ok {
+			key := resourceKey + "\x00" + event.Actor + "\x00" + status
+			if latest, exists := recentAuthoringFailures[key]; exists && latest.Sub(event.Timestamp) <= time.Minute {
+				continue
+			}
+			recentAuthoringFailures[key] = event.Timestamp
 		}
 		userState := userStates[event.Sequence]
 		status := userState.Status
@@ -456,6 +464,10 @@ func classifyNotificationEvent(event auditlog.Event) (string, string, bool) {
 	if isExpectedAnonymousSessionProbe(event) {
 		return "", "", false
 	}
+	if status, ok := authoringFailureStatus(event); ok && oneOf(status, "400", "408", "409", "422", "429") {
+		// The editor reports validation, conflicts and throttling inline.
+		return "", "", false
+	}
 	action := strings.ToLower(event.Action)
 	category := "system"
 	if strings.Contains(action, "approval") || strings.Contains(action, "rollout.approve") {
@@ -480,6 +492,17 @@ func classifyNotificationEvent(event auditlog.Event) (string, string, bool) {
 		return category, "warning", true
 	}
 	return "", "", false
+}
+
+func authoringFailureStatus(event auditlog.Event) (string, bool) {
+	if !strings.EqualFold(event.Action, http.MethodPost) || event.Outcome != "failure" ||
+		!oneOf(event.Resource, "/api/v1/assurance/mapping-preview", "/api/v1/assurance/parser-preview",
+			"/api/v1/assurance/parsers", "/api/v1/assurance/ai-proposal", "/api/v1/field-mapping/ai-suggest", "/api/v1/ai/workspace") {
+		return "", false
+	}
+	detail, _, _ := strings.Cut(event.Details["detail"], " ")
+	status, ok := strings.CutPrefix(detail, "status=")
+	return status, ok && len(status) == 3
 }
 
 func isExpectedAnonymousSessionProbe(event auditlog.Event) bool {

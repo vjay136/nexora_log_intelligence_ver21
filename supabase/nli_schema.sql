@@ -1,8 +1,8 @@
--- NLI Ver21 R10 (21.0.0-10) Supabase metadata schema (compatible RPC schema version 1).
--- R10 NFI plans, scope definitions, review states and bundle descriptors use
--- existing revisioned JSONB metadata; controller validation/approval stays in NLI.
--- R10 KVIE profiles, KV EOL plans and parser-recovery archives use the same protected RPCs.
--- Reapplying this bootstrap preserves existing R7/R8/R9 documents and revisions.
+-- NLI Ver22 (22.6.0-0) Supabase metadata schema (compatible RPC schema version 1).
+-- The controller uses protected RPCs for revisioned JSONB parser packs, mappings,
+-- scope policies, bundle descriptors, KV profiles and parser recovery archives.
+-- Assurance evidence is encrypted by the controller before persistence.
+-- Reapplying this bootstrap preserves existing documents and revisions.
 -- Do not run this template directly. `sudo nli-controller-setup` renders an
 -- installation-specific copy at /root/nli-supabase-bootstrap.sql.
 
@@ -102,7 +102,7 @@ begin
   end if;
   select count(*) into v_count from public.nli_documents;
   return jsonb_build_object('status', 'ok', 'schema_version', 1, 'revisions', v_count,
-    'bootstrap_release', '21.0.0-10',
+    'bootstrap_release', '22.6.0-0',
     'persistence_capabilities', jsonb_build_array('revisioned_jsonb', 'nfi_mapping_plan_metadata', 'scope_policy_metadata', 'nullable_object_array_payloads', 'dynamic_kv_eol_metadata', 'parser_recovery_archive', 'kvie_profile_metadata'),
     'validation_authority', 'nli-controller');
 end;
@@ -308,7 +308,7 @@ grant execute on function public.nli_list_documents(text,text,integer,integer) t
 grant execute on function public.nli_delete_document(text,text,boolean,text) to anon;
 
 comment on table public.nli_documents is
-  'NLI Ver21 R10 compatible RPC v1 revisioned JSONB control-plane metadata; NFI mapping/scope/review metadata is validated by the controller. Assurance raw logs are AES-GCM encrypted by the controller before insertion.';
+  'NLI Ver22 compatible RPC v1 revisioned JSONB control-plane metadata; NFI mapping/scope/review metadata is validated by the controller. Assurance raw logs are AES-GCM encrypted by the controller before insertion.';
 
 notify pgrst, 'reload schema';
 commit;

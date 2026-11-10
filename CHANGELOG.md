@@ -1,5 +1,10 @@
 # Changelog
 
+## [22.6.0-0]
+
+- Improve parser evidence checks and guided repair workflows.
+- Align the generated Supabase bootstrap with the installed release.
+
 ## [22.5.0-0]
 
 - Add an interactive Building Blocks board for assembling and previewing editable field mappings.

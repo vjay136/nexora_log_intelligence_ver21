@@ -299,6 +299,16 @@ func Parse(input string, config Config) (Result, error) {
 
 // Parse parses one input record in linear space with bounded fields and input.
 func (p *Parser) Parse(input string) (Result, error) {
+	return p.parse(input, false)
+}
+
+// ParseWithPipeBoundaries treats each unquoted, unescaped pipe as an explicit
+// boundary. An unnamed segment after a named pair is returned as a remainder.
+func (p *Parser) ParseWithPipeBoundaries(input string) (Result, error) {
+	return p.parse(input, true)
+}
+
+func (p *Parser) parse(input string, strictPipe bool) (Result, error) {
 	result := Result{Fields: make(map[string]interface{})}
 	if len(input) > p.config.MaxInputBytes {
 		return result, parseError(CodeInputTooLarge, p.config.MaxInputBytes, "", "input exceeds configured maximum")
@@ -339,7 +349,7 @@ func (p *Parser) Parse(input string) (Result, error) {
 		}
 
 		fieldType := p.valueType(h.key)
-		end, err := p.findBoundary(input, h.valueStart, fieldType, false)
+		end, err := p.findBoundary(input, h.valueStart, fieldType, false, strictPipe)
 		if err != nil {
 			return result, err
 		}
@@ -484,7 +494,7 @@ func (p *Parser) findFirstHeader(input string, start int) (int, bool, error) {
 	return 0, false, nil
 }
 
-func (p *Parser) findBoundary(input string, valueStart int, fieldType string, literalSeparators bool) (*boundary, error) {
+func (p *Parser) findBoundary(input string, valueStart int, fieldType string, literalSeparators, strictPipe bool) (*boundary, error) {
 	var quote byte
 	stack := make([]byte, 0, 4)
 	for i := valueStart; i < len(input); {
@@ -528,7 +538,7 @@ func (p *Parser) findBoundary(input string, valueStart int, fieldType string, li
 			separator, after, matched := p.pairSeparatorAt(input, i)
 			if matched {
 				next := skipSpace(input, after)
-				if literalSeparators {
+				if literalSeparators || strictPipe && separator == "|" {
 					return &boundary{start: i, next: next, separator: separator}, nil
 				}
 				nextHeader, valid := p.headerAt(input, next)

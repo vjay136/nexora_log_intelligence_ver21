@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"nexora.local/nli-v20/internal/fieldmapping"
+	"nexora.local/nli-v20/internal/mixedkv"
 
 	"nexora.local/nli-v20/projection"
 	"nexora.local/nli-v20/telemetry"
@@ -50,6 +51,7 @@ type capturedField struct {
 	Start       int
 	End         int
 	DerivedRule string
+	SourceSpans []mixedkv.Span
 }
 
 type workingSet map[string]capturedField

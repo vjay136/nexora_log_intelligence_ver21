@@ -628,3 +628,38 @@ func TestAIFailureProposalIsDiagnosticReviewOnlyAndDoesNotRetainRaw(t *testing.T
 		t.Fatalf("diagnostic approval created a live parser pack: %s", data)
 	}
 }
+
+func TestAIProposalDistinguishesProviderAndDraftFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		reply          string
+		upstreamStatus int
+		wantStatus     int
+		want           string
+	}{
+		{"bad credentials", "", http.StatusUnauthorized, http.StatusBadGateway, "http_401"},
+		{"quota", "", http.StatusTooManyRequests, http.StatusTooManyRequests, "http_429"},
+		{"invalid draft", "Unstructured prose", http.StatusOK, http.StatusUnprocessableEntity, "invalid parser draft"},
+		{"fenced draft", "```json\n{\"name\":\"Status\",\"parser\":{\"pattern_type\":\"regex\",\"pattern\":\"status=(?P<status>.+)\",\"fields\":[{\"name\":\"status\",\"source\":\"group:status\",\"type\":\"string\"}]}}\n```", http.StatusOK, http.StatusOK, "review_state"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NLI_AI_ALLOW_LOOPBACK", "true")
+			f := newAPIFixture(t)
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.upstreamStatus)
+				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": tc.reply}}}})
+			}))
+			defer provider.Close()
+			if err := f.server.storeAIProvider(context.Background(), aiProviderConfig{Enabled: true, Provider: "openai", BaseURL: provider.URL, Model: "test-model", APIKey: "test-api-key"}, "admin"); err != nil {
+				t.Fatal(err)
+			}
+			response, data := f.request(http.MethodPost, "/api/v1/assurance/ai-proposal", map[string]any{
+				"raw": "status=FAILED", "service": "smtp", "desired": map[string]any{"status": "DELIVERED"},
+			})
+			if response.StatusCode != tc.wantStatus || !bytes.Contains(data, []byte(tc.want)) {
+				t.Fatalf("AI proposal %d: %s", response.StatusCode, data)
+			}
+		})
+	}
+}

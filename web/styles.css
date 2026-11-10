@@ -401,3 +401,14 @@ button[data-qrw-action-step="9"] { outline-color: var(--green); }
 .ai-routing-order li button {
   margin-inline-start: .5rem;
 }
+
+@media (min-width: 1100px) {
+  .block-board { grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr) minmax(0, .75fr); }
+}
+.block-order { margin: .75rem 0 0; padding: 0; list-style-position: inside; }
+.block-order li {
+  margin-bottom: .45rem; padding: .55rem; cursor: grab; overflow-wrap: anywhere;
+  border: 1px solid currentColor; border-radius: .5rem;
+}
+.block-order .actions { margin-top: .25rem; }
+.block-order-value { display: block; margin-top: .2rem; white-space: pre-wrap; }

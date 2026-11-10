@@ -41,7 +41,7 @@ func (p *Parser) ScanPipeTail(text string) ([]PipeField, error) {
 		if named {
 			valueStart = h.valueStart
 		}
-		boundary, err := p.findBoundary(text, valueStart, "", true)
+		boundary, err := p.findBoundary(text, valueStart, "", true, false)
 		if err != nil {
 			return nil, err
 		}

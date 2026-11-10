@@ -35,6 +35,7 @@ var (
 type ParserPackAdapter struct {
 	profiles          []familyprofile.Profile
 	smtpCompatibility familyprofile.Profile
+	smtpComplete      familyprofile.Profile
 	policyHash        string
 }
 
@@ -66,9 +67,15 @@ func NewParserPackAdapterFromDirectory(directory string) (*ParserPackAdapter, er
 		Pack: compatibilityPack, Executor: compatibilityExecutor,
 		Order: 90, Name: "embedded-smtp-golden-compatibility", Managed: false,
 	}
-	policyProfiles := append(append([]familyprofile.Profile(nil), profiles...), compatibility)
+	completePack := parserpolicy.DefaultCompleteSMTPMailPack()
+	completeExecutor, err := parserpolicy.NewParserPackExecutor(completePack)
+	if err != nil {
+		return nil, err
+	}
+	complete := familyprofile.Profile{Pack: completePack, Executor: completeExecutor, Order: 89, Name: "embedded-smtp-complete-tail"}
+	policyProfiles := append(append([]familyprofile.Profile(nil), profiles...), compatibility, complete)
 	return &ParserPackAdapter{
-		profiles: profiles, smtpCompatibility: compatibility,
+		profiles: profiles, smtpCompatibility: compatibility, smtpComplete: complete,
 		policyHash: aggregatePolicyHash(policyProfiles),
 	}, nil
 }
@@ -121,7 +128,7 @@ func NewParserPackAdapterWithManagedPayloadsContext(ctx context.Context, payload
 		}
 		return base.profiles[i].Pack.ID < base.profiles[j].Pack.ID
 	})
-	base.policyHash = aggregatePolicyHash(append(append([]familyprofile.Profile(nil), base.profiles...), base.smtpCompatibility))
+	base.policyHash = aggregatePolicyHash(append(append([]familyprofile.Profile(nil), base.profiles...), base.smtpCompatibility, base.smtpComplete))
 	return base, nil
 }
 
@@ -161,8 +168,13 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 		return &V5ParseResult{Success: false}
 	}
 	candidates := adapter.candidates(service)
+	strictMailTail := false
 	if service == "smtp" || service == "smtp-in" || service == "smtp-out" {
 		candidates = append([]profileCandidate{{profile: adapter.smtpCompatibility, specificity: 0}}, candidates...)
+		strictMailTail = parserpolicy.HasCompleteSMTPMailTail(trimmed)
+		if strictMailTail {
+			candidates = append(candidates, profileCandidate{profile: adapter.smtpComplete, specificity: 0})
+		}
 	}
 	// Add-ons never remove older candidates from automatic evaluation. Run the
 	// embedded baseline first so an expensive add-on cannot starve its result;
@@ -219,8 +231,13 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 		executions = append(executions, execution)
 	}
 	selectedIndex := -1
+	requiresContinuation := strictMailTail && parserpolicy.RequiresSMTPMailContinuation(trimmed)
 	for index := range executions {
-		if successfulExecution(executions[index].result, executions[index].err) && (selectedIndex < 0 || betterExecution(executions[index], executions[selectedIndex])) {
+		execution := executions[index]
+		if requiresContinuation && execution.candidate.profile.Pack.ID != parserpolicy.MailTailPackID && !mappingProfile(execution.candidate.profile) {
+			continue
+		}
+		if successfulExecution(execution.result, execution.err) && (selectedIndex < 0 || betterExecution(execution, executions[selectedIndex])) {
 			selectedIndex = index
 		}
 	}
@@ -245,7 +262,7 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 				incomplete = true
 			}
 		}
-		if !incomplete && parserpolicy.HasFramedMailTail(trimmed) {
+		if !incomplete && (strictMailTail || parserpolicy.HasFramedMailTail(trimmed)) {
 			metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "incomplete_structured_tail")
 			incomplete = true
 		}

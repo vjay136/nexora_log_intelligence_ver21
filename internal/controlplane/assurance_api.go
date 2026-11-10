@@ -641,17 +641,17 @@ func (s *Server) handleAssuranceAIProposal(w http.ResponseWriter, r *http.Reques
 	defer func() { s.aiMetrics.record(aiMetricsSuccess, time.Since(aiStarted)) }()
 	raw, usedProvider, attempts, err := s.callConfiguredAI(ctx, cfg, prompt)
 	if err != nil {
-		jsonError(w, "AI parser proposal failed; no parser was changed", 502)
+		writeAIWorkspaceFailure(w, err, attempts)
 		return
 	}
 	var proposal map[string]any
-	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &proposal) != nil {
-		jsonError(w, "AI returned an invalid parser proposal", 502)
+	if json.Unmarshal(aiReplyJSON(raw), &proposal) != nil {
+		jsonError(w, "The model returned an invalid parser draft. Try Auto Fix with AI for a FieldSense mapping, or switch the model in AI Resolution & Providers.", http.StatusUnprocessableEntity)
 		return
 	}
 	parser, _ := proposal["parser"].(map[string]any)
 	if parser == nil {
-		jsonError(w, "AI returned no declarative parser", 502)
+		jsonError(w, "The model returned no declarative parser. Try Auto Fix with AI for a FieldSense mapping.", http.StatusUnprocessableEntity)
 		return
 	}
 	if err := unsafeDeclarative(parser); err != nil {
