@@ -253,40 +253,9 @@ func (s *Server) handleAICapabilities(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, s.aiCapabilities(r.Context()))
 }
 func (s *Server) callConfiguredAI(ctx context.Context, primary aiProviderConfig, prompt string) (string, string, int, error) {
-	configs, err := s.aiProviderRouteConfigs(ctx, primary)
-	if err != nil {
-		return "", "", 0, err
-	}
-	profiles := make([]aiprovider.Profile, 0, len(configs))
-	byID := map[string]aiProviderConfig{}
-	for _, cfg := range configs {
-		if !primary.Exclusive && cfg.FallbackGroup != primary.FallbackGroup {
-			continue
-		}
-		profiles = append(profiles, profileFromConfig(cfg))
-		byID[cfg.ID] = cfg
-	}
-	route := orderedAIProviderRoute(profiles, primary.RoutingOrder)
-	attempts := 0
-	var lastErr error
-	for _, profile := range route {
-		if attempts >= 3 || ctx.Err() != nil {
-			break
-		}
-		attempts++
-		text, callErr := s.callAIWithPolicy(ctx, byID[profile.ID], prompt, providerPolicy())
-		if callErr == nil {
-			return text, profile.ID, attempts, nil
-		}
-		lastErr = callErr
-	}
-	if ctx.Err() != nil {
-		lastErr = ctx.Err()
-	}
-	if lastErr == nil {
-		lastErr = errors.New("no configured AI provider is ready")
-	}
-	return "", "", attempts, lastErr
+	return s.callAIProviderRoute(ctx, primary, func(_ aiprovider.Profile, cfg aiProviderConfig) (string, error) {
+		return s.callAIWithPolicy(ctx, cfg, prompt, providerPolicy())
+	})
 }
 func (s *Server) aiReviewPromptWithContext(ctx context.Context, input assuranceRequest, result map[string]any) string {
 	copy := make(map[string]any, len(result)+1)

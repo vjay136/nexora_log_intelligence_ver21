@@ -484,6 +484,25 @@ func containsMappingString(values []string, value string) bool {
 // The default Assurance remediation prompt remains unchanged. This variant
 // reuses only the configured provider group, credentials and bounded fallback.
 func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProviderConfig, prompt, system string) (string, string, int, error) {
+	return s.callAIProviderRoute(ctx, primary, func(profile aiprovider.Profile, cfg aiProviderConfig) (string, error) {
+		if profile.MaxResponseBytes > 256<<10 {
+			profile.MaxResponseBytes = 256 << 10
+		}
+		maxTokens := 4096
+		if strings.HasPrefix(system, `Return only one JSON object: {"renames"`) {
+			maxTokens = 768
+		}
+		options := aiprovider.RequestOptions{SystemPrompt: system, MaxTokens: maxTokens, JSONResponse: strings.Contains(system, "Return only one JSON object") || strings.HasPrefix(system, "Return ONLY JSON")}
+		policy := providerPolicy()
+		if cfg.APIKey != "" {
+			profile.Credential = aiprovider.Credential{Source: aiprovider.CredentialEnvironment, Reference: "NLI_AI_TRANSIENT_CREDENTIAL"}
+			return aiprovider.GenerateWithCredential(ctx, profile, cfg.APIKey, policy, prompt, options)
+		}
+		return aiprovider.Generate(ctx, profile, aiprovider.SecretResolver{AEAD: s.assurance.providerAEAD, SecretRoot: policy.SecretRoot}, policy, prompt, options)
+	})
+}
+
+func (s *Server) callAIProviderRoute(ctx context.Context, primary aiProviderConfig, invoke func(aiprovider.Profile, aiProviderConfig) (string, error)) (string, string, int, error) {
 	configs, err := s.aiProviderRouteConfigs(ctx, primary)
 	if err != nil {
 		return "", "", 0, err
@@ -495,9 +514,6 @@ func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProvi
 			continue
 		}
 		profile := profileFromConfig(cfg)
-		if profile.MaxResponseBytes > 256<<10 {
-			profile.MaxResponseBytes = 256 << 10
-		}
 		profiles = append(profiles, profile)
 		byID[profile.ID] = cfg
 	}
@@ -522,21 +538,7 @@ func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProvi
 			profile = route[i]
 		}
 		attempts++
-		cfg := byID[profile.ID]
-		maxTokens := 4096
-		if strings.HasPrefix(system, `Return only one JSON object: {"renames"`) {
-			maxTokens = 768
-		}
-		options := aiprovider.RequestOptions{SystemPrompt: system, MaxTokens: maxTokens, JSONResponse: strings.Contains(system, "Return only one JSON object") || strings.HasPrefix(system, "Return ONLY JSON")}
-		policy := providerPolicy()
-		var text string
-		var callErr error
-		if cfg.APIKey != "" {
-			profile.Credential = aiprovider.Credential{Source: aiprovider.CredentialEnvironment, Reference: "NLI_AI_TRANSIENT_CREDENTIAL"}
-			text, callErr = aiprovider.GenerateWithCredential(ctx, profile, cfg.APIKey, policy, prompt, options)
-		} else {
-			text, callErr = aiprovider.Generate(ctx, profile, aiprovider.SecretResolver{AEAD: s.assurance.providerAEAD, SecretRoot: policy.SecretRoot}, policy, prompt, options)
-		}
+		text, callErr := invoke(profile, byID[profile.ID])
 		if callErr == nil {
 			return text, profile.ID, attempts, nil
 		}

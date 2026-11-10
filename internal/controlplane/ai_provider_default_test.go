@@ -63,14 +63,14 @@ func TestAIProviderDefaultIsExclusiveAndExplicitProbeIsIndependent(t *testing.T)
 		t.Fatalf("catalog did not report persisted selection: %s", body)
 	}
 	response, _ = f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{"mode": "ask", "workspace": "field-mapping", "question": "What can I map?"})
-	if response.StatusCode < 400 || defaultCalls.Load() != 1 || alternateCalls.Load() != 0 {
+	if response.StatusCode < 400 || defaultCalls.Load() != 2 || alternateCalls.Load() != 0 {
 		t.Fatal("workspace AI fell back from the selected provider")
 	}
 	cfg, _, err = f.server.loadAIProvider(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, attempts, err := f.server.callConfiguredAI(ctx, cfg, "synthetic test"); err == nil || attempts != 1 || alternateCalls.Load() != 0 {
+	if _, _, attempts, err := f.server.callConfiguredAI(ctx, cfg, "synthetic test"); err == nil || attempts != 2 || alternateCalls.Load() != 0 {
 		t.Fatal("Assurance AI fell back from the selected provider")
 	}
 	response, body = f.request(http.MethodPost, "/api/v1/admin/ai-provider/test", map[string]any{"id": "alternate"})
