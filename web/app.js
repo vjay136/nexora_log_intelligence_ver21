@@ -889,8 +889,9 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const assets={regex:'regex',studio:'template','header-templates':'template',static:'pattern',knownkeys:'keys',kv:'kv_template','kv-templates':'kv_template'};
     return button.dataset.artifact||assets[state.page]||(raw?'mapping':'');
   }
-  function workspaceAIForm({mode='fix',tab='',raw='',references=[],defaultArtifact=''}={}) {
-    return `<form class="form-grid" data-workspace-ai-form data-mode="${esc(mode)}" data-tab="${esc(tab)}"><label class="field wide">${mode==='ask'?'What do you need help with?':'Describe the desired fix and any fields to keep, rename, omit or transform'}<textarea name="question" maxlength="2000" rows="3"></textarea></label>
+  function workspaceAIForm({mode='fix',tab='',raw='',references=[],defaultArtifact='',helpDesk=false}={}) {
+    return `<form class="form-grid" data-workspace-ai-form data-mode="${esc(mode)}" data-tab="${esc(tab)}" ${helpDesk?'data-ai-help-desk':''}><label class="field wide">${mode==='ask'?'What do you need help with?':'Describe the desired fix and any fields to keep, rename, omit or transform'}<textarea name="question" maxlength="2000" rows="3"></textarea></label>
+      ${helpDesk?`<label class="field">NLI workspace<select name="help_workspace"><option value="reference-ai">General NLI question</option>${NAV.filter(([,id])=>id!=='reference-ai').map(([,id,title])=>`<option value="${esc(id)}">${esc(title)}</option>`).join('')}</select></label><label class="field">Tab or step (optional)<input name="help_tab" maxlength="128" placeholder="Example: Step 4 - Map"></label><label class="field wide">What happened? (optional)<textarea name="help_issue" rows="3" maxlength="1400" placeholder="Paste the exact error, the result you expected, and what you already tried. Do not include credentials."></textarea></label>`:''}
       ${mode==='fix'?'<label class="field">Draft type<select name="artifact"><option value="">Recommend the next action</option>'+WORKSPACE_ARTIFACTS.map(([id,label])=>`<option value="${id}" ${id===defaultArtifact?'selected':''}>${label}</option>`).join('')+'</select></label>':''}
       ${references.length?'<label class="field">Existing reference<select name="reference"><option value="">No reference</option>'+references.map(({kind,id,revision,label})=>`<option value="${esc(JSON.stringify({kind,id,revision}))}">${esc(label)}</option>`).join('')+'</select></label>':''}
       <label class="field wide">Sample record · optional for guidance<textarea name="raw" rows="4" maxlength="65536">${esc(raw)}</textarea></label>${mode==='fix'?'<label class="field wide">Expected mapping output (optional JSON object)<textarea name="desired" rows="3"></textarea></label>':''}<p class="hint wide">The controller masks sample evidence before sending it to the configured provider. Review the proposal before applying it to your editor.</p><div class="actions wide"><button type="button" class="primary" data-action="workspace-ai-run">${mode==='ask'?'Get guidance':'Build draft'}</button><button type="reset" class="secondary">Reset form</button><button type="button" class="secondary" data-action="workspace-ai-import" hidden>Apply mapping to editor</button><button type="button" class="secondary" data-action="workspace-ai-download" hidden>Download draft</button></div><pre class="json-output wide" data-workspace-ai-result role="status"></pre></form>`;
@@ -901,7 +902,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       const data=await api(path).catch(()=>({}));
       return (data.parsers||data.items||data.documents||[]).filter(item=>item.id).map(item=>({kind,id:item.id,revision:item.revision,label:`${kind} · ${item.payload?.name||item.name||item.id}${item.revision?' · revision '+item.revision:''}`}));
     }))).flat();
-    renderPage('reference-ai',panel('Reference based help & Fix','Choose the artifact you want to draft, describe the outcome and include a sample record.',workspaceAIForm({references,defaultArtifact:'mapping'})));
+    renderPage('reference-ai',panel('Ask NLI AI','Ask about an NLI workflow or describe what is blocked. Choose the workspace so the controller can provide steps that fit it.',workspaceAIForm({mode:'ask',references,helpDesk:true}))+panel('Build or fix an artifact','Choose what to draft and include a representative sample. Review the result before applying or saving it.',workspaceAIForm({references,defaultArtifact:'mapping'})));
   }
   function loadBuildingBlocks(){
     const board=state.blockBoard;
@@ -1146,7 +1147,12 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     resultHost.textContent='Contacting the configured provider…';
     try{
       if(form.aiAutoSource&&!raw.trim())throw new Error('Paste or inspect a sample before rebuilding the draft.');
-      const controls=[...page.querySelectorAll('button[data-action]')].filter(node=>!node.closest('#workspace-ai-dialog,[hidden],.workspace-ai-actions')).map(node=>node.dataset.action).filter(Boolean);
+      const helpDesk=form.hasAttribute('data-ai-help-desk');
+      if(helpDesk&&!data.question?.trim())throw new Error('Enter a question about NLI.');
+      const workspace=helpDesk&&Object.hasOwn(TITLES,data.help_workspace)?data.help_workspace:state.page;
+      const tab=helpDesk?(data.help_tab||'').trim():form.dataset.tab;
+      const question=helpDesk&&data.help_issue?.trim()?data.question+'\n\nObserved issue or result: '+data.help_issue.trim():data.question||'';
+      const controls=helpDesk?[]:[...page.querySelectorAll('button[data-action]')].filter(node=>!node.closest('#workspace-ai-dialog,[hidden],.workspace-ai-actions')).map(node=>node.dataset.action).filter(Boolean);
       const mapping=raw&&page.querySelector('#qrw-field-rows')&&qrwRaw()===raw;
       const boardPlan=state.page==='building-blocks'&&raw===el('block-raw')?.value&&el('block-fields')?.children.length
         ?buildingBlockPlan():null;
@@ -1155,8 +1161,12 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       const desired=data.desired?.trim()?parseJSON(data.desired,'Expected output JSON'):mapping?state.nfiDesired||{}:{};
       if(!desired||Array.isArray(desired)||typeof desired!=='object')throw new Error('Expected mapping output must be a JSON object.');
       const mappingSignature=mapping?JSON.stringify(qrwPlan()):null;
-      const result=await api('/ai/workspace',{method:'POST',body:{mode:form.dataset.mode,workspace:state.page,tab:form.dataset.tab,question:data.question||'',artifact:data.artifact||'',raw,desired,service:service==='*'?'auto':service,controls:[...new Set(controls)].slice(0,24),...(['mapping','parser'].includes(data.artifact)?{native_fallback:true}:{}),...(boardPlan?{plan:boardPlan}:mapping&&state.qrwFields.length?{plan:qrwPlan()}:{}),...(data.reference?{reference:JSON.parse(data.reference)}:{})}});
+      const result=await api('/ai/workspace',{method:'POST',body:{mode:form.dataset.mode,workspace,tab,question,artifact:data.artifact||'',raw,desired,service:service==='*'?'auto':service,controls:[...new Set(controls)].slice(0,24),...(['mapping','parser'].includes(data.artifact)?{native_fallback:true}:{}),...(boardPlan?{plan:boardPlan}:mapping&&state.qrwFields.length?{plan:qrwPlan()}:{}),...(data.reference?{reference:JSON.parse(data.reference)}:{})}});
       if(!form.isConnected||form.aiRequestID!==requestID||form.elements.raw.value!==raw)return;
+      if(helpDesk&&JSON.stringify(formObject(form))!==JSON.stringify(data)){
+        resultHost.textContent='The question or context changed. Submit the current question again.';
+        return;
+      }
       if(form.aiAutoSource&&workspaceAISample(form.aiAutoSource)!==raw){
         resultHost.textContent='The sample changed while the AI draft was building. Rebuild the draft for the current sample.';
         return;

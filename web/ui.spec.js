@@ -35,6 +35,28 @@ test('contextual Ask AI and visual blocks start from an empty mapping', async ({
   await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveValue('status');
 });
 
+test('Ask NLI AI sends selected workspace, issue, and current raw sample to the live gateway',async({page})=>{
+  await mockController(page);
+  const raw='smtp status=failed';
+  await page.route('**/api/v1/ai/workspace',route=>{
+    expect(route.request().postDataJSON()).toMatchObject({
+      workspace:'quarantine-wizard',tab:'Step 4',mode:'ask',raw,
+      question:'How do I map status?\n\nObserved issue or result: The raw tail is still unmapped.',
+    });
+    return route.fulfill({json:{answer:'Use Key Value with the source key status.'}});
+  });
+  await login(page);
+  await page.getByTestId('nav-reference-ai').click();
+  const help=page.locator('[data-ai-help-desk]');
+  await help.getByLabel('NLI workspace').selectOption('quarantine-wizard');
+  await help.getByLabel('Tab or step (optional)').fill('Step 4');
+  await help.getByLabel('What happened? (optional)').fill('The raw tail is still unmapped.');
+  await help.getByLabel('What do you need help with?').fill('How do I map status?');
+  await help.getByLabel('Sample record').fill(raw);
+  await help.getByRole('button',{name:'Get guidance'}).click();
+  await expect(help.getByRole('status')).toHaveText('Use Key Value with the source key status.');
+});
+
 test('Auto Fix sends the current sample directly and offers an editable draft', async ({page})=>{
   await mockController(page);
   const raw='smtp status=failed';

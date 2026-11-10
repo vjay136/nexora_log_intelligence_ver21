@@ -141,3 +141,5 @@ Ver22.6 adds these workspaces:
 - Test Sample History (`sample-history`): choose encrypted retention when testing a pasted record. Reopen it in Guided Parser Repair or download it under the existing fixture permissions.
 - Log Pattern Templates (`header-templates`): create a revisioned RE2 definition for the fixed header, leaving dynamic pairs for the KV grammar. These templates share the existing template catalog and approval workflow.
 - KV Pair Templates (`kv-templates`): draft reusable delimiter and assignment rules, such as pipe between pairs and equals between key and value. These definitions share the KV policy catalog and approval workflow.
+
+Use **Reference based help & Fix > Ask NLI AI** for a central prompt. Choose the workspace, optionally name the tab or step, and describe the result you expected and the exact error you saw. Paste the current record if the question depends on its fields. The controller masks evidence before sending it to the configured provider. The answer explains the next supported action; use **Build or fix an artifact** for an editable draft and verify its output in FieldSense or Assurance before approval.
