@@ -78,8 +78,12 @@ func TestAICapabilitiesMissingCredentialAndCorruptProfileIsolation(t *testing.T)
 		t.Fatalf("bad sibling blocked healthy provider: %s", body)
 	}
 	response, body = f.request(http.MethodGet, "/api/v1/admin/ai-provider?id=broken", nil)
-	if response.StatusCode != 503 || strings.Contains(string(body), "ciphertext") {
-		t.Fatal("explicit corrupt profile must fail safely")
+	catalog := decodeMap(t, body)
+	profile, _ := catalog["provider"].(map[string]any)
+	if response.StatusCode != http.StatusOK || catalog["store_status"] != "degraded" ||
+		profile["id"] != "broken" || profile["status"] != "unreadable" ||
+		strings.Contains(string(body), "ciphertext") {
+		t.Fatal("explicit corrupt profile must remain identifiable for repair without exposing credentials")
 	}
 }
 func TestAIProviderDisabledCannotGenerateAndOldSaveKeepsExplicitDisabledState(t *testing.T) {
