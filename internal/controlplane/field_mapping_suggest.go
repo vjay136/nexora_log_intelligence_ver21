@@ -363,6 +363,12 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 		if profile, ok := fieldmapping.InspectWrappedKeyValues(discoveryRaw, 0); ok {
 			return family + "/bracketed-kv", append(fields, nfiWrappedKVField("9", profile)), nil
 		}
+		if strings.Contains(discoveryRaw, ".") && strings.Contains(discoveryRaw, ",") {
+			profiles, err := fieldmapping.InspectKeyValues(ctx, raw, fieldmapping.Field{Name: "tail_fields", Type: "object", Method: "kv_all", Source: "9", EndOfLine: true})
+			if err == nil && len(profiles) == 1 && profiles[0].PairDelimiters == ".," {
+				return family, nfiKVIEFields(fields, profiles[0]), nil
+			}
+		}
 	}
 	observations, scanErr := fieldmapping.ScanKeyValues(discoveryRaw, assignments, ":;,| \t\r\n", false)
 	if scanErr != nil {

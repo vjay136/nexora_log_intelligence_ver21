@@ -110,6 +110,34 @@ func TestNFISuggestionsPreserveCompleteSMTPPipePayload(t *testing.T) {
 	}
 }
 
+func TestNFISuggestionsMapCompleteMixedDelimiterMailTail(t *testing.T) {
+	const raw = "20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg status=failed.reason;notneeded,server:cloud\n"
+	_, fields, err := nfiSuggestRecord(context.Background(), raw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range fields {
+		fields[i].Confirmed = true
+	}
+	compiled, err := fieldmapping.Compile(fieldmapping.Plan{Version: 1, Fields: fields})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := compiled.Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compiled.ValidateComplete(raw, result); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{"status": "failed", "reason": "notneeded", "server": "cloud"} {
+		evidence := result.Evidence[key]
+		if result.Values[key] != want || raw[evidence.Start:evidence.End] != want {
+			t.Fatalf("%s value=%v evidence=%+v", key, result.Values[key], evidence)
+		}
+	}
+}
+
 func TestNFISuggestionsWrappedPairsUseOneDynamicMapping(t *testing.T) {
 	const prefix = "20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 Note;SieveRuleMsg "
 	for _, tail := range []string{

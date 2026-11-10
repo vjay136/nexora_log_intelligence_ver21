@@ -852,6 +852,9 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   }
 
   function renderPage(id, html) { if (state.user && state.page === id) { page.innerHTML = html; page.dataset.page = id; page.dataset.dirty = 'false'; addInputGuidance();queueMicrotask(nfiDecorate);if(['assurance','quarantine-wizard'].includes(id))setupAssuranceTabs();if(id==='outputs')setupEndpointTabs();if(id==='ai')setupAITabs();if(id==='monitoring')setupMonitoringTabs();if(['sync-fabric','nhle-monitor','napi-monitor','nal-monitor','upes'].includes(id))setupSubsystemTabs();decorateWorkspaceAI(); } }
+  function mappingSuggestionButton(tab='Field mapping'){
+    return `<button type="button" class="secondary" data-action="workspace-ai-auto" data-artifact="mapping" data-tab="${esc(tab)}" data-suggest-mapping>Suggest Mappings with AI</button>`;
+  }
   function workspaceAIActions(tab='') {
     return `<div class="actions workspace-ai-actions"><button type="button" class="secondary" data-action="workspace-ai-open" data-mode="ask" data-tab="${esc(tab)}">Ask AI</button><button type="button" class="secondary" data-action="workspace-ai-open" data-mode="fix" data-tab="${esc(tab)}">Fix with AI</button><button type="button" class="secondary" data-action="workspace-ai-auto" data-tab="${esc(tab)}">Auto Fix with AI</button></div>`;
   }
@@ -859,7 +862,8 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     if (!page.dataset.page) return;
     page.insertAdjacentHTML('afterbegin',workspaceAIActions());
     const analysis=page.querySelector('#assurance-form');
-    if(analysis)analysis.insertAdjacentHTML('beforeend','<button type="button" class="secondary" data-action="assurance-reset-sample">Reset analysis sample</button>');
+    if(analysis)analysis.insertAdjacentHTML('beforeend',mappingSuggestionButton('Assurance analysis')+'<button type="button" class="secondary" data-action="assurance-reset-sample">Reset analysis sample</button>');
+    if(state.page==='parser-workspace')page.querySelector('.workspace-ai-actions')?.insertAdjacentHTML('beforeend',mappingSuggestionButton('Parser Creation Workspace'));
     const fieldSense=state.page==='field-mapping'&&page.querySelector('.workspace-ai-actions');
     if(fieldSense)fieldSense.insertAdjacentHTML('beforeend','<button type="button" class="secondary" data-action="field-sense-reset">Reset mapping session</button>');
     for(const section of page.querySelectorAll('[role=tabpanel],[data-endpoint-form-section],[data-qrw-panel]')) {
@@ -883,6 +887,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       const retained=state.quarantineDiagnosis?.id&&last?.source===`quarantine:${state.quarantineDiagnosis.id}`?last.raw:'';
       return qrwRaw()||state.gprsManual?.raw||retained||'';
     }
+    if(state.page==='parser-workspace')return page.querySelector('textarea[name=samples]')?.value||'';
     return button.closest('section')?.querySelector('textarea[name=raw]')?.value||page.querySelector('textarea[name=raw],textarea[data-ai-mapping-raw]')?.value||'';
   }
   function workspaceAIArtifact(button,raw) {
@@ -911,7 +916,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       <div class="block-board"><section><h4>1 · Source pieces</h4><label class="field">Cut pieces by <select id="block-mode"><option value="token">Words and punctuation</option><option value="character">Characters</option></select></label><div id="block-source" class="block-tray"></div></section>
       <section><h4>2 · Desired output</h4><p class="hint">Drop pieces here. Drag a card to reorder it, or use its move buttons. Open a card to rename it, split, replace, omit, or merge earlier fields.</p><div id="block-fields" class="block-tray"></div></section>
       <section><h4>3 &#183; Final field order</h4><p class="hint">Drag tiles or use their arrow buttons. This order is used to generate the mapping. JSON consumers may display object keys in a different order.</p><ol id="block-order" class="block-order"></ol></section></div>
-      <div class="actions"><button type="button" class="secondary" data-action="block-preview">Verify output preview</button><button type="button" class="secondary" data-action="block-open">Open blocks in FieldSense</button><button type="button" class="secondary" data-action="workspace-ai-open" data-mode="fix" data-artifact="template" data-tab="Building Blocks">Draft template with AI</button><button type="button" class="primary" data-action="block-generate">Generate + validate parser pack</button></div><p id="block-status" role="status"></p><pre id="block-preview" class="json-output">{}</pre>`));
+      <div class="actions"><button type="button" class="secondary" data-action="block-preview">Verify output preview</button>${mappingSuggestionButton('Building Blocks')}<button type="button" class="secondary" data-action="block-open">Open blocks in FieldSense</button><button type="button" class="secondary" data-action="workspace-ai-open" data-mode="fix" data-artifact="template" data-tab="Building Blocks">Draft template with AI</button><button type="button" class="primary" data-action="block-generate">Generate + validate parser pack</button></div><p id="block-status" role="status"></p><pre id="block-preview" class="json-output">{}</pre>`));
     if(!el('block-raw'))return;
     const raw=el('block-raw'),fields=el('block-fields');
     if(!state.blockSeed&&board?.raw===raw.value)board.fields.forEach(field=>addBuildingBlock(field.method==='constant',null,field));
@@ -1134,6 +1139,14 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     }).join('')}</ul>${fields.length?`<label>Get help with an observed field <select data-ai-observed-field>${Object.keys(result.validation?.actual||{}).slice(0,256).map(name=>`<option value="${esc(name)}">${esc(name)}</option>`).join('')}</select></label> <button type="button" class="secondary small" data-action="workspace-ai-field-help">Ask AI about selected field</button>`:''}`;
     form.querySelector('[data-workspace-ai-result]').after(section);
   }
+  function aiActionFailure(error){
+    const details=error.details||{};
+    const findings=Array.isArray(details.errors)?details.errors.filter(item=>typeof item==='string').slice(0,4):[];
+    const pathTip=details.error_code==='timeout'?'Try again or test a faster provider profile.':
+      !details.error_code&&error.status===502?'Check Controller connectivity in API Monitor. This is a transport error; the provider reply was not received.':
+      error.status===422?'Check the field selector or try Suggest from raw log to compare the native mapping.':'';
+    return [error.message,...findings,pathTip].filter(Boolean).join('\n');
+  }
   async function runWorkspaceAI(button){
     const form=button.closest('form');
     if(form.aiAutoSource)form.elements.raw.value=workspaceAISample(form.aiAutoSource);
@@ -1154,8 +1167,11 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       const question=helpDesk&&data.help_issue?.trim()?data.question+'\n\nObserved issue or result: '+data.help_issue.trim():data.question||'';
       const controls=helpDesk?[]:[...page.querySelectorAll('button[data-action]')].filter(node=>!node.closest('#workspace-ai-dialog,[hidden],.workspace-ai-actions')).map(node=>node.dataset.action).filter(Boolean);
       const mapping=raw&&page.querySelector('#qrw-field-rows')&&qrwRaw()===raw;
-      const boardPlan=state.page==='building-blocks'&&raw===el('block-raw')?.value&&el('block-fields')?.children.length
-        ?buildingBlockPlan():null;
+      let boardPlan=null,boardIssue='';
+      if(state.page==='building-blocks'&&raw===el('block-raw')?.value&&el('block-fields')?.children.length){
+        try{boardPlan=buildingBlockPlan();}
+        catch(error){boardIssue='Current board was not used as context: '+error.message+' The draft uses the raw record; the board is unchanged.';}
+      }
       const currentAssurance=state.page==='assurance'&&state.lastAssurance?.request?.raw===raw?state.lastAssurance.request:null;
       const service=mapping?qrwScope().service_scope.split(',')[0].trim():currentAssurance?.service||'auto';
       const desired=data.desired?.trim()?parseJSON(data.desired,'Expected output JSON'):mapping?state.nfiDesired||{}:{};
@@ -1177,14 +1193,14 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       }
       form.aiResult={result,raw,mappingSignature};
       resultHost.textContent=result.proposal?.plan
-        ?[result.answer, 'Exact sample preview', pretty(result.validation?.actual||{}), ...(result.validation?.errors||[])].filter(Boolean).join('\n\n')
+        ?[boardIssue,result.answer, 'Exact sample preview', pretty(result.validation?.actual||{}), ...(result.validation?.errors||[])].filter(Boolean).join('\n\n')
         :result.proposal?pretty(result):result.answer||pretty(result);
       renderAIFieldGuidance(form,result);
       const apply=form.querySelector('[data-action=workspace-ai-import]');
       apply.hidden=!(result.proposal?.plan?.fields?.length||result.proposal?.config);
       apply.textContent=result.proposal?.config?'Open draft in its editor':'Apply mapping to editor';
       form.querySelector('[data-action=workspace-ai-download]').hidden=!result.proposal;
-    }catch(error){if(form.aiRequestID===requestID)resultHost.textContent=error.message;}
+    }catch(error){if(form.aiRequestID===requestID)resultHost.textContent=aiActionFailure(error);}
     finally{button.disabled=false;}
   }
 
@@ -2845,7 +2861,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       case 'ai-profile-preset': {page.dataset.dirty='true';const form=page.querySelector('#ai-provider-form'),template=state.aiProviderTemplates?.find(item=>item.kind===form.elements.provider.value);if(!template)throw new Error('Provider endpoint preset is unavailable; enter the base URL explicitly.');form.elements.endpoint.value=template.base_url;form.elements.model.placeholder=template.model_hint||'Exact model identifier';toast('Endpoint preset copied. The configured model and credentials were preserved; confirm them before testing.');break;}
       case 'mapping-ai-readiness': {const host=button.closest('[data-ai-mapping-host]');host.querySelector('[data-ai-mapping-status]').textContent=pretty(await api('/ai/capabilities'));break;}
       case 'mapping-ai-dismiss': {const host=button.closest('[data-ai-mapping-host]');delete host.aiProposal;host.querySelector('[data-ai-mapping-proposal]').hidden=true;host.querySelector('[data-ai-mapping-status]').textContent='Proposal dismissed. Manual/native mappings remain unchanged.';break;}
-      case 'mapping-ai-suggest': {const host=button.closest('[data-ai-mapping-host]'),raw=mappingAIRaw(host),status=host.querySelector('[data-ai-mapping-status]');if(!raw.trim())throw new Error('Paste or inspect exact raw log evidence before requesting AI suggestions.');const capability=await api('/ai/capabilities');status.textContent=pretty(capability);if(!capability.available)throw new Error('AI is unconfigured or unavailable. Configure a controller provider and credential first; no AI suggestion request was sent.');const requestID=(host.aiRequestID||0)+1;host.aiRequestID=requestID;delete host.aiProposal;host.querySelector('[data-ai-mapping-proposal]').hidden=true;const mapping=host.dataset.aiMappingEditor==='true',signature=mapping?JSON.stringify(qrwPlan()):'',service=mapping?qrwScope().service_scope.split(',')[0].trim()||'auto':'auto';status.textContent='Requesting a separate AI proposal. Current manual/native mappings are preserved.';try{const result=await api('/field-mapping/ai-suggest',{method:'POST',body:{raw,service:service==='*'?'auto':service,native_fallback:true,desired:mapping?state.nfiDesired||{}:{},...(mapping&&state.qrwFields.length?{plan:qrwPlan()}:{})}});if(!host.isConnected||host.aiRequestID!==requestID)return;if(mappingAIRaw(host)!==raw){status.textContent='Raw evidence changed; stale AI proposal discarded.';return;}const plan=result.proposal?.plan;if(!plan||!Array.isArray(plan.fields)||result.validation?.syntax_valid!==true||result.validation?.extraction_valid!==true)throw new Error('The controller did not return a syntax-compatible, extractable native mapping proposal.');host.aiProposal={result,raw,signature};host.querySelector('[data-ai-mapping-json]').textContent=pretty(result);host.querySelector('[data-ai-mapping-proposal]').hidden=false;status.textContent=(result.proposal_origin==='native_fallback'?result.answer+' ':'')+'Review-only mapping proposal received. Syntax/extraction were checked; expected-output matching and publication validation remain distinct. Nothing was imported or saved. Review and confirm delimiter and explicit constant interpretations before native verification or saving.';}catch(error){status.textContent=error.message;throw error;}break;}
+      case 'mapping-ai-suggest': {const host=button.closest('[data-ai-mapping-host]'),raw=mappingAIRaw(host),status=host.querySelector('[data-ai-mapping-status]');if(!raw.trim())throw new Error('Paste or inspect exact raw log evidence before requesting AI suggestions.');const capability=await api('/ai/capabilities');status.textContent=pretty(capability);if(!capability.available)throw new Error('AI is unconfigured or unavailable. Configure a controller provider and credential first; no AI suggestion request was sent.');const requestID=(host.aiRequestID||0)+1;host.aiRequestID=requestID;delete host.aiProposal;host.querySelector('[data-ai-mapping-proposal]').hidden=true;const mapping=host.dataset.aiMappingEditor==='true',signature=mapping?JSON.stringify(qrwPlan()):'',service=mapping?qrwScope().service_scope.split(',')[0].trim()||'auto':'auto';status.textContent='Requesting a separate AI proposal. Current manual/native mappings are preserved.';try{const result=await api('/field-mapping/ai-suggest',{method:'POST',body:{raw,service:service==='*'?'auto':service,native_fallback:true,desired:mapping?state.nfiDesired||{}:{},...(mapping&&state.qrwFields.length?{plan:qrwPlan()}:{})}});if(!host.isConnected||host.aiRequestID!==requestID)return;if(mappingAIRaw(host)!==raw){status.textContent='Raw evidence changed; stale AI proposal discarded.';return;}const plan=result.proposal?.plan;if(!plan||!Array.isArray(plan.fields)||result.validation?.syntax_valid!==true||result.validation?.extraction_valid!==true)throw new Error('The controller did not return a syntax-compatible, extractable native mapping proposal.');host.aiProposal={result,raw,signature};host.querySelector('[data-ai-mapping-json]').textContent=pretty(result);host.querySelector('[data-ai-mapping-proposal]').hidden=false;status.textContent=(result.proposal_origin==='native_fallback'?result.answer+' ':'')+'Review-only mapping proposal received. Syntax/extraction were checked; expected-output matching and publication validation remain distinct. Nothing was imported or saved. Review and confirm delimiter and explicit constant interpretations before native verification or saving.';}catch(error){if(host.isConnected&&host.aiRequestID===requestID)status.textContent=aiActionFailure(error);}break;}
       case 'mapping-ai-import': {const host=button.closest('[data-ai-mapping-host]'),proposal=host.aiProposal;if(!proposal)throw new Error('Request a current AI mapping proposal first.');if(mappingAIRaw(host)!==proposal.raw)throw new Error('Raw evidence changed. Request a new AI proposal; stale mappings cannot be imported.');const mapping=host.dataset.aiMappingEditor==='true';if(!confirm(mapping?'Replace the editable mapping fields with this reviewed AI proposal? Existing fields will be replaced only in this unsaved editor. Validation and authorized publication are still required.':'Open this proposed mapping in FieldSense? Current authoring form edits are not saved automatically. No active parser will change.'))break;const plan=proposal.result.proposal.plan;if(mapping){el('nfi-plan-import').value=pretty(plan);await action({dataset:{action:'qrw-import-plan'}});nfiScheduleLive();}else{const proposedParser=proposal.result.proposal.parser||{};state.nfiService=Array.isArray(proposedParser.service_scope)?proposedParser.service_scope.join(','):proposedParser.service_scope||'auto';state.nfiScopePattern=proposedParser.scope_pattern||'';state.nfiGlobalScope=proposedParser.reviewed_global_scope===true;state.nfiMappingPriority=Number(proposedParser.mapping_priority)||0;state.nfiRaw=proposal.raw;state.qrwFields=plan.fields.map(field=>qrwField({...field,status:'unresolved',confidence:'ai_proposed',evidence:'AI proposal requires full native validation'}));qrwControllerPreview=null;await navigate('field-mapping');nfiScheduleLive();}delete host.aiProposal;if(host.isConnected){host.querySelector('[data-ai-mapping-proposal]').hidden=true;host.querySelector('[data-ai-mapping-status]').textContent='Proposed fields imported into the unsaved editor. Review delimiter confirmation controls and explicit constants, then verify and validate the complete candidate before review.';}break;}
       case 'workspace-ai-field-help': {
         const draft=button.closest('form')?.aiResult;

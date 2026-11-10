@@ -91,3 +91,32 @@ func TestAIWorkspaceKVTemplatePreservesCompleteValues(t *testing.T) {
 		t.Fatalf("partial KV template %d: %s", response.StatusCode, body)
 	}
 }
+
+func TestAIWorkspaceDirectAuthoringRequestsBuildDrafts(t *testing.T) {
+	f := newAPIFixture(t)
+	calls := mappingAIProviderFixture(t, f, `{"renames":{}}`, nil)
+	for _, question := range []string{"Please do field mappings", "Create a parser pack"} {
+		response, body := f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{
+			"mode": "ask", "workspace": "reference-ai", "question": question,
+			"raw": "status=failed reason=queued",
+		})
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("direct command returned %d: %s", response.StatusCode, body)
+		}
+		result := decodeMap(t, body)
+		if result["proposal"] == nil || result["proposal_origin"] != "ai" || result["activated"] != false {
+			t.Fatal("command did not return a verified review-only proposal")
+		}
+	}
+	response, _ := f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{
+		"mode": "ask", "workspace": "reference-ai", "question": "Map the fields",
+	})
+	if response.StatusCode != http.StatusUnprocessableEntity || calls.Load() != 2 {
+		t.Fatal("a draft without raw evidence must not call the provider")
+	}
+	for _, question := range []string{"How do I map fields?", "Deploy a parser pack", "Which regex matches this?"} {
+		if aiDirectDraftArtifact(question) != "" {
+			t.Fatalf("guidance misclassified: %s", question)
+		}
+	}
+}

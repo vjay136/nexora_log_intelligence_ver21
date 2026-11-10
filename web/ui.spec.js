@@ -57,7 +57,30 @@ test('Ask NLI AI sends selected workspace, issue, and current raw sample to the 
   await expect(help.getByRole('status')).toHaveText('Use Key Value with the source key status.');
 });
 
-test('Auto Fix sends the current sample directly and offers an editable draft', async ({page})=>{
+test('AI request errors distinguish provider, controller transport, and field extraction',async({page})=>{
+  await mockController(page);
+  let issue=0;
+  await page.route('**/api/v1/ai/workspace',route=>{
+    issue++;
+    if(issue===1)return route.fulfill({status:502,contentType:'text/plain',body:'Bad Gateway'});
+    if(issue===2)return route.fulfill({status:502,json:{error:'Provider rejected the key',error_code:'http_401'}});
+    return route.fulfill({status:422,json:{error:'Mapping could not extract this record',errors:['status: key not found']}});
+  });
+  await login(page);
+  await page.getByTestId('nav-reference-ai').click();
+  const help=page.locator('[data-ai-help-desk]');
+  await help.getByLabel('What do you need help with?').fill('Map status from this sample');
+  const submit=help.getByRole('button',{name:'Get guidance'});
+  const result=help.getByRole('status');
+  await submit.click();
+  await expect(result).toContainText('transport error');
+  await submit.click();
+  await expect(result).toHaveText('Provider rejected the key');
+  await submit.click();
+  await expect(result).toContainText('status: key not found');
+});
+
+test('Building Blocks mapping button sends the current sample directly and offers an editable draft', async ({page})=>{
   await mockController(page);
   const raw='smtp status=failed';
   let calls=0;
@@ -73,7 +96,7 @@ test('Auto Fix sends the current sample directly and offers an editable draft', 
   await login(page);
   await page.getByTestId('nav-building-blocks').click();
   await page.locator('#block-raw').fill(raw);
-  await page.getByRole('button',{name:'Auto Fix with AI',exact:true}).click();
+  await page.getByRole('button',{name:'Suggest Mappings with AI',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const draft=page.locator('[data-workspace-ai-auto-panel]');
   await expect(draft.getByRole('status')).toContainText('Status mapped from exact evidence.');

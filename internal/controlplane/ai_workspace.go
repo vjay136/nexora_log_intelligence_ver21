@@ -103,6 +103,32 @@ var aiWorkspaceWorkflows = map[string]string{
 	"communications":    "Distinguish HTTP requests, session heartbeat, live delivery, and client sync as separate links with separate evidence.",
 }
 
+// Only explicit authoring commands enter the draft workflow. Questions and
+// administrative requests remain guidance; the gateway never executes them.
+var aiDirectDraft = regexp.MustCompile(`(?i)^(?:(?:can|could)\s+you\s+)?(?:please\s+)?(?:map\s+(?:(?:all|the|this)\s+)*(?:fields?|raw\s+logs?|samples?)\b|(?:do|suggest)\s+(?:the\s+)?(?:field\s+)?mappings?\b|(?:build|create|generate|draft)\s+(?:(?:a|the|an|new)\s+)*(parser(?:\s+packs?)?|regex|kv\s+(?:pair\s+)?templates?|(?:log\s+)?templates?|patterns?)\b)`)
+
+func aiDirectDraftArtifact(question string) string {
+	match := aiDirectDraft.FindStringSubmatch(strings.TrimSpace(question))
+	if len(match) == 0 {
+		return ""
+	}
+	kind := strings.ToLower(match[1])
+	switch {
+	case kind == "":
+		return "mapping"
+	case strings.HasPrefix(kind, "parser"):
+		return "parser"
+	case strings.HasPrefix(kind, "kv"):
+		return "kv_template"
+	case strings.Contains(kind, "template"):
+		return "template"
+	case strings.HasPrefix(kind, "pattern"):
+		return "pattern"
+	default:
+		return "regex"
+	}
+}
+
 func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, "POST required", http.StatusMethodNotAllowed)
@@ -120,6 +146,15 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 		if len(control) > 200 {
 			jsonError(w, "Workspace control labels must be at most 200 bytes", http.StatusBadRequest)
 			return
+		}
+	}
+	if input.Mode == "ask" && input.Artifact == "" {
+		if kind := aiDirectDraftArtifact(input.Question); kind != "" {
+			if strings.TrimSpace(input.Raw) == "" {
+				jsonError(w, "Paste or inspect the raw record so NLI can build and validate the requested draft here", http.StatusUnprocessableEntity)
+				return
+			}
+			input.Mode, input.Artifact, input.NativeFallback = "fix", kind, true
 		}
 	}
 	if input.Artifact != "" && aiWorkspaceCollections[input.Artifact] == "" {

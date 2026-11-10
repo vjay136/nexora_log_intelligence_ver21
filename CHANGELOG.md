@@ -1,5 +1,9 @@
 # Changelog
 
+## [22.8.0-0]
+
+- Improve AI assistance and field mapping reliability.
+
 ## [22.7.0-0]
 
 - Improve AI mapping suggestions and Building Blocks previews.

@@ -139,6 +139,40 @@ var kvieProfiles = func() []*kvieProfile {
 	return out
 }()
 
+const mixedDotCommaDelimiters = ".,"
+
+var mixedDotCommaProfile = func() *kvieProfile {
+	profile, err := compileKVIEProfile([]string{"=", ";", ":"}, mixedDotCommaDelimiters, Field{})
+	if err != nil {
+		panic(err)
+	}
+	return profile
+}()
+
+// A period is common in literal values. Infer it as a separator only when a
+// second boundary style and mixed assignments corroborate the interpretation.
+func hasMixedDotCommaEvidence(raw string, offset int, observations []KeyValueObservation) bool {
+	if len(observations) < 3 {
+		return false
+	}
+	dot, comma := false, false
+	previousEnd := 0
+	assignments := map[byte]bool{}
+	for i, observation := range observations {
+		prefix := strings.TrimSpace(raw[previousEnd : observation.Start-offset])
+		if len(prefix) == 0 {
+			return false
+		}
+		if i > 0 {
+			dot = dot || prefix[0] == '.'
+			comma = comma || prefix[0] == ','
+		}
+		assignments[prefix[len(prefix)-1]] = true
+		previousEnd = observation.End - offset
+	}
+	return dot && comma && len(assignments) > 1
+}
+
 func (p *kvieProfile) observe(raw string, offset int) ([]KeyValueObservation, error) {
 	// Leading pipes occur in wrapped mail tails. Preserve their byte offset
 	// and only recognize framing when the selected profile allows pipes.
@@ -276,7 +310,11 @@ func detectKVIE(ctx context.Context, raw string, offset int) ([]KVProfile, error
 	structured := kvieHeader.MatchString(strings.TrimLeft(raw, " \t\r\n"))
 	var out []KVProfile
 	var evidenceError error
-	for _, preset := range kvieProfiles {
+	presets := kvieProfiles
+	if strings.Contains(raw, ".") && strings.Contains(raw, ",") {
+		presets = append(append([]*kvieProfile(nil), presets...), mixedDotCommaProfile)
+	}
+	for _, preset := range presets {
 		if preset.delimiters == "|" {
 			continue
 		}
@@ -284,6 +322,9 @@ func detectKVIE(ctx context.Context, raw string, offset int) ([]KVProfile, error
 			return nil, err
 		}
 		observations, err := preset.observe(raw, offset)
+		if preset == mixedDotCommaProfile && (err != nil || !hasMixedDotCommaEvidence(raw, offset, observations)) {
+			continue
+		}
 		if errors.Is(err, ErrIncompleteKV) {
 			structured = true
 			var previous, current *mixedkv.Error

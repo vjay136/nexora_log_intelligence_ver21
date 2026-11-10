@@ -31,6 +31,7 @@ func TestKVIEOnePlanForReportedMailTails(t *testing.T) {
 		"{status=failed:reason=notneeded:server=cloud}",
 		"status=failed reason=notneeded server=cloud",
 		"status:failed,reason:notneeded,server:cloud",
+		"status=failed.reason;notneeded,server:cloud",
 	} {
 		t.Run(tail, func(t *testing.T) {
 			raw := kvieMailHeader + tail
@@ -51,6 +52,17 @@ func TestKVIEOnePlanForReportedMailTails(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestKVIEDoesNotInferUncorroboratedPeriods(t *testing.T) {
+	const raw = "host=example.invalid,server=cloud"
+	profiles, err := InspectScopedKeyValues(context.Background(), raw, 0)
+	if err != nil || len(profiles) != 1 {
+		t.Fatalf("inspect: %+v, %v", profiles, err)
+	}
+	if got := profiles[0].Observations[0].Value; got != "example.invalid" {
+		t.Fatalf("domain split at a literal period: %q", got)
 	}
 }
 
