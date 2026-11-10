@@ -212,6 +212,55 @@ test('Auto Fix applies a verified AI draft and previews regex and unconfirmed de
   await expect(page.locator('#nfi-live-state')).toContainText('Confirm the highlighted delimiter');
 });
 
+for(const source of ['pasted','retained'])test('Suggest & map with AI uses the exact '+source+' wizard sample and hands off to candidate validation',async({page})=>{
+  const raw='status=failed reason=not needed';
+  const actual={status:'failed',reason:'not needed'};
+  const plan={version:1,fields:Object.keys(actual).map(name=>({name,source:name,method:'key_value',type:'string',policy:'required'}))};
+  const mock=await mockController(page,{quarantineRaw:raw});
+  const requests=[];
+  await page.route('**/api/v1/ai/workspace',route=>{
+    const body=route.request().postDataJSON();
+    requests.push(body);
+    return route.fulfill({json:{proposal_origin:'ai',proposal:{plan},validation:{extraction_valid:true,actual}}});
+  });
+  await page.route('**/api/v1/assurance/mapping-preview',route=>{
+    expect(route.request().postDataJSON().raw).toBe(raw);
+    return route.fulfill({json:{passed:true,actual}});
+  });
+  await login(page);
+  await page.getByTestId('nav-quarantine-wizard').click();
+  if(source==='pasted'){
+    await page.locator('#gprs-manual-raw').fill(raw);
+    await page.locator('#gprs-manual-raw').locator('xpath=ancestor::section[1]').getByRole('button',{name:'Suggest & map with AI',exact:true}).click();
+  }else{
+    await page.getByRole('row').filter({has:page.getByRole('button',{name:'Inspect',exact:true})}).first().getByRole('button',{name:'Suggest & map with AI',exact:true}).click();
+  }
+  await expect(page.locator('#nfi-live-state')).toContainText('AI draft applied');
+  await expect(page.locator('#nfi-live-json')).toContainText('not needed');
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toMatchObject({raw,artifact:'mapping',mode:'fix',native_fallback:true});
+  await page.getByRole('button',{name:'Generate + validate complete parser pack',exact:true}).click();
+  await expect(page.locator('#gprs-parser-helper-form [data-parser-helper-status]')).toContainText('Complete parser validation passed');
+  expect(mock.observed.some(entry=>entry.endsWith('/publish'))).toBe(false);
+});
+
+test('Suggest & map with AI in Parser Creation sends its own sample and opens the verified draft',async({page})=>{
+  const raw='host=mailnode',actual={host:'mailnode'};
+  await mockController(page);
+  await page.route('**/api/v1/ai/workspace',route=>{
+    expect(route.request().postDataJSON()).toMatchObject({workspace:'parser-workspace',raw,artifact:'mapping'});
+    return route.fulfill({json:{proposal_origin:'ai',proposal:{plan:{version:1,fields:[{name:'host',method:'key_value',source:'host',type:'string',policy:'required'}]}},validation:{extraction_valid:true,actual}}});
+  });
+  await page.route('**/api/v1/assurance/mapping-preview',route=>route.fulfill({json:{passed:true,actual}}));
+  await login(page);
+  await page.getByTestId('nav-parser-workspace').click();
+  const form=page.locator('#parser-workspace-form');
+  await form.locator('[name=samples]').fill(raw);
+  await form.getByRole('button',{name:'Suggest & map with AI',exact:true}).click();
+  await expect(page.locator('#nfi-raw')).toHaveValue(raw);
+  await expect(page.locator('#nfi-live-state')).toContainText('AI draft applied');
+});
+
 test('Building Blocks adds pieces by drag and keyboard, reorders, and checks exact output',async({page})=>{
   await mockController(page);
   let request;
