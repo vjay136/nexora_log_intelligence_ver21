@@ -442,6 +442,13 @@ func classifyNotificationEvent(event auditlog.Event) (string, string, bool) {
 	if strings.EqualFold(event.Action, http.MethodPost) && event.Resource == "/api/v1/communications/browser-heartbeat" {
 		return "", "", false
 	}
+	// The optional provider catalog shows its own storage health. Historical
+	// 503s from that read remain visible in audit without repeating the banner
+	// in the notification feed or sending external alerts for browser retries.
+	if strings.EqualFold(event.Action, http.MethodGet) && event.Resource == "/api/v1/admin/ai-provider" &&
+		event.Outcome == "failure" && strings.HasPrefix(event.Details["detail"], "status=503") {
+		return "", "", false
+	}
 	// The browser deliberately probes the current session before presenting the
 	// login form.  An anonymous/expired-session 401 is an expected control-flow
 	// result, not an operational incident.  Keep it in the immutable audit chain

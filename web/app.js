@@ -121,6 +121,7 @@
   };
   const can = permission => !permission || state.user?.role === 'admin' || (state.user?.permissions || []).includes(permission);
   function actionPermission(button) {
+    if(['block-sense','block-preview','block-generate'].includes(button.dataset.action))return 'assurance:run';
     if (['quarantine-raw','quarantine-export','quarantine-diagnose','quarantine-acquire-evidence'].includes(button.dataset.action)) return 'logs:read';
     if (['quarantine-exclude','quarantine-include','quarantine-delete-raw'].includes(button.dataset.action)) return 'logs:write';
     if (['input-profile-edit','input-profile-delete','input-edit-row','input-toggle-row','input-toggle-all','input-remove-row','input-remove-all','input-add-row','input-use-automatic'].includes(button.dataset.action)) return 'parsers:manage';
@@ -877,8 +878,79 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     renderPage('reference-ai',panel('Reference based help & Fix','Choose the artifact you want to draft, describe the outcome and include a sample record.',workspaceAIForm({references,defaultArtifact:'mapping'})));
   }
   function loadBuildingBlocks(){
-    renderPage('building-blocks',panel('Building Blocks','Select text from the raw record to capture a reusable character range. Each block becomes an editable FieldSense field.',`<label class="field">Raw record<textarea id="block-raw" rows="5">${esc(state.blockSeed||'')}</textarea></label><div class="actions"><button type="button" class="secondary" data-action="block-add">Split at selected text</button><button type="button" class="secondary" data-action="block-literal">Add literal</button><button type="button" class="secondary" data-action="block-reset">Reset</button><button type="button" class="primary" data-action="block-open">Open blocks in FieldSense</button></div><div id="block-fields"></div>`));
+    const board=state.blockBoard;
+    renderPage('building-blocks',panel('Building Blocks','Drag source pieces onto the output board, or select a piece with Enter. The output cards define an editable parser mapping.',`<label class="field">Raw record<textarea id="block-raw" rows="4">${esc(state.blockSeed||board?.raw||'')}</textarea></label>
+      <div class="actions"><button type="button" class="secondary" data-action="block-sense">Sense and populate fields</button><button type="button" class="secondary" data-action="block-add">Split at selected text</button><button type="button" class="secondary" data-action="block-whole">Add whole record</button><button type="button" class="secondary" data-action="block-literal">Add literal</button><button type="button" class="secondary" data-action="block-reset">Reset board</button></div>
+      <div class="block-board"><section><h4>1 · Source pieces</h4><label class="field">Cut pieces by <select id="block-mode"><option value="token">Words and punctuation</option><option value="character">Characters</option></select></label><div id="block-source" class="block-tray"></div></section>
+      <section><h4>2 · Desired output</h4><p class="hint">Drop pieces here. Drag a card to reorder it, or use its move buttons. Open a card to rename it, split, replace, omit, or merge earlier fields.</p><div id="block-fields" class="block-tray"></div></section></div>
+      <div class="actions"><button type="button" class="secondary" data-action="block-preview">Verify output preview</button><button type="button" class="secondary" data-action="block-open">Open blocks in FieldSense</button><button type="button" class="secondary" data-action="workspace-ai-open" data-mode="fix" data-artifact="template" data-tab="Building Blocks">Draft template with AI</button><button type="button" class="primary" data-action="block-generate">Generate + validate parser pack</button></div><p id="block-status" role="status"></p><pre id="block-preview" class="json-output">{}</pre>`));
+    if(!el('block-raw'))return;
+    const raw=el('block-raw'),fields=el('block-fields');
+    if(!state.blockSeed&&board?.raw===raw.value)board.fields.forEach(field=>addBuildingBlock(field.method==='constant',null,field));
     state.blockSeed='';
+    renderBlockSource();
+    raw.addEventListener('input',()=>{
+      if(fields.children.length)el('block-status').textContent='Source changed. Restore the previous sample or reset the board before using its existing cards.';
+      renderBlockSource();
+      rememberBlockBoard();
+    });
+    el('block-mode').addEventListener('change',renderBlockSource);
+    fields.addEventListener('input',rememberBlockBoard);
+    fields.addEventListener('dragover',event=>{event.preventDefault();fields.classList.add('block-drop-ready');});
+    fields.addEventListener('dragleave',event=>{if(!fields.contains(event.relatedTarget))fields.classList.remove('block-drop-ready');});
+    fields.addEventListener('drop',event=>{
+      event.preventDefault();
+      fields.classList.remove('block-drop-ready');
+      const token=event.dataTransfer.getData('application/x-nli-piece');
+      const cardID=event.dataTransfer.getData('application/x-nli-card');
+      const target=event.target.closest('[data-block-card]');
+      if(token&&el('block-source').pieces[Number(token)-1]){
+        try{addSourcePiece(Number(token)-1,target);}
+        catch(error){el('block-status').textContent=error.message;}
+      }
+      else if(cardID){
+        const card=[...fields.children].find(row=>row.dataset.blockCard===cardID);
+        if(card&&card!==target)fields.insertBefore(card,target);
+      }
+      rememberBlockBoard();
+    });
+  }
+  function renderBlockSource(){
+    const raw=el('block-raw').value;
+    const pattern=el('block-mode').value==='character'?/[\s\S]/gu:/[\p{L}\p{N}_]+|[^\p{L}\p{N}_\s]|\s+/gu;
+    const pieces=[];
+    for(const match of raw.matchAll(pattern)){
+      pieces.push(match[0]);
+      if(pieces.length>512)break;
+    }
+    const tray=el('block-source');
+    tray.pieces=[];
+    let start=0;
+    tray.innerHTML=pieces.slice(0,512).map((value,index)=>{
+      const end=start+value.length;
+      tray.pieces.push({start,end,value});
+      start=end;
+      const visible=value.replaceAll(' ','␣').replaceAll('\t','⇥').replaceAll('\n','↵').replaceAll('\r','␍');
+      return `<button class="block-piece" type="button" draggable="true" data-action="block-piece" data-index="${index}" title="Add source piece ${index+1}">${esc(visible)}</button>`;
+    }).join('');
+    if(pieces.length>512)tray.insertAdjacentHTML('beforeend','<p class="hint">First 512 pieces shown. Select text in the raw record to capture another range.</p>');
+    tray.ondragstart=event=>{
+      const piece=event.target.closest('[data-index]');
+      if(piece)event.dataTransfer.setData('application/x-nli-piece',String(Number(piece.dataset.index)+1));
+    };
+  }
+  function addSourcePiece(index,before=null){
+    const range=el('block-source').pieces[index];
+    if(range)addBuildingBlock(false,range,null,before);
+  }
+  function rememberBlockBoard(){
+    const raw=el('block-raw')?.value;
+    if(raw===undefined)return;
+    try{state.blockBoard={raw,fields:buildingBlockPlan().fields};}
+    catch{
+      if(!el('block-fields').children.length)state.blockBoard={raw,fields:[]};
+    }
+    el('block-preview').textContent='{}';
   }
   function applyWorkspaceMapping(raw,plan,service='auto'){
     state.nfiRaw=raw;
@@ -889,16 +961,24 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     state.qrwFields=plan.fields.map(field=>qrwField(field));
     qrwControllerPreview=null;
   }
-  function addBuildingBlock(literal){
-    const raw=el('block-raw'), start=raw.selectionStart, end=raw.selectionEnd;
-    if(!literal&&start===end)throw new Error('Select the exact characters to capture in the raw record.');
+  function addBuildingBlock(literal,range=null,field=null,before=null){
+    const raw=el('block-raw'), start=range?.start??raw.selectionStart, end=range?.end??raw.selectionEnd;
+    if(!literal&&!field&&start===end)throw new Error('Select the exact characters to capture in the raw record.');
     const fields=el('block-fields'),row=document.createElement('div');
-    const value=literal?'':raw.value.slice(start,end);
-    row.className='panel form-grid';
-    row.blockSource=literal?{method:'constant',source:''}:{method:'character',source:String([...raw.value.slice(0,start)].length+1),source_end:String([...raw.value.slice(0,end)].length)};
+    if(fields.children.length>=128)throw new Error('The board supports up to 128 output fields.');
+    const value=literal?field?.default_value??'':field?qrwExtract(field,raw.value).value??'':raw.value.slice(start,end);
+    const sequence=++qrwFieldSequence;
+    row.className='block-card';
+    row.dataset.blockCard=String(sequence);
+    row.draggable=true;
+    row.addEventListener('dragstart',event=>event.dataTransfer.setData('application/x-nli-card',row.dataset.blockCard));
+    row.blockSource=field|| (literal?{method:'constant',default_value:''}:{method:'character',source:String([...raw.value.slice(0,start)].length+1),source_end:String([...raw.value.slice(0,end)].length)});
     row.blockRaw=raw.value;
-    row.innerHTML=`<label class="field">Field name<input data-block-name value="field_${++qrwFieldSequence}"></label><label class="field">Captured text<input data-block-original value="${esc(value)}" ${literal?'':'readonly'}></label>${literal?'':'<label class="field">Find literal<input data-block-find></label><label class="field">Replace with · leave empty to remove<input data-block-replacement></label><label class="field">Split delimiter<input data-block-delimiter></label><label class="field">Keep part · 1-based<input data-block-part type="number" min="1" value="1"></label>'}<label class="field">Merge earlier fields · comma separated<input data-block-merge></label><label class="field">Merge separator<input data-block-separator value=" "></label><div class="actions"><button type="button" class="secondary" data-action="block-up">Move up</button><button type="button" class="danger" data-action="block-remove">Remove</button></div>`;
-    fields.append(row);
+    row.innerHTML=`<label class="field">Field name<input data-block-name value="${esc(field?.name||'field_'+sequence)}"></label><code class="block-value">${esc(typeof value==='object'?pretty(value):String(value))}</code>
+      <details ${field?'':'open'}><summary>Edit piece</summary><div class="form-grid"><label class="field">${literal?'Literal value':'Source value'}<input data-block-original value="${esc(value)}" ${literal?'':'readonly'}></label><label class="field">Value type <select data-block-type>${QRW_TYPES.map(option=>qrwOption(option,field?.type||'string')).join('')}</select></label><label class="field">Output <select data-block-output>${['include','omit','intermediate','flatten'].map(option=>qrwOption(option,field?.output_policy||'include')).join('')}</select></label><label class="field">Find literal<input data-block-find></label><label class="field">Replace with · leave empty to remove<input data-block-replacement></label><label class="field">Split delimiter<input data-block-delimiter></label><label class="field">Keep part · 1-based<input data-block-part type="number" min="1" value="1"></label><label class="field">Merge earlier fields · comma separated<input data-block-merge></label><label class="field">Merge separator<input data-block-separator value=" "></label></div></details>
+      <div class="actions"><button type="button" class="secondary" data-action="block-up">Move up</button><button type="button" class="secondary" data-action="block-down">Move down</button><button type="button" class="danger" data-action="block-remove">Remove</button></div>`;
+    fields.insertBefore(row,before);
+    rememberBlockBoard();
   }
   function buildingBlockPlan(){
     const raw=el('block-raw').value,rows=[...el('block-fields').children];
@@ -906,9 +986,9 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const used=new Set();
     return {version:1,fields:rows.map(row=>{
       const value=key=>row.querySelector(`[data-block-${key}]`)?.value||'';
-      const name=value('name').trim(),operations=[],source={...row.blockSource};
-      if(!name||used.has(name))throw new Error('Give each block a unique field name.');
-      if(source.method==='constant')source.source=value('original');
+      const name=value('name').trim(),source={...row.blockSource},operations=[...(source.operations||[])];
+      if(!/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(name)||used.has(name))throw new Error('Give each block a unique field name beginning with a letter.');
+      if(source.method==='constant')source.default_value=value('original');
       else if(row.blockRaw!==raw)throw new Error('The raw record changed. Recreate the blocks against the new text.');
       if(value('find'))operations.push({op:'replace',find:value('find'),replace:value('replacement')});
       if(value('delimiter'))operations.push({op:'split',delimiter:value('delimiter'),part:Number(value('part'))||1});
@@ -918,7 +998,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         operations.push({op:'merge',fields:merge,separator:value('separator')});
       }
       used.add(name);
-      return {...source,name,label:name,type:'string',policy:'required',confirmed:true,operations};
+      return {policy:'required',confirmed:true,...source,type:value('type'),name,label:name,output_policy:value('output'),operations};
     })};
   }
   async function runWorkspaceAI(button){
@@ -932,10 +1012,12 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     try{
       const controls=[...page.querySelectorAll('button[data-action]')].filter(node=>!node.closest('#workspace-ai-dialog,[hidden],.workspace-ai-actions')).map(node=>node.dataset.action).filter(Boolean);
       const mapping=raw&&page.querySelector('#qrw-field-rows')&&qrwRaw()===raw;
+      const boardPlan=state.page==='building-blocks'&&raw===el('block-raw')?.value&&el('block-fields')?.children.length
+        ?buildingBlockPlan():null;
       const service=mapping?qrwScope().service_scope.split(',')[0].trim():'auto';
       const desired=data.desired?.trim()?parseJSON(data.desired,'Expected output JSON'):mapping?state.nfiDesired||{}:{};
       if(!desired||Array.isArray(desired)||typeof desired!=='object')throw new Error('Expected mapping output must be a JSON object.');
-      const result=await api('/ai/workspace',{method:'POST',body:{mode:form.dataset.mode,workspace:state.page,tab:form.dataset.tab,question:data.question||'',artifact:data.artifact||'',raw,desired,service:service==='*'?'auto':service,controls:[...new Set(controls)].slice(0,24),...(mapping&&state.qrwFields.length?{plan:qrwPlan()}:{}),...(data.reference?{reference:JSON.parse(data.reference)}:{})}});
+      const result=await api('/ai/workspace',{method:'POST',body:{mode:form.dataset.mode,workspace:state.page,tab:form.dataset.tab,question:data.question||'',artifact:data.artifact||'',raw,desired,service:service==='*'?'auto':service,controls:[...new Set(controls)].slice(0,24),...(boardPlan?{plan:boardPlan}:mapping&&state.qrwFields.length?{plan:qrwPlan()}:{}),...(data.reference?{reference:JSON.parse(data.reference)}:{})}});
       if(!form.isConnected||form.aiRequestID!==requestID||form.elements.raw.value!==raw)return;
       form.aiResult={result,raw};
       resultHost.textContent=result.proposal?pretty(result):result.answer||pretty(result);
@@ -984,6 +1066,9 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     await api(`/notifications/audit-${id}`,{method:'POST',body});await refreshNotificationBell();if(state.page==='notifications')await loadNotifications();
   }
   function notify(message, type = 'success') {
+    if(type==='error'&&[...el('toast-region').children].some(node=>node.classList.contains('bad')&&node.textContent===String(message))){
+      return {done:text=>notify(text,'success'),fail:text=>notify(text,'error')};
+    }
     state.notifications.unshift({ message: String(message), type, at: new Date().toISOString() }); state.notifications = state.notifications.slice(0, 30);
     renderNotificationBell();
     const node = document.createElement('div'); node.className = `toast${type === 'error' ? ' bad' : type === 'progress' ? ' progress' : ''}`; node.setAttribute('role', type === 'error' ? 'alert' : 'status'); node.textContent = message;
@@ -1041,18 +1126,20 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     let response;
     try { response = await fetchWithTimeout('/api/v1' + path, { method, credentials: 'same-origin', headers, body, signal: options.signal }, 55000); }
     catch (error) { recordAPI(path, method, null, performance.now() - started, error.message); throw error; }
-    recordAPI(path, method, response.status, performance.now() - started, response.ok ? '' : response.statusText);
+    const latency=performance.now()-started;
     const contentType = response.headers.get('content-type') || '';
     const data = contentType.includes('application/json') ? await response.json().catch(() => ({})) : {};
+    const degraded=path.split('?')[0]==='/admin/ai-provider'&&['degraded','unavailable','encryption_unavailable'].includes(data?.store_status);
+    recordAPI(path, method, response.status, latency, degraded?'Provider storage needs attention':response.ok?'':response.statusText,degraded);
     if ([405, 501].includes(response.status) || (!contentType.includes('application/json') && !response.ok)) throw new Error(CONTROLLER_REQUIRED);
     if (response.status === 401 && path !== '/auth/login') { signOut(false); throw new Error('Session expired'); }
     if (!response.ok) { const error=new Error(data.error || `${response.status} ${response.statusText}`);error.status=response.status;error.details=data;throw error; }
     if (!contentType.includes('application/json')) throw new Error('The controller returned an invalid API response.');
     return data;
   }
-  function recordAPI(path, method, status, latency, error = '') {
+  function recordAPI(path, method, status, latency, error = '', degraded=false) {
     const safePath = String(path).split('?')[0].replace(/\/[0-9a-f]{8}-[0-9a-f-]{27,}/ig, '/{id}').replace(/\/[A-Za-z0-9_-]{24,}(?=\/|$)/g, '/{id}');
-    state.apiHistory.unshift({ path: safePath, method, status, latency: Math.round(latency), error: String(error || '').slice(0, 180), at: new Date().toISOString() });
+    state.apiHistory.unshift({ path: safePath, method, status, degraded, latency: Math.round(latency), error: String(error || '').slice(0, 180), at: new Date().toISOString() });
     state.apiHistory.length = Math.min(state.apiHistory.length, 500);
   }
   function parseJSON(value, label) { try { return JSON.parse(value); } catch (error) { throw new Error(`${label}: ${error.message}`); } }
@@ -1986,7 +2073,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const latest=new Map();state.apiHistory.forEach(item=>{if(!latest.has(`${item.method} ${item.path}`))latest.set(`${item.method} ${item.path}`,item);});
     const reachable=status=>status!=null&&(status<400||[401,403,405,422].includes(status));
     const latencies=[...latest.values()].map(item=>item.latency).sort((a,b)=>a-b),percentile=p=>latencies.length?latencies[Math.min(latencies.length-1,Math.ceil(p*latencies.length)-1)]:0,p50=percentile(.5),p95=percentile(.95);
-    const rows=[...latest.values()].map(item=>`<tr><td>${badge(reachable(item.status)?'online':'offline')}</td><td><code>${esc(item.method)}</code></td><td class="mono">${esc(item.path)}</td><td>${esc(purposes[item.path]||'Authenticated controller API')}</td><td>${item.latency} ms</td><td>${item.status??'network error'}${item.error?`<br><small>${esc(item.error)}</small>`:''}</td><td>${time(item.at)}</td></tr>`);
+    const rows=[...latest.values()].map(item=>`<tr><td>${badge(item.degraded?'degraded':reachable(item.status)?'online':'offline')}</td><td><code>${esc(item.method)}</code></td><td class="mono">${esc(item.path)}</td><td>${esc(purposes[item.path]||'Authenticated controller API')}</td><td>${item.latency} ms</td><td>${item.status??'network error'}${item.error?`<br><small>${esc(item.error)}</small>`:''}</td><td>${time(item.at)}</td></tr>`);
     const ok=[...latest.values()].filter(item=>reachable(item.status)).length, failed=[...latest.values()].length-ok;
     renderPage('api-monitor',`<div class="dashboard-intro"><div><p class="eyebrow">Controller connectivity · authenticated probes</p><h1>API monitor</h1><p>Each status comes from an actual browser request. A 401/403 means the API is reachable and access was denied; network and server errors show as offline.</p></div><div class="actions"><button class="secondary" data-action="reload">Refresh probes</button></div></div><div class="grid cols-4">${card('Reachable APIs',number(ok),'Successful or permission-gated HTTP responses')}${card('Failed APIs',number(failed),'Network or server errors in latest calls')}${card('Latency p50',`${p50} ms`,'Latest response per route')}${card('Latency p95',`${p95} ms`,'Latest response per route')}</div>${panel('Current controller API status','Method, route, purpose, response latency and result for live API calls observed in this session.',table(['Status','Method','Path','Purpose','Latency','HTTP result','Last checked'],rows,'No API calls observed yet. Refresh probes to check controller connectivity.'))}${panel('Probe coverage','The monitor checks controller health, storage, telemetry, client sync, parser sync, metadata, Assurance history, parser catalog, rollouts and system status.','<p class="muted">The request history is held in this browser session and contains routes and status metadata only. Request bodies, credentials and log payloads are not recorded.</p>')}`);
   }
@@ -2062,15 +2149,17 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
 
   async function loadAIProvider() {
     const [providerResult,proposalsResult]=await Promise.allSettled([api('/admin/ai-provider'+(state.aiSelectedProviderId?'?id='+encodeURIComponent(state.aiSelectedProviderId):'')),api('/assurance/ai-proposals')]);
-    if(providerResult.status==='rejected')throw providerResult.reason;
-    const data = providerResult.value;
+    const data=providerResult.status==='fulfilled'?providerResult.value:{store_status:'unavailable',store_message:providerResult.reason.message};
+    const degraded=data.store_status&&data.store_status!=='available';
+    const storeNotice=degraded?`<div class="callout" role="status"><strong>Provider storage needs attention.</strong> ${esc(data.store_message||'Saved profiles could not be loaded.')} <button type="button" class="secondary" data-action="ai-profile-retry">Retry loading profiles</button></div>`:'';
+
     const provider = data.provider || data;
     const kinds=[['openai','OpenAI'],['nvidia_nim','NVIDIA NIM'],['anthropic','Anthropic / Claude'],['minimax','MiniMax'],['qwen_dashscope','Qwen / DashScope'],['gemini','Gemini / Google'],['openai_compatible','OpenAI-compatible endpoint'],['ollama','Ollama (controller-local)']];
     const modes=[['encrypted_inline','Encrypted inline (write-only)'],['env_ref','Environment variable reference'],['file_ref','Managed secret file reference'],['none','No credential (Ollama only)']];
     const credentialSource=provider.credential_source||'encrypted_inline',templates=data.templates||[];state.aiProviderTemplates=templates;const profiles=data.profiles||[],capabilities=data.capabilities||{};
     const templateRows=templates.map(item=>`<tr><td><b>${esc(item.name)}</b><br><small class="mono">${esc(item.kind)}</small></td><td class="mono">${esc(item.base_url)}</td><td>${esc(item.model_hint)}</td><td>${esc(item.credential_source)}</td></tr>`);
     state.aiProposals=proposalsResult.status==='fulfilled'?(proposalsResult.value.proposals||[]):[];
-    renderPage('ai', `${panel('AI connection manager','Configure the controller-side provider used only for optional failure analysis and parser suggestions. Credentials are write-only, redacted from responses and never copied to clients.',`<div class="callout">AI is outside the live parsing path. Provider unavailability cannot stop collection, deterministic parsing, quarantine, Assurance, or live synchronization. Public provider presets never contain credentials.</div><div class="actions"><label>Saved AI profiles<select id="ai-profile-choice"><option value="">Automatic priority selection</option>${profiles.map(item=>`<option value="${esc(item.id)}" ${item.id===provider.id?'selected':''}>${esc(item.name)} · ${esc(item.model)} · priority ${number(item.priority)}</option>`).join('')}</select></label><button type="button" class="secondary" data-action="ai-profile-load">Load profile</button><button type="button" class="secondary" data-action="ai-profile-new">New model profile</button></div><p class="hint">Separate model profiles may share one environment reference, e.g. NVIDIA_API_KEY. Lower priority wins; up to three enabled providers in the same fallback group may be attempted. Keys stay on the controller.</p><form id="ai-provider-form" class="form-grid"><label class="field">Profile ID<input name="id" value="${esc(provider.id||'default')}" required pattern="[a-z][a-z0-9_-]{0,63}" maxlength="64"></label><label class="field">Provider<select name="provider">${kinds.map(([value,label])=>`<option value="${value}" ${provider.provider===value||provider.kind===value?'selected':''}>${esc(label)}</option>`).join('')}</select></label><label class="field">Display name<input name="name" value="${esc(provider.name||'Default AI provider')}" maxlength="128" required></label><label class="field">Model<input name="model" value="${esc(provider.model||'')}" placeholder="Provider model identifier" required></label><label class="field">Priority<input name="priority" type="number" min="0" max="100000" value="${Number(provider.priority||0)}"></label><label class="field wide">API endpoint<input name="endpoint" type="url" value="${esc(provider.endpoint||'')}" placeholder="HTTPS base URL; loopback is limited to Ollama"></label><label class="field">Credential mode<select name="credential_source">${modes.map(([value,label])=>`<option value="${value}" ${credentialSource===value?'selected':''}>${esc(label)}</option>`).join('')}</select></label><label class="field">Request timeout (seconds)<input name="timeout_seconds" type="number" min="1" max="120" value="${Number(provider.timeout_seconds)||15}"></label><label class="field">Maximum response bytes<input name="max_response_bytes" type="number" min="1024" max="8388608" value="${Number(provider.max_response_bytes)||1048576}"></label><label class="field">Fallback group<input name="fallback_group" value="${esc(provider.fallback_group||'')}" maxlength="64" placeholder="Optional routing group"></label><label class="field wide">API key (encrypted inline)<input name="api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="${provider.configured ? `Configured${provider.key_last4?` · ending ${esc(provider.key_last4)}`:''}; leave blank to keep` : 'Paste the actual key only; no Bearer prefix or $ENV placeholder'}"></label><label class="field wide">Credential reference<input name="credential_ref" value="${esc(credentialSource==='file_ref'?'':provider.credential_ref||'')}" autocomplete="off" spellcheck="false" placeholder="Environment variable name, or managed file path; leave blank to retain this profile reference"></label><label class="field"><input name="enabled" type="checkbox" value="true" ${provider.enabled?'checked':''}> Enable optional AI assistance</label><div class="actions wide"><button class="primary" type="submit">Save provider settings</button><button class="secondary" type="button" data-action="ai-profile-preset">Use selected provider endpoint preset</button></div><details class="wide"><summary>Explicit connection-test options</summary><p class="hint">A test sends a small real request only when clicked. JSON is the default. SSE and an optional public image URL are supported for OpenAI-compatible adapters. Log remediation remains non-streaming. No image is fetched automatically by NLI.</p><label class="field">Probe response<select name="test_mode"><option value="json">JSON completion</option><option value="stream">Streaming SSE completion</option></select></label><label class="field">Probe token budget (16–1024)<input name="test_max_tokens" type="number" min="16" max="1024" value="64"></label><label class="field">Optional public HTTPS image URL<input name="test_image_url" type="url" placeholder="Public HTTPS image, no signed query or credentials"></label></details><div class="actions wide"><button class="secondary" type="button" data-action="test-ai-provider">Test connection</button></div><div id="ai-provider-test-status" class="wide json-output" role="status"></div><div class="actions wide"><button type="button" class="danger" data-action="ai-credential-remove" data-id="${esc(provider.id||'')}" ${profiles.some(item=>item.id===provider.id)?'':'disabled'}>Remove credential</button><button type="button" class="danger" data-action="ai-profile-delete" data-id="${esc(provider.id||'')}" ${profiles.some(item=>item.id===provider.id)?'':'disabled'}>Delete profile</button></div><p class="hint wide">Disabling retains credentials. Remove credential purges this profile’s stored credential history and retains disabled settings; Delete profile also removes its settings. External environment variables, files, backups and provider-issued keys require separate removal or revocation. Already outbound requests cannot be recalled.</p></form>`)}${panel('Connection status · AI feature readiness','Credential presence is separate from a successful live connection test. No secret is resolved in the browser.',`<pre class="json-output">${esc(pretty(capabilities))}</pre>`)}${panel('Connection status','Status is controller authoritative. Secret values, encrypted payloads and managed file paths are never returned.',`<div class="grid cols-4">${card('Configured',provider.configured?'Yes':'No',credentialSource)}${card('Credential',provider.key_last4?`•••• ${provider.key_last4}`:(provider.credential_ref||'Redacted'),'No secret value displayed')}${card('Routing',`Priority ${Number(provider.priority||0)}`,provider.fallback_group||'Default group')}${card('Status',provider.status||'Not tested',provider.last_test_at?time(provider.last_test_at):'Run a bounded connection test')}</div>`)}${panel('Provider templates','Public presets supply endpoint and model guidance only. Select a provider above, then confirm the exact model and credential mode for your account.',table(['Provider','Base URL','Model hint','Default credential'],templateRows,'Provider templates are unavailable.'))}${renderAIProposalQueue(state.aiProposals,null,proposalsResult.status==='rejected'?proposalsResult.reason.message:'')}${panel('Human-reviewed parser workflow','AI suggestions remain drafts. Validate them against the Assurance corpus before publication.',`<p class="muted">Provider access is optional and used last, after deterministic recovery. Clients receive only approved parser/config rollouts; provider credentials and raw secret material remain controller-side.</p>`)}`);
+    renderPage('ai', `${panel('AI connection manager','Configure the controller-side provider used only for optional failure analysis and parser suggestions. Credentials are write-only, redacted from responses and never copied to clients.',`${storeNotice}<div class="callout">AI is outside the live parsing path. Provider unavailability cannot stop collection, deterministic parsing, quarantine, Assurance, or live synchronization. Public provider presets never contain credentials.</div><div class="actions"><label>Saved AI profiles<select id="ai-profile-choice"><option value="">Automatic priority selection</option>${profiles.map(item=>`<option value="${esc(item.id)}" ${item.id===provider.id?'selected':''}>${esc(item.name)} · ${esc(item.model)} · priority ${number(item.priority)}</option>`).join('')}</select></label><button type="button" class="secondary" data-action="ai-profile-load">Load profile</button><button type="button" class="secondary" data-action="ai-profile-new">New model profile</button></div><p class="hint">Separate model profiles may share one environment reference, e.g. NVIDIA_API_KEY. Lower priority wins; up to three enabled providers in the same fallback group may be attempted. Keys stay on the controller.</p><form id="ai-provider-form" class="form-grid"><label class="field">Profile ID<input name="id" value="${esc(provider.id||'default')}" required pattern="[a-z][a-z0-9_-]{0,63}" maxlength="64"></label><label class="field">Provider<select name="provider">${kinds.map(([value,label])=>`<option value="${value}" ${provider.provider===value||provider.kind===value?'selected':''}>${esc(label)}</option>`).join('')}</select></label><label class="field">Display name<input name="name" value="${esc(provider.name||'Default AI provider')}" maxlength="128" required></label><label class="field">Model<input name="model" value="${esc(provider.model||'')}" placeholder="Provider model identifier" required></label><label class="field">Priority<input name="priority" type="number" min="0" max="100000" value="${Number(provider.priority||0)}"></label><label class="field wide">API endpoint<input name="endpoint" type="url" value="${esc(provider.endpoint||'')}" placeholder="HTTPS base URL; loopback is limited to Ollama"></label><label class="field">Credential mode<select name="credential_source">${modes.map(([value,label])=>`<option value="${value}" ${credentialSource===value?'selected':''}>${esc(label)}</option>`).join('')}</select></label><label class="field">Request timeout (seconds)<input name="timeout_seconds" type="number" min="1" max="120" value="${Number(provider.timeout_seconds)||15}"></label><label class="field">Maximum response bytes<input name="max_response_bytes" type="number" min="1024" max="8388608" value="${Number(provider.max_response_bytes)||1048576}"></label><label class="field">Fallback group<input name="fallback_group" value="${esc(provider.fallback_group||'')}" maxlength="64" placeholder="Optional routing group"></label><label class="field wide">API key (encrypted inline)<input name="api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="${provider.configured ? `Configured${provider.key_last4?` · ending ${esc(provider.key_last4)}`:''}; leave blank to keep` : 'Paste the actual key only; no Bearer prefix or $ENV placeholder'}"></label><label class="field wide">Credential reference<input name="credential_ref" value="${esc(credentialSource==='file_ref'?'':provider.credential_ref||'')}" autocomplete="off" spellcheck="false" placeholder="Environment variable name, or managed file path; leave blank to retain this profile reference"></label><label class="field"><input name="enabled" type="checkbox" value="true" ${provider.enabled?'checked':''}> Enable optional AI assistance</label><div class="actions wide"><button class="primary" type="submit">Save provider settings</button><button class="secondary" type="button" data-action="ai-profile-preset">Use selected provider endpoint preset</button></div><details class="wide"><summary>Explicit connection-test options</summary><p class="hint">A test sends a small real request only when clicked. JSON is the default. SSE and an optional public image URL are supported for OpenAI-compatible adapters. Log remediation remains non-streaming. No image is fetched automatically by NLI.</p><label class="field">Probe response<select name="test_mode"><option value="json">JSON completion</option><option value="stream">Streaming SSE completion</option></select></label><label class="field">Probe token budget (16–1024)<input name="test_max_tokens" type="number" min="16" max="1024" value="64"></label><label class="field">Optional public HTTPS image URL<input name="test_image_url" type="url" placeholder="Public HTTPS image, no signed query or credentials"></label></details><div class="actions wide"><button class="secondary" type="button" data-action="test-ai-provider">Test connection</button></div><div id="ai-provider-test-status" class="wide json-output" role="status"></div><div class="actions wide"><button type="button" class="danger" data-action="ai-credential-remove" data-id="${esc(provider.id||'')}" ${profiles.some(item=>item.id===provider.id)?'':'disabled'}>Remove credential</button><button type="button" class="danger" data-action="ai-profile-delete" data-id="${esc(provider.id||'')}" ${profiles.some(item=>item.id===provider.id)?'':'disabled'}>Delete profile</button></div><p class="hint wide">Disabling retains credentials. Remove credential purges this profile’s stored credential history and retains disabled settings; Delete profile also removes its settings. External environment variables, files, backups and provider-issued keys require separate removal or revocation. Already outbound requests cannot be recalled.</p></form>`)}${panel('Connection status · AI feature readiness','Credential presence is separate from a successful live connection test. No secret is resolved in the browser.',`<pre class="json-output">${esc(pretty(capabilities))}</pre>`)}${panel('Connection status','Status is controller authoritative. Secret values, encrypted payloads and managed file paths are never returned.',`<div class="grid cols-4">${card('Configured',provider.configured?'Yes':'No',credentialSource)}${card('Credential',provider.key_last4?`•••• ${provider.key_last4}`:(provider.credential_ref||'Redacted'),'No secret value displayed')}${card('Routing',`Priority ${Number(provider.priority||0)}`,provider.fallback_group||'Default group')}${card('Status',provider.status||'Not tested',provider.last_test_at?time(provider.last_test_at):'Run a bounded connection test')}</div>`)}${panel('Provider templates','Public presets supply endpoint and model guidance only. Select a provider above, then confirm the exact model and credential mode for your account.',table(['Provider','Base URL','Model hint','Default credential'],templateRows,'Provider templates are unavailable.'))}${renderAIProposalQueue(state.aiProposals,null,proposalsResult.status==='rejected'?proposalsResult.reason.message:'')}${panel('Human-reviewed parser workflow','AI suggestions remain drafts. Validate them against the Assurance corpus before publication.',`<p class="muted">Provider access is optional and used last, after deterministic recovery. Clients receive only approved parser/config rollouts; provider credentials and raw secret material remain controller-side.</p>`)}`);
   }
 
   function generateParserHelper(form) {
@@ -2530,6 +2619,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       case 'ai-proposal-create-draft': { const target=state.page==='quarantine-wizard'?'quarantine-wizard':state.page==='ai'?'ai':state.page==='field-mapping'?'field-mapping':'assurance',inGprs=!!button.closest('[data-assurance-panel=gprs]'); const doc=state.aiProposals.find(item=>String(item.id)===String(id)),p=doc?.payload||{};if(!doc||doc.state!=='approved')throw new Error('The AI remediation must be approved first');if(!state.lastAssurance?.request?.raw||state.lastAssurance.result?.raw_sha256!==p.source_hash)throw new Error('Rerun the matching failing sample before creating this parser draft');const result=await api('/assurance/parsers',{method:'POST',body:{name:p.name||`AI remediation ${id}`,version:'0.1.0',parser:p.proposal,cases:[state.lastAssurance.request],source_quarantine_record_id:state.quarantineDiagnosis?.id||''}});notify(`Validated parser draft created · score ${result.validation?.score??'pending'}%. Submit it for independent parser review when ready.`);await navigate(target);if(target==='assurance'&&inGprs)page.querySelector('[data-assurance-tab=gprs]')?.click();break; }
       case 'ai-credential-remove': case 'ai-profile-delete': {const form=page.querySelector('#ai-provider-form'),profileID=button.dataset.id;if(!profileID||form?.elements.id.value!==profileID)throw new Error('Load the exact saved profile before removing it.');const removeCredential=button.dataset.action==='ai-credential-remove';if(!confirm(`${removeCredential?'Remove stored credentials and their metadata history for':'Delete profile and its stored metadata history for'} ${profileID}? This cannot be undone. External keys are not revoked; already outbound requests may finish.`))break;const result=await api(`/admin/ai-provider?${removeCredential?'action=clear-credential&':''}id=${encodeURIComponent(profileID)}`,{method:removeCredential?'POST':'DELETE',body:{}});state.aiSelectedProviderId=removeCredential&&result.profile_retained?profileID:'';notify(`${profileID}: ${removeCredential?'stored credentials removed; profile disabled':'profile deleted'}. External keys were not revoked.`);await navigate('ai');break;}
       case 'ai-profile-load': {state.aiSelectedProviderId=el('ai-profile-choice').value;await navigate('ai');break;}
+      case 'ai-profile-retry': await loadAIProvider();applyPermissions();break;
       case 'ai-profile-new': {page.dataset.dirty='true';const form=page.querySelector('#ai-provider-form');for(const key of ['id','name','model','endpoint','api_key','credential_ref'])form.elements[key].value='';form.elements.enabled.checked=true;form.elements.priority.value='10';form.elements.fallback_group.value='review';form.elements.credential_source.value='env_ref';form.querySelectorAll('[data-action=ai-credential-remove],[data-action=ai-profile-delete]').forEach(item=>item.disabled=true);form.elements.id.focus();toast('Enter a unique profile ID and exact model. Profiles may share a protected controller environment reference.');break;}
       case 'ai-profile-preset': {page.dataset.dirty='true';const form=page.querySelector('#ai-provider-form'),template=state.aiProviderTemplates?.find(item=>item.kind===form.elements.provider.value);if(!template)throw new Error('Provider endpoint preset is unavailable; enter the base URL explicitly.');form.elements.endpoint.value=template.base_url;form.elements.model.placeholder=template.model_hint||'Exact model identifier';toast('Endpoint preset copied. The configured model and credentials were preserved; confirm them before testing.');break;}
       case 'mapping-ai-readiness': {const host=button.closest('[data-ai-mapping-host]');host.querySelector('[data-ai-mapping-status]').textContent=pretty(await api('/ai/capabilities'));break;}
@@ -2541,8 +2631,8 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         const dialog=document.createElement('dialog'),tab=button.dataset.tab||page.querySelector('[role=tab][aria-selected=true]')?.textContent||'';
         dialog.id='workspace-ai-dialog';
         dialog.className='panel';
-        const raw=tab==='Field mapping'||['field-mapping','quarantine-wizard'].includes(state.page)?qrwRaw():'';
-        dialog.innerHTML=`<h3>${button.dataset.mode==='fix'?'Fix with AI':'Ask AI'} · ${esc(tab||TITLES[state.page])}</h3>${workspaceAIForm({mode:button.dataset.mode,tab,raw,defaultArtifact:raw?'mapping':''})}<button type="button" class="secondary" data-action="workspace-ai-close">Close</button>`;
+        const raw=state.page==='building-blocks'?el('block-raw')?.value||'':tab==='Field mapping'||['field-mapping','quarantine-wizard'].includes(state.page)?qrwRaw():'';
+        dialog.innerHTML=`<h3>${button.dataset.mode==='fix'?'Fix with AI':'Ask AI'} · ${esc(tab||TITLES[state.page])}</h3>${workspaceAIForm({mode:button.dataset.mode,tab,raw,defaultArtifact:button.dataset.artifact||(raw?'mapping':'')})}<button type="button" class="secondary" data-action="workspace-ai-close">Close</button>`;
         page.append(dialog);
         dialog.showModal();
         break;
@@ -2575,6 +2665,14 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
           break;
         }
         const service=Array.isArray(parser?.service_scope)?parser.service_scope.join(','):parser?.service_scope;
+        if(state.page==='building-blocks'&&el('block-raw').value===draft.raw){
+          el('block-fields').replaceChildren();
+          plan.fields.forEach(field=>addBuildingBlock(field.method==='constant',null,field));
+          rememberBlockBoard();
+          el('workspace-ai-dialog')?.remove();
+          el('block-status').textContent='AI draft loaded onto the output board. Review the editable cards and verify the result.';
+          break;
+        }
         const insideMapping=page.querySelector('#qrw-field-rows')&&qrwRaw()===draft.raw;
         applyWorkspaceMapping(draft.raw,plan,service);
         if(insideMapping){
@@ -2589,6 +2687,13 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         break;
       }
       case 'block-add': addBuildingBlock(false);break;
+      case 'block-whole': {
+        if(!el('block-raw').value.trim())throw new Error('Paste a raw record first.');
+        addBuildingBlock(false,null,{method:'raw',name:'raw_record',type:'string'});
+        el('block-fields').lastElementChild.querySelector('details').open=true;
+        break;
+      }
+      case 'block-piece': addSourcePiece(Number(button.dataset.index));break;
       case 'block-from-mapping': {
         state.blockSeed=qrwRaw();
         await navigate('building-blocks');
@@ -2596,17 +2701,60 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       }
       case 'block-literal': addBuildingBlock(true);break;
       case 'block-up': {
-        const row=button.closest('.form-grid');
+        const row=button.closest('[data-block-card]');
         if(row.previousElementSibling)row.previousElementSibling.before(row);
+        rememberBlockBoard();
         break;
       }
-      case 'block-remove': button.closest('.form-grid').remove();break;
-      case 'block-reset': el('block-fields').replaceChildren();el('block-raw').value='';break;
+      case 'block-down': {
+        const row=button.closest('[data-block-card]');
+        if(row.nextElementSibling)row.nextElementSibling.after(row);
+        rememberBlockBoard();
+        break;
+      }
+      case 'block-remove': button.closest('[data-block-card]').remove();rememberBlockBoard();break;
+      case 'block-reset': el('block-fields').replaceChildren();el('block-raw').value='';renderBlockSource();rememberBlockBoard();el('block-status').textContent='';break;
+      case 'block-sense': {
+        const input=el('block-raw'),raw=input.value,fields=el('block-fields');
+        if(!raw.trim())throw new Error('Paste a raw record to sense its fields.');
+        const original=fields.children.length?buildingBlockPlan().fields:[];
+        const status=el('block-status');
+        status.textContent='Looking for fields in this sample…';
+        let sensed, fallback=false;
+        try{
+          const result=await nfiAnalysisRequest('/field-mapping/suggest',{samples:[raw],service:'auto'});
+          sensed=result.fields||result.profiles?.[0]?.fields;
+        }catch(error){
+          if(error.name==='AbortError')return;
+          fallback=true;
+        }
+        if(!input.isConnected||input.value!==raw||JSON.stringify(original)!==JSON.stringify(fields.children.length?buildingBlockPlan().fields:[]))return;
+        const existing=new Set(original.map(field=>field.name));
+        const suggestions=(sensed?.length?sensed:qrwSuggestedFields(raw,[])).filter(field=>!existing.has(field.name)).slice(0,128-original.length);
+        suggestions.forEach(field=>addBuildingBlock(field.method==='constant',null,field));
+        status.textContent=`${suggestions.length} editable fields added. ${fallback?'Local fallback used. ':''}Verify output before generating the parser.`;
+        break;
+      }
+      case 'block-preview': {
+        const raw=el('block-raw').value,plan=buildingBlockPlan(),status=el('block-status');
+        status.textContent='Checking this board with the native mapping engine…';
+        try{
+          const result=await nfiAnalysisRequest('/assurance/mapping-preview',{raw,plan});
+          if(!status.isConnected||raw!==el('block-raw').value||JSON.stringify(plan)!==JSON.stringify(buildingBlockPlan()))return;
+          el('block-preview').textContent=pretty(result.actual||{});
+          status.textContent=result.passed?'Native preview passed for this sample.':(result.errors||[]).join(' · ')||'Review the sample and field mappings.';
+        }catch(error){if(status.isConnected)status.textContent=`Preview unavailable. The board is preserved. ${error.message}`;}
+        break;
+      }
+      case 'block-generate':
       case 'block-open': {
         const plan=buildingBlockPlan();
         applyWorkspaceMapping(el('block-raw').value,plan);
+        state.nfiDesired=null;
         await navigate('field-mapping');
-        nfiScheduleLive();
+        if(state.page!=='field-mapping'||!el('qrw-field-rows'))break;
+        if(button.dataset.action==='block-generate')await action({dataset:{action:'qrw-generate-validate'}});
+        else nfiScheduleLive();
         break;
       }
       case 'gprs-reset': {
@@ -2846,7 +2994,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     source.onerror=()=>{if(!state.user)return;state.streamMode='reconnecting';el('stream-state').innerHTML='<i></i>Reconnecting · recovery active';state.streamFailures++;source.close();state.streamSource=null;pollCanonicalSnapshot('event stream interrupted');if(state.streamReconnectTimer)clearTimeout(state.streamReconnectTimer);const delay=Math.min(1000*(2**Math.min(state.streamFailures-1,5)),30000);state.streamReconnectTimer=setTimeout(()=>{state.streamReconnectTimer=null;if(state.user)connectStream();},delay);renderSyncSubscriber({force:true});};
   }
 
-  async function signOut(notify=true){if(state.socket){state.socket.onclose=null;state.socket.close();state.socket=null;}if(state.streamSource){state.streamSource.close();state.streamSource=null;}if(state.streamPollTimer){clearInterval(state.streamPollTimer);state.streamPollTimer=null;}if(state.streamReconnectTimer){clearTimeout(state.streamReconnectTimer);state.streamReconnectTimer=null;}state.sync.pollController?.abort();state.user=null;if(notify){try{await api('/auth/logout',{method:'POST',body:{}});}catch{}}state.csrf='';state.lastAssurance=null;state.quarantineDiagnosis=null;state.gprsManual=null;state.qrwReplayAcceptedIds=[];state.gprsSamples=[];state.gprsPreview=null;state.qrwFields=[];state.nfiRaw='';state.nfiCorpus='';state.nfiService='auto';state.nfiScopePattern='';state.nfiGlobalScope=false;state.nfiEditId='';state.nfiName='';state.nfiVersion='';state.nfiParser=null;state.nfiCases=[];state.nfiProfiles=[];state.nfiDesired=null;state.aiSelectedProviderId='';state.aiProviderTemplates=[];state.nfiMappingPriority=0;state.nfiSenseMode='';state.nfiExpert=false;state.nfiGuideStep=undefined;state.nfiCandidateValidated=null;state.nfiPreviewed=false;clearTimeout(nfiLiveTimer);nfiAnalysisController?.abort();qrwControllerPreview=null;state.controllerNotifications=[];state.notifications=[];renderNotificationBell();sessionStorage.removeItem('nli.qrw.mapping-draft');sessionStorage.removeItem('nli.qrw.selected-record');state.live=[];state.polling=false;state.sync={snapshot:null,history:[],browserAppliedAt:0,browserDelayMs:null,lastReceivedAt:0,pollInFlight:false,pollController:null,pollFailures:0,rejectedUpdates:0,connectionStartedAt:0,resyncing:false,renderedSignature:null,renderScheduled:false};el('login-form').querySelector('[name=password]').value='';el('app-view').hidden=true;el('auth-view').hidden=false;}
+  async function signOut(notify=true){if(state.socket){state.socket.onclose=null;state.socket.close();state.socket=null;}if(state.streamSource){state.streamSource.close();state.streamSource=null;}if(state.streamPollTimer){clearInterval(state.streamPollTimer);state.streamPollTimer=null;}if(state.streamReconnectTimer){clearTimeout(state.streamReconnectTimer);state.streamReconnectTimer=null;}state.sync.pollController?.abort();state.user=null;if(notify){try{await api('/auth/logout',{method:'POST',body:{}});}catch{}}state.csrf='';state.lastAssurance=null;state.quarantineDiagnosis=null;state.gprsManual=null;state.blockBoard=null;state.blockSeed='';state.qrwReplayAcceptedIds=[];state.gprsSamples=[];state.gprsPreview=null;state.qrwFields=[];state.nfiRaw='';state.nfiCorpus='';state.nfiService='auto';state.nfiScopePattern='';state.nfiGlobalScope=false;state.nfiEditId='';state.nfiName='';state.nfiVersion='';state.nfiParser=null;state.nfiCases=[];state.nfiProfiles=[];state.nfiDesired=null;state.aiSelectedProviderId='';state.aiProviderTemplates=[];state.nfiMappingPriority=0;state.nfiSenseMode='';state.nfiExpert=false;state.nfiGuideStep=undefined;state.nfiCandidateValidated=null;state.nfiPreviewed=false;clearTimeout(nfiLiveTimer);nfiAnalysisController?.abort();qrwControllerPreview=null;state.controllerNotifications=[];state.notifications=[];renderNotificationBell();sessionStorage.removeItem('nli.qrw.mapping-draft');sessionStorage.removeItem('nli.qrw.selected-record');state.live=[];state.polling=false;state.sync={snapshot:null,history:[],browserAppliedAt:0,browserDelayMs:null,lastReceivedAt:0,pollInFlight:false,pollController:null,pollFailures:0,rejectedUpdates:0,connectionStartedAt:0,resyncing:false,renderedSignature:null,renderScheduled:false};el('login-form').querySelector('[name=password]').value='';el('app-view').hidden=true;el('auth-view').hidden=false;}
   let browserHeartbeatRetryAt = 0;
   let browserHeartbeatDelay = 5000;
   async function sendBrowserHeartbeat(){

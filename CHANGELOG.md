@@ -1,5 +1,10 @@
 # Changelog
 
+## [22.5.0-0]
+
+- Add an interactive Building Blocks board for assembling and previewing editable field mappings.
+- Keep AI provider settings accessible during catalog failures and reduce repeated failure alerts.
+
 ## [22.4.0-0]
 
 - Add contextual AI guidance and reviewable artifact drafts.

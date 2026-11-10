@@ -70,7 +70,7 @@ func (s *Server) storeAIProviderLocked(ctx context.Context, cfg aiProviderConfig
 		return errors.New("Assurance encryption key is not configured")
 	}
 	cfg = normalizeProvider(cfg)
-	if _, _, err := s.loadAIProviderByID(ctx, cfg.ID); errors.Is(err, os.ErrNotExist) {
+	if _, err := s.metadata.Get(ctx, "ai-provider", cfg.ID, 0); errors.Is(err, os.ErrNotExist) {
 		docs, listErr := s.metadata.List(ctx, "ai-provider", metastore.Query{Limit: 17})
 		if listErr != nil {
 			return listErr
@@ -78,6 +78,8 @@ func (s *Server) storeAIProviderLocked(ctx context.Context, cfg aiProviderConfig
 		if len(docs) >= 16 {
 			return errors.New("AI provider catalog is limited to 16 profiles")
 		}
+	} else if err != nil {
+		return err
 	}
 	if cfg.APIKey == "" {
 		cfg.APIKey = cfg.LegacyAPIKey
@@ -108,15 +110,18 @@ func (s *Server) storeAIProviderLocked(ctx context.Context, cfg aiProviderConfig
 	return err
 }
 func (s *Server) loadAIProviderByID(ctx context.Context, id string) (aiProviderConfig, sealedAIProvider, error) {
-	if s.assurance.providerAEAD == nil {
-		return aiProviderConfig{}, sealedAIProvider{}, errors.New("Assurance encryption key is not configured")
-	}
 	doc, err := s.metadata.Get(ctx, "ai-provider", id, 0)
 	if err != nil {
 		return aiProviderConfig{}, sealedAIProvider{}, err
 	}
+	return s.openAIProvider(doc)
+}
+func (s *Server) openAIProvider(doc metastore.Document) (aiProviderConfig, sealedAIProvider, error) {
+	if s.assurance.providerAEAD == nil {
+		return aiProviderConfig{}, sealedAIProvider{}, errors.New("Assurance encryption key is not configured")
+	}
 	var sealed sealedAIProvider
-	if err = json.Unmarshal(doc.Payload, &sealed); err != nil {
+	if err := json.Unmarshal(doc.Payload, &sealed); err != nil {
 		return aiProviderConfig{}, sealed, err
 	}
 	nonce, err := base64.StdEncoding.DecodeString(sealed.Nonce)
@@ -136,6 +141,9 @@ func (s *Server) loadAIProviderByID(ctx context.Context, id string) (aiProviderC
 		return cfg, sealed, err
 	}
 	cfg = normalizeProvider(cfg)
+	if cfg.ID != doc.ID {
+		return aiProviderConfig{}, sealedAIProvider{}, errors.New("provider profile identity mismatch")
+	}
 	if cfg.LegacyAPIKey != "" {
 		cfg.APIKey = cfg.LegacyAPIKey
 		return cfg, sealed, nil
@@ -281,22 +289,7 @@ func (s *Server) handleAIProvider(w http.ResponseWriter, r *http.Request) {
 		s.publishAIProviderStatus("credential_removed", "", "")
 		jsonOK(w, result)
 	case http.MethodGet:
-		cfg, sealed, err := s.loadAIProvider(r.Context())
-		if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
-			cfg, sealed, err = s.loadAIProviderByID(r.Context(), id)
-		}
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) || s.assurance.providerAEAD == nil {
-				empty := providerCatalogResponse(map[string]any{"provider": "", "model": "", "endpoint": "", "configured": false, "key_last4": "", "enabled": false, "status": "not_configured", "last_test_at": nil, "credential_source": "encrypted_inline"})
-				empty["profiles"] = []any{}
-				empty["capabilities"] = s.aiCapabilities(r.Context())
-				jsonOK(w, empty)
-				return
-			}
-			jsonError(w, "provider store unavailable", 503)
-			return
-		}
-		jsonOK(w, s.aiProviderCatalog(r.Context(), cfg, sealed))
+		jsonOK(w, s.aiProviderCatalog(r.Context(), strings.TrimSpace(r.URL.Query().Get("id"))))
 	case http.MethodPut:
 		aiProviderConfigMu.Lock()
 		defer aiProviderConfigMu.Unlock()
@@ -340,7 +333,8 @@ func (s *Server) handleAIProvider(w http.ResponseWriter, r *http.Request) {
 		if request.Enabled != nil {
 			cfg.Enabled = *request.Enabled
 		}
-		if previous, _, err := s.loadAIProviderByID(r.Context(), cfg.ID); err == nil {
+		previous, _, previousErr := s.loadAIProviderByID(r.Context(), cfg.ID)
+		if previousErr == nil {
 			if request.Headers == nil {
 				cfg.Headers = previous.Headers
 			}
@@ -350,9 +344,7 @@ func (s *Server) handleAIProvider(w http.ResponseWriter, r *http.Request) {
 			if request.MaxResponseBytes == 0 {
 				cfg.MaxResponseBytes = previous.MaxResponseBytes
 			}
-		}
-		if request.Enabled == nil {
-			if previous, _, err := s.loadAIProviderByID(r.Context(), cfg.ID); err == nil {
+			if request.Enabled == nil {
 				cfg.Enabled = previous.Enabled
 			}
 		}
@@ -364,7 +356,7 @@ func (s *Server) handleAIProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if cfg.APIKey == "" && request.CredentialSource == string(aiprovider.CredentialEncryptedInline) {
-			if previous, _, err := s.loadAIProviderByID(r.Context(), cfg.ID); err == nil {
+			if previousErr == nil {
 				if previous.Credential.Source == aiprovider.CredentialEncryptedInline {
 					cfg.Credential = previous.Credential
 				} else if previous.APIKey != "" {
@@ -375,27 +367,21 @@ func (s *Server) handleAIProvider(w http.ResponseWriter, r *http.Request) {
 			}
 		} else if request.CredentialSource == string(aiprovider.CredentialEnvironment) {
 			reference := request.CredentialRef
-			if reference == "" {
-				if previous, _, err := s.loadAIProviderByID(r.Context(), cfg.ID); err == nil && previous.Credential.Source == aiprovider.CredentialEnvironment {
-					reference = previous.Credential.Reference
-				}
+			if reference == "" && previousErr == nil && previous.Credential.Source == aiprovider.CredentialEnvironment {
+				reference = previous.Credential.Reference
 			}
 			cfg.Credential = aiprovider.Credential{Source: aiprovider.CredentialEnvironment, Reference: reference}
 		} else if request.CredentialSource == string(aiprovider.CredentialFile) {
 			reference := request.CredentialRef
-			if reference == "" {
-				if previous, _, err := s.loadAIProviderByID(r.Context(), cfg.ID); err == nil && previous.Credential.Source == aiprovider.CredentialFile {
-					reference = previous.Credential.Reference
-				}
+			if reference == "" && previousErr == nil && previous.Credential.Source == aiprovider.CredentialFile {
+				reference = previous.Credential.Reference
 			}
 			cfg.Credential = aiprovider.Credential{Source: aiprovider.CredentialFile, Reference: reference}
 		} else if request.CredentialSource == string(aiprovider.CredentialNone) {
 			cfg.Credential = aiprovider.Credential{Source: aiprovider.CredentialNone}
 		}
-		if !cfg.Enabled && cfg.APIKey == "" && cfg.Credential == (aiprovider.Credential{}) {
-			if previous, _, err := s.loadAIProviderByID(r.Context(), cfg.ID); err == nil && previous.CredentialRemoved {
-				cfg.CredentialRemoved = true
-			}
+		if !cfg.Enabled && cfg.APIKey == "" && cfg.Credential == (aiprovider.Credential{}) && previousErr == nil && previous.CredentialRemoved {
+			cfg.CredentialRemoved = true
 		}
 		if err := validateProviderWithPolicy(cfg, providerPolicy()); err != nil {
 			jsonError(w, err.Error(), 400)
@@ -407,12 +393,9 @@ func (s *Server) handleAIProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		s.auditAction(p, "ai_provider.configure", "ai-provider/"+cfg.ID, "success", map[string]string{"provider": cfg.Provider, "model": cfg.Model})
 		s.publishAIProviderStatus("configured", cfg.Provider, cfg.Model)
-		stored, sealed, err := s.loadAIProviderByID(r.Context(), cfg.ID)
-		if err != nil {
-			jsonError(w, "provider configuration could not be read after storage", 503)
-			return
-		}
-		jsonOK(w, s.aiProviderCatalog(r.Context(), stored, sealed))
+		result := s.aiProviderCatalog(r.Context(), cfg.ID)
+		result["saved"] = true
+		jsonOK(w, result)
 	default:
 		jsonError(w, "GET or PUT required", 405)
 	}

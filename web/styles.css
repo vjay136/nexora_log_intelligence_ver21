@@ -344,3 +344,54 @@ button[data-qrw-action-step="9"] { outline-color: var(--green); }
 #workspace-ai-dialog::backdrop {
   background: rgb(0 0 0 / 55%);
 }
+.block-board {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 1rem;
+  margin-block: 1rem;
+}
+.block-board > section {
+  padding: 1rem;
+  border: 1px solid currentColor;
+  border-radius: .85rem;
+  min-width: 0;
+}
+.block-board h4 { margin-top: 0; }
+.block-tray {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: .6rem;
+  min-height: 8rem;
+  padding: .75rem;
+  border: 1px dashed currentColor;
+  border-radius: .65rem;
+  transition: background-color .12s;
+}
+.block-drop-ready { background: rgb(48 140 220 / 20%); }
+.block-piece {
+  cursor: grab;
+  min-width: 2.4rem;
+  min-height: 2.4rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  border-radius: .65rem;
+  box-shadow: 0 .2rem 0 rgb(0 0 0 / 25%);
+  font-family: ui-monospace, monospace;
+}
+.block-piece:nth-child(4n+1) { background: #175783; color: white; }
+.block-piece:nth-child(4n+2) { background: #69408e; color: white; }
+.block-piece:nth-child(4n+3) { background: #8a3f26; color: white; }
+.block-piece:nth-child(4n) { background: #186553; color: white; }
+.block-card {
+  flex: 1 1 16rem;
+  min-width: 0;
+  padding: .75rem;
+  border: 1px solid currentColor;
+  border-radius: .65rem;
+}
+.block-card .actions { margin-top: .6rem; }
+.block-value { display: block; overflow-wrap: anywhere; white-space: pre-wrap; }
+@media (max-width: 760px) {
+  .block-board { grid-template-columns: minmax(0, 1fr); }
+}

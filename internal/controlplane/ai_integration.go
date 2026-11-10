@@ -48,32 +48,61 @@ func validateAIParserSyntax(definition map[string]any) error {
 var aiReviewSlots = make(chan struct{}, 2)
 var aiProviderConfigMu sync.Mutex
 
-func (s *Server) loadAIProviders(ctx context.Context) ([]aiProviderConfig, error) {
+type aiProviderSnapshot struct {
+	configs   []aiProviderConfig
+	envelopes map[string]sealedAIProvider
+	blocked   []string
+}
+
+func (s *Server) readAIProviderSnapshot(ctx context.Context) (aiProviderSnapshot, error) {
+	var snapshot aiProviderSnapshot
 	docs, err := s.metadata.List(ctx, "ai-provider", metastore.Query{Limit: 17})
+	if err != nil {
+		return snapshot, err
+	}
+	if len(docs) > 16 {
+		return snapshot, errors.New("AI provider catalog exceeds 16 profiles")
+	}
+	snapshot.configs = make([]aiProviderConfig, 0, len(docs))
+	snapshot.envelopes = make(map[string]sealedAIProvider, len(docs))
+	for _, doc := range docs {
+		cfg, sealed, loadErr := s.openAIProvider(doc)
+		if loadErr != nil {
+			snapshot.blocked = append(snapshot.blocked, doc.ID)
+			continue
+		}
+		snapshot.configs = append(snapshot.configs, cfg)
+		snapshot.envelopes[cfg.ID] = sealed
+	}
+	return snapshot, nil
+}
+
+func (s *Server) loadAIProviders(ctx context.Context) ([]aiProviderConfig, error) {
+	snapshot, err := s.readAIProviderSnapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(docs) > 16 {
-		return nil, errors.New("AI provider catalog exceeds 16 profiles")
-	}
-	configs := make([]aiProviderConfig, 0, len(docs))
-	for _, doc := range docs {
-		cfg, _, loadErr := s.loadAIProviderByID(ctx, doc.ID)
-		if loadErr != nil {
-			continue
-		}
-		configs = append(configs, cfg)
-	}
-	if len(docs) > 0 && len(configs) == 0 {
+	if len(snapshot.blocked) > 0 && len(snapshot.configs) == 0 {
 		return nil, errors.New("AI provider configurations could not be decrypted")
 	}
-	return configs, nil
+	return snapshot.configs, nil
 }
 func (s *Server) loadAIProvider(ctx context.Context) (aiProviderConfig, sealedAIProvider, error) {
-	configs, err := s.loadAIProviders(ctx)
+	snapshot, err := s.readAIProviderSnapshot(ctx)
 	if err != nil {
 		return aiProviderConfig{}, sealedAIProvider{}, err
 	}
+	if len(snapshot.configs) == 0 && len(snapshot.blocked) > 0 {
+		return aiProviderConfig{}, sealedAIProvider{}, errors.New("AI provider configurations could not be decrypted")
+	}
+	cfg, ok := primaryAIProvider(snapshot.configs)
+	if !ok {
+		return aiProviderConfig{}, sealedAIProvider{}, os.ErrNotExist
+	}
+	return cfg, snapshot.envelopes[cfg.ID], nil
+}
+
+func primaryAIProvider(configs []aiProviderConfig) (aiProviderConfig, bool) {
 	profiles := make([]aiprovider.Profile, 0, len(configs))
 	for _, cfg := range configs {
 		profiles = append(profiles, profileFromConfig(cfg))
@@ -81,12 +110,17 @@ func (s *Server) loadAIProvider(ctx context.Context) (aiProviderConfig, sealedAI
 	route := aiprovider.Route(profiles, "")
 	if len(route) == 0 {
 		if len(configs) == 0 {
-			return aiProviderConfig{}, sealedAIProvider{}, os.ErrNotExist
+			return aiProviderConfig{}, false
 		}
 		sort.Slice(configs, func(i, j int) bool { return configs[i].ID < configs[j].ID })
-		return s.loadAIProviderByID(ctx, configs[0].ID)
+		return configs[0], true
 	}
-	return s.loadAIProviderByID(ctx, route[0].ID)
+	for _, cfg := range configs {
+		if cfg.ID == route[0].ID {
+			return cfg, true
+		}
+	}
+	return aiProviderConfig{}, false
 }
 func (s *Server) aiProviderReady(cfg aiProviderConfig) bool {
 	if !cfg.Enabled {
@@ -101,29 +135,54 @@ func (s *Server) aiProviderReady(cfg aiProviderConfig) bool {
 	_, err := (aiprovider.SecretResolver{AEAD: s.assurance.providerAEAD, SecretRoot: providerPolicy().SecretRoot}).Resolve(profileFromConfig(cfg))
 	return err == nil
 }
-func (s *Server) aiProviderCatalog(ctx context.Context, cfg aiProviderConfig, sealed sealedAIProvider) map[string]any {
-	result := providerCatalogResponse(providerResponse(cfg, sealed))
-	profiles := []map[string]any{}
-	configs, err := s.loadAIProviders(ctx)
-	if err != nil {
-		result["profiles_unavailable"] = true
+func (s *Server) aiProviderCatalog(ctx context.Context, selectedID string) map[string]any {
+	snapshot, err := s.readAIProviderSnapshot(ctx)
+	status, message := "available", ""
+	switch {
+	case err != nil:
+		status, message = "unavailable", "Provider metadata could not be read. Retry or check controller metadata storage."
+	case s.assurance.providerAEAD == nil:
+		status, message = "encryption_unavailable", "The controller encryption key is unavailable. Check the controller configuration before saving providers."
+	case len(snapshot.blocked) > 0:
+		status, message = "degraded", "Some saved providers could not be decrypted. Restore the original controller encryption key or re-enter the affected credentials."
 	}
-	for _, item := range configs {
-		_, envelope, loadErr := s.loadAIProviderByID(ctx, item.ID)
-		if loadErr != nil {
-			continue
+	provider := map[string]any{"provider": "", "model": "", "endpoint": "", "configured": false, "key_last4": "", "enabled": false, "status": "not_configured", "last_test_at": nil, "credential_source": "encrypted_inline"}
+	if selectedID == "" {
+		if selected, ok := primaryAIProvider(snapshot.configs); ok {
+			selectedID = selected.ID
 		}
-		view := providerResponse(item, envelope)
-		view["credential_available"] = s.aiProviderReady(item)
-		view["connection_verified"] = envelope.LastTestAt != nil
-		view["timeout_seconds"] = profileFromConfig(item).TimeoutSeconds
-		view["max_response_bytes"] = profileFromConfig(item).MaxResponseBytes
-		profiles = append(profiles, view)
 	}
-	docs, _ := s.metadata.List(ctx, "ai-provider", metastore.Query{Limit: 17})
-	result["blocked_profile_count"] = len(docs) - len(configs)
+	profiles := make([]map[string]any, 0, len(snapshot.configs)+len(snapshot.blocked))
+	enabled, ready := 0, 0
+	for _, item := range snapshot.configs {
+		envelope := snapshot.envelopes[item.ID]
+		view := providerResponse(item, envelope)
+		available := s.aiProviderReady(item)
+		view["credential_available"] = available
+		if item.Enabled {
+			enabled++
+		}
+		if available {
+			ready++
+		}
+		profiles = append(profiles, view)
+		if item.ID == selectedID {
+			provider = view
+		}
+	}
+	for _, id := range snapshot.blocked {
+		view := map[string]any{"id": id, "name": id, "status": "unreadable", "configured": false, "enabled": false, "credential_source": "encrypted_inline", "credential_available": false}
+		profiles = append(profiles, view)
+		if id == selectedID {
+			provider = view
+		}
+	}
+	result := providerCatalogResponse(provider)
+	result["store_status"], result["store_message"] = status, message
+	result["blocked_profile_count"] = len(snapshot.blocked)
+	result["profiles_unavailable"] = err != nil || s.assurance.providerAEAD == nil
 	result["profiles"] = profiles
-	result["capabilities"] = s.aiCapabilities(ctx)
+	result["capabilities"] = s.aiCapabilitiesResponse(len(snapshot.configs), enabled, ready, err != nil || s.assurance.providerAEAD == nil || len(snapshot.blocked) > 0 && len(snapshot.configs) == 0)
 	return result
 }
 func (s *Server) aiCapabilities(ctx context.Context) map[string]any {
@@ -137,8 +196,12 @@ func (s *Server) aiCapabilities(ctx context.Context) map[string]any {
 			ready++
 		}
 	}
+	return s.aiCapabilitiesResponse(len(configs), enabled, ready, err != nil || s.assurance.providerAEAD == nil)
+}
+
+func (s *Server) aiCapabilitiesResponse(configured, enabled, ready int, unavailable bool) map[string]any {
 	status := "not_configured"
-	if err != nil {
+	if unavailable {
 		status = "configuration_unavailable"
 	} else if enabled > 0 {
 		status = "credential_unavailable"
@@ -146,7 +209,7 @@ func (s *Server) aiCapabilities(ctx context.Context) map[string]any {
 			status = "configured_not_connection_verified"
 		}
 	}
-	return map[string]any{"status": status, "configured_profiles": len(configs), "enabled_profiles": enabled, "credential_ready_profiles": ready, "available": ready > 0, "connection_check": "Run an explicit connection test; credential presence is not proof of provider availability.", "features": []map[string]any{{"id": "assurance_failure_remediation", "available": ready > 0, "requires": "Explicit operator action after deterministic Assurance failure"}, {"id": "fieldsense_mapping_help", "available": ready > 0, "requires": "Explicit operator action with a new or quarantined sample. NLI checks the proposed extraction on the exact sample."}, {"id": "workspace_ai", "available": ready > 0, "requires": "Explicit Ask AI or Fix with AI request. Returned proposals remain review-only."}, {"id": "quarantine_repair", "available": ready > 0, "requires": "Retained failing evidence and normal parser review gates"}, {"id": "agent_cluster_discovery", "available": false, "requires": "Separate explicit agent-local AI configuration and environment credentials; controller keys are never distributed to clients"}}, "encryption_ready": s.assurance.providerAEAD != nil, "automatic_activation": false, "live_parsing_dependency": false, "max_parallel_reviews": 2, "max_provider_attempts": 3, "request_deadline_seconds": 17}
+	return map[string]any{"status": status, "configured_profiles": configured, "enabled_profiles": enabled, "credential_ready_profiles": ready, "available": ready > 0, "connection_check": "Run an explicit connection test; credential presence is not proof of provider availability.", "features": []map[string]any{{"id": "assurance_failure_remediation", "available": ready > 0, "requires": "Explicit operator action after deterministic Assurance failure"}, {"id": "fieldsense_mapping_help", "available": ready > 0, "requires": "Explicit operator action with a new or quarantined sample. NLI checks the proposed extraction on the exact sample."}, {"id": "workspace_ai", "available": ready > 0, "requires": "Explicit Ask AI or Fix with AI request. Returned proposals remain review-only."}, {"id": "quarantine_repair", "available": ready > 0, "requires": "Retained failing evidence and normal parser review gates"}, {"id": "agent_cluster_discovery", "available": false, "requires": "Separate explicit agent-local AI configuration and environment credentials; controller keys are never distributed to clients"}}, "encryption_ready": s.assurance.providerAEAD != nil, "automatic_activation": false, "live_parsing_dependency": false, "max_parallel_reviews": 2, "max_provider_attempts": 3, "request_deadline_seconds": 17}
 }
 func (s *Server) handleAICapabilities(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

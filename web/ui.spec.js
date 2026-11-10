@@ -35,6 +35,38 @@ test('contextual Ask AI and visual blocks start from an empty mapping', async ({
   await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveValue('status');
 });
 
+test('Building Blocks adds pieces by drag and keyboard, reorders, and checks exact output',async({page})=>{
+  await mockController(page);
+  let request;
+  await page.route('**/api/v1/assurance/mapping-preview',route=>{
+    request=route.request().postDataJSON();
+    return route.fulfill({json:{passed:true,actual:{separator:'=',status:'failed'}}});
+  });
+  await login(page);
+  await page.getByTestId('nav-building-blocks').click();
+  await page.locator('#block-raw').fill('smtp=failed');
+  const tray=page.locator('#block-fields');
+  await page.locator('#block-source button').filter({hasText:'failed'}).dragTo(tray);
+  await page.locator('#block-source button').filter({hasText:'='}).press('Enter');
+  await expect(tray.locator('[data-block-card]')).toHaveCount(2);
+  await tray.locator('[data-block-name]').nth(0).fill('status');
+  await tray.locator('[data-block-name]').nth(1).fill('separator');
+  await tray.getByRole('button',{name:'Move up'}).last().click();
+  await page.getByRole('button',{name:'Verify output preview'}).click();
+  await expect(page.locator('#block-preview')).toContainText('"status": "failed"');
+  expect(request.plan.fields.map(({name,source,source_end})=>[name,source,source_end])).toEqual([['separator','5','5'],['status','6','11']]);
+});
+
+test('Provider storage failure keeps the provider manager and recovery control visible',async({page})=>{
+  await mockController(page);
+  await page.route('**/api/v1/admin/ai-provider',route=>route.fulfill({status:503,json:{error:'provider store unavailable'}}));
+  await login(page);
+  await page.getByTestId('nav-ai').click();
+  await expect(page.getByRole('heading',{name:'AI connection manager'})).toBeVisible();
+  await expect(page.getByText('Provider storage needs attention.')).toBeVisible();
+  await expect(page.getByRole('button',{name:'Retry loading profiles'})).toBeVisible();
+});
+
 async function mockController(page, { role = 'admin', healthIdentity = 'v21', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [], rolloutSeed = [], rolloutApprovalFailure = null, replayFailure = null, replayPending = false } = {}) {
   const observed = [];
   const cases = [];
