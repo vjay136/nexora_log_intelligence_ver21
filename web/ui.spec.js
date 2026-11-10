@@ -66,13 +66,18 @@ test('Suggest Mappings with AI previews a labeled native fallback before import'
   const raw='smtp status=failed';
   let calls=0;
   await page.route('**/api/v1/ai/workspace',route=>{
+    const request=route.request().postDataJSON();
+    if(request.mode==='ask'){
+      expect(request.question).toContain('fix only field status');
+      return route.fulfill({json:{answer:'Use the key/value method with source key status.'}});
+    }
     calls++;
     expect(route.request().postDataJSON()).toMatchObject({workspace:'field-mapping',mode:'fix',artifact:'mapping',raw,native_fallback:true});
     return route.fulfill({json:{
       answer:'The provider returned an invalid mapping plan. This is a native FieldSense draft.',
       proposal_origin:'native_fallback',
       proposal:{plan:{version:1,fields:[{name:'status',type:'string',method:'key_value',source:'status'}]}},
-      validation:{actual:{status:'failed'},syntax_valid:true,extraction_valid:true},
+      validation:{actual:{status:'failed'},syntax_valid:true,extraction_valid:true,diff:[{field:'status',status:'value',actual:'failed',desired:'ok'}]},
       review_only:true,persisted:false,activated:false,
     }});
   });
@@ -84,6 +89,12 @@ test('Suggest Mappings with AI previews a labeled native fallback before import'
   await expect(draft.getByRole('status')).toContainText('native FieldSense draft');
   await expect(draft.getByRole('status')).toContainText('"status": "failed"');
   await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveCount(0);
+  await expect(draft.getByRole('heading',{name:'Fields that need attention'})).toBeVisible();
+  await draft.getByRole('button',{name:'Ask AI about this field'}).click();
+  const fieldHelp=page.getByRole('dialog');
+  await fieldHelp.getByRole('button',{name:'Get guidance'}).click();
+  await expect(fieldHelp.getByRole('status')).toContainText('source key status');
+  await fieldHelp.getByRole('button',{name:'Close',exact:true}).click();
   page.once('dialog',dialog=>dialog.accept());
   await draft.getByRole('button',{name:'Apply mapping to editor'}).click();
   await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveValue('status');

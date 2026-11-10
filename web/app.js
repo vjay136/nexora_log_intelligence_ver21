@@ -1112,6 +1112,27 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       return {policy:'required',confirmed:true,...source,type:value('type'),name,label:name,output_policy:value('output'),operations};
     }));
   }
+  function renderAIFieldGuidance(form,result){
+    const previous=form.querySelector('[data-ai-field-guidance]');
+    previous?.remove();
+    const differences=result.validation?.diff||[];
+    const fields=result.proposal?.plan?.fields||[];
+    if(!fields.length&&!differences.length)return;
+    const hints={
+      missing:'Check whether this key is present in the raw sample. Add a key/value extractor for a named key, or a source-position selector for an unnamed value.',
+      extra:'Check the expected field name and any aliases. Mark the field Omit only if you do not want this observed value in the output.',
+      type:'Compare the actual and expected types. Keep IDs and values with leading zeros as strings unless you need numeric conversion.',
+      value:'Check the exact source span, delimiter, and ordered operations. For key/value fields, verify the assignment separator, pair separator, and escaping.',
+    };
+    const section=document.createElement('section');
+    section.dataset.aiFieldGuidance='';
+    section.className='wide';
+    section.innerHTML=`${differences.length?'<h4>Fields that need attention</h4>':''}<ul>${differences.slice(0,128).map(item=>{
+      const field=fields.find(candidate=>candidate.name===item.field);
+      return `<li><strong>${esc(item.field)}</strong> · ${esc(item.status)}${field?` · ${esc(field.method)}`:''}<br>${esc(hints[item.status]||'Compare this field with the original evidence.')}<br><code>Actual: ${esc(JSON.stringify(item.actual))} · Expected: ${esc(JSON.stringify(item.desired))}</code> <button type="button" class="secondary small" data-action="workspace-ai-field-help" data-field="${esc(item.field)}">Ask AI about this field</button></li>`;
+    }).join('')}</ul>${fields.length?`<label>Get help with an observed field <select data-ai-observed-field>${Object.keys(result.validation?.actual||{}).slice(0,256).map(name=>`<option value="${esc(name)}">${esc(name)}</option>`).join('')}</select></label> <button type="button" class="secondary small" data-action="workspace-ai-field-help">Ask AI about selected field</button>`:''}`;
+    form.querySelector('[data-workspace-ai-result]').after(section);
+  }
   async function runWorkspaceAI(button){
     const form=button.closest('form');
     if(form.aiAutoSource)form.elements.raw.value=workspaceAISample(form.aiAutoSource);
@@ -1119,6 +1140,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const resultHost=form.querySelector('[data-workspace-ai-result]');
     for(const selector of ['workspace-ai-import','workspace-ai-download'])form.querySelector(`[data-action=${selector}]`).hidden=true;
     delete form.aiResult;
+    form.querySelector('[data-ai-field-guidance]')?.remove();
     const requestID=form.aiRequestID=(form.aiRequestID||0)+1;
     button.disabled=true;
     resultHost.textContent='Contacting the configured provider…';
@@ -1147,6 +1169,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       resultHost.textContent=result.proposal?.plan
         ?[result.answer, 'Exact sample preview', pretty(result.validation?.actual||{}), ...(result.validation?.errors||[])].filter(Boolean).join('\n\n')
         :result.proposal?pretty(result):result.answer||pretty(result);
+      renderAIFieldGuidance(form,result);
       const apply=form.querySelector('[data-action=workspace-ai-import]');
       apply.hidden=!(result.proposal?.plan?.fields?.length||result.proposal?.config);
       apply.textContent=result.proposal?.config?'Open draft in its editor':'Apply mapping to editor';
@@ -2814,6 +2837,32 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       case 'mapping-ai-dismiss': {const host=button.closest('[data-ai-mapping-host]');delete host.aiProposal;host.querySelector('[data-ai-mapping-proposal]').hidden=true;host.querySelector('[data-ai-mapping-status]').textContent='Proposal dismissed. Manual/native mappings remain unchanged.';break;}
       case 'mapping-ai-suggest': {const host=button.closest('[data-ai-mapping-host]'),raw=mappingAIRaw(host),status=host.querySelector('[data-ai-mapping-status]');if(!raw.trim())throw new Error('Paste or inspect exact raw log evidence before requesting AI suggestions.');const capability=await api('/ai/capabilities');status.textContent=pretty(capability);if(!capability.available)throw new Error('AI is unconfigured or unavailable. Configure a controller provider and credential first; no AI suggestion request was sent.');const requestID=(host.aiRequestID||0)+1;host.aiRequestID=requestID;delete host.aiProposal;host.querySelector('[data-ai-mapping-proposal]').hidden=true;const mapping=host.dataset.aiMappingEditor==='true',signature=mapping?JSON.stringify(qrwPlan()):'',service=mapping?qrwScope().service_scope.split(',')[0].trim()||'auto':'auto';status.textContent='Requesting a separate AI proposal. Current manual/native mappings are preserved.';try{const result=await api('/field-mapping/ai-suggest',{method:'POST',body:{raw,service:service==='*'?'auto':service,native_fallback:true,desired:mapping?state.nfiDesired||{}:{},...(mapping&&state.qrwFields.length?{plan:qrwPlan()}:{})}});if(!host.isConnected||host.aiRequestID!==requestID)return;if(mappingAIRaw(host)!==raw){status.textContent='Raw evidence changed; stale AI proposal discarded.';return;}const plan=result.proposal?.plan;if(!plan||!Array.isArray(plan.fields)||result.validation?.syntax_valid!==true||result.validation?.extraction_valid!==true)throw new Error('The controller did not return a syntax-compatible, extractable native mapping proposal.');host.aiProposal={result,raw,signature};host.querySelector('[data-ai-mapping-json]').textContent=pretty(result);host.querySelector('[data-ai-mapping-proposal]').hidden=false;status.textContent=(result.proposal_origin==='native_fallback'?result.answer+' ':'')+'Review-only mapping proposal received. Syntax/extraction were checked; expected-output matching and publication validation remain distinct. Nothing was imported or saved. Review and confirm delimiter and explicit constant interpretations before native verification or saving.';}catch(error){status.textContent=error.message;throw error;}break;}
       case 'mapping-ai-import': {const host=button.closest('[data-ai-mapping-host]'),proposal=host.aiProposal;if(!proposal)throw new Error('Request a current AI mapping proposal first.');if(mappingAIRaw(host)!==proposal.raw)throw new Error('Raw evidence changed. Request a new AI proposal; stale mappings cannot be imported.');const mapping=host.dataset.aiMappingEditor==='true';if(!confirm(mapping?'Replace the editable mapping fields with this reviewed AI proposal? Existing fields will be replaced only in this unsaved editor. Validation and authorized publication are still required.':'Open this proposed mapping in FieldSense? Current authoring form edits are not saved automatically. No active parser will change.'))break;const plan=proposal.result.proposal.plan;if(mapping){el('nfi-plan-import').value=pretty(plan);await action({dataset:{action:'qrw-import-plan'}});nfiScheduleLive();}else{const proposedParser=proposal.result.proposal.parser||{};state.nfiService=Array.isArray(proposedParser.service_scope)?proposedParser.service_scope.join(','):proposedParser.service_scope||'auto';state.nfiScopePattern=proposedParser.scope_pattern||'';state.nfiGlobalScope=proposedParser.reviewed_global_scope===true;state.nfiMappingPriority=Number(proposedParser.mapping_priority)||0;state.nfiRaw=proposal.raw;state.qrwFields=plan.fields.map(field=>qrwField({...field,status:'unresolved',confidence:'ai_proposed',evidence:'AI proposal requires full native validation'}));qrwControllerPreview=null;await navigate('field-mapping');nfiScheduleLive();}delete host.aiProposal;if(host.isConnected){host.querySelector('[data-ai-mapping-proposal]').hidden=true;host.querySelector('[data-ai-mapping-status]').textContent='Proposed fields imported into the unsaved editor. Review delimiter confirmation controls and explicit constants, then verify and validate the complete candidate before review.';}break;}
+      case 'workspace-ai-field-help': {
+        const draft=button.closest('form')?.aiResult;
+        const field=button.dataset.field||button.closest('[data-ai-field-guidance]')?.querySelector('[data-ai-observed-field]')?.value;
+        if(!field||!draft)throw new Error('Build a current draft and select a field first.');
+        const finding=draft.result.validation?.diff?.find(item=>item.field===field);
+        const candidate=draft.result.proposal?.plan?.fields?.find(item=>item.name===field);
+        const question='Explain how to fix only field '+field+
+          (finding?' ('+finding.status+'; expected type '+(finding.desired_type||'not specified')+')':'')+
+          (candidate?'. Current extraction method: '+candidate.method:'')+
+          '. Use the attached current record. Show the exact NLI selector, separators or type settings that fit this field. Preserve all other fields.';
+        const originalDialog=button.closest('dialog');
+        if(originalDialog){
+          const form=originalDialog.querySelector('form');
+          form.elements.question.value=question;
+          form.elements.question.focus();
+          break;
+        }
+        el('workspace-ai-dialog')?.remove();
+        const dialog=document.createElement('dialog');
+        dialog.id='workspace-ai-dialog';dialog.className='panel';
+        dialog.innerHTML=`<h3>Ask AI · ${esc(field)}</h3>${workspaceAIForm({mode:'ask',tab:'Field mapping',raw:draft.raw})}<button type="button" class="secondary" data-action="workspace-ai-close">Close</button>`;
+        page.append(dialog);
+        dialog.querySelector('[name=question]').value=question;
+        dialog.showModal();
+        break;
+      }
       case 'workspace-ai-open': {
         const existing=el('workspace-ai-dialog');existing?.remove();
         const dialog=document.createElement('dialog'),tab=button.dataset.tab||page.querySelector('[role=tab][aria-selected=true]')?.textContent||'';
