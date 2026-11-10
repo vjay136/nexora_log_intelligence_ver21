@@ -58,7 +58,7 @@ test('NFI JSON/CSV suggestions and nested key/value operations retain selectable
 
 test('NFI refuses unsafe integer previews and executable regex work in the browser',()=>{
   const e=engine();assert.match(e.extract(e.field({name:'id',method:'constant',default_value:'9007199254740993',policy:'required',type:'integer'}),'x').error,/exact browser range/);
-  assert.match(e.extract(e.field({name:'regex',method:'regex',source:'(a+)+$',policy:'required'}),'aaaa').error,/controller/);
+  assert.match(e.extract(e.field({name:'regex',method:'regex',source:'(a+)+$',policy:'required'}),'aaaa').evidence,/native RE2 preview/);
   assert.match(e.extract(e.field({name:'ops',method:'constant',default_value:'x',policy:'required',operations:Array.from({length:17},()=>({op:'trim'}))}),'x').error,/16/);
 });
 

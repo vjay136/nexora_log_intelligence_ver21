@@ -17,7 +17,7 @@ const routes = [
   'input-paths', 'migration', 'outputs', 'metadata', 'unknowns', 'performance',
   'kv', 'static', 'projection', 'semantic',
   'engine-network', 'engine-url', 'engine-email', 'engine-subject',
-  'fleet', 'clients', 'controller', 'api-monitor', 'system', 'communications', 'security',
+  'fleet', 'clients', 'controller', 'controller-gateway', 'api-monitor', 'system', 'communications', 'security',
 ];
 
 const innerTabs = {
@@ -49,7 +49,7 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-test('Ver22.6 declares the complete ordered 50-workspace contract', () => {
+test('Controller management includes the ordered gateway workspace', () => {
   const nav = app.slice(app.indexOf('const NAV = ['), app.indexOf('const TITLES'));
   const actual = [...nav.matchAll(/\[\s*'[^']+'\s*,\s*'([^']+)'/g)].map((match) => match[1]);
   assert.deepEqual(actual, routes);

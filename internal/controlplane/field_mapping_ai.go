@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -108,7 +110,12 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 	}
 	started := time.Now()
 	success := false
-	defer func() { s.aiMetrics.record(success, time.Since(started)) }()
+	status := "rejected"
+	defer func() {
+		elapsed := time.Since(started)
+		s.aiMetrics.record(success, elapsed)
+		slog.Info("NLI AI mapping outcome", "outcome", status, "duration_ms", elapsed.Milliseconds())
+	}()
 	system := mappingAISystemPrompt()
 	if len(seed.Fields) > 0 {
 		if len(input.Desired) == 0 && strings.TrimSpace(input.Instructions) == "" {
@@ -126,6 +133,7 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 	var result fieldmapping.Result
 	if err != nil {
 		if len(seed.Fields) == 0 || r.Context().Err() != nil {
+			status = "provider_unavailable"
 			writeAIWorkspaceFailure(w, err, attempts)
 			return
 		}
@@ -134,6 +142,7 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 		plan, err = decodeAISeedOrMapping(aiReplyJSON(text), seed)
 		if err != nil {
 			if len(seed.Fields) == 0 {
+				status = "invalid_provider_plan"
 				mappingAIInvalid(w, "AI returned an invalid native mapping plan", false, false, rawHash, err)
 				return
 			}
@@ -142,6 +151,7 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 			result, err = validateAIMappingExtraction(ctx, plan, input.Raw)
 			if err != nil {
 				if len(seed.Fields) == 0 {
+					status = "native_extraction_failed"
 					mappingAIInvalid(w, "AI mapping could not extract this exact source record", true, false, rawHash, err)
 					return
 				}
@@ -176,6 +186,7 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 		parser, err = canonicalAIMappingParser(plan, request, rawHash)
 	}
 	if err != nil {
+		status = "candidate_schema_failed"
 		mappingAIInvalid(w, "Mapping is incompatible with the native candidate schema", true, true, rawHash, err)
 		return
 	}
@@ -194,6 +205,10 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 		errors = append(errors, "Proposed extraction differs from the requested JSON; inspect and repair it before candidate validation")
 	}
 	success = origin == "ai"
+	status = origin
+	if desiredMatch == false {
+		status += "_desired_mismatch"
+	}
 	answer := "NLI ran the AI mapping against your exact sample. Review the extracted values and field names before adding the draft."
 	if origin == "native_fallback" {
 		answer = fallbackReason + " This is a native FieldSense draft tested on your exact sample. AI preferences may not have been applied. Review it before importing."
@@ -232,13 +247,13 @@ func retainsNativeMappingValues(native, proposed map[string]any) bool {
 
 func decodeAISeedOrMapping(data []byte, seed fieldmapping.Plan) (fieldmapping.Plan, error) {
 	if len(seed.Fields) == 0 {
-		return decodeAIMappingPlan(data)
+		return decodeProviderMappingPlan(data)
 	}
 	var edits struct {
 		Renames map[string]string `json:"renames"`
 	}
 	if strictJSON(data, &edits) != nil || edits.Renames == nil {
-		return decodeAIMappingPlan(data)
+		return decodeProviderMappingPlan(data)
 	}
 	if len(edits.Renames) > len(seed.Fields) {
 		return fieldmapping.Plan{}, errors.New("too many seed renames")
@@ -291,6 +306,57 @@ func mappingAIInvalid(w http.ResponseWriter, message string, syntax, extraction 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(422)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": message, "errors": []string{detail}, "validation": map[string]any{"syntax_valid": syntax, "extraction_valid": extraction, "publication_validated": false, "ready_for_publish": false}, "raw_sha256": hash, "review_only": true, "persisted": false, "activated": false})
+}
+
+// Providers sometimes emit an integer for a selector that the native plan
+// represents as a string. Normalize only positional selectors before decoding
+// the provider reply. Manual and persisted plans retain the strict schema.
+func decodeProviderMappingPlan(data []byte) (fieldmapping.Plan, error) {
+	var root map[string]any
+	if len(data) == 0 || len(data) > 256<<10 || !json.Valid(data) {
+		return decodeAIMappingPlan(data)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&root); err != nil {
+		return decodeAIMappingPlan(data)
+	}
+	plan := root
+	if wrapped, ok := root["plan"]; ok {
+		plan, _ = wrapped.(map[string]any)
+	}
+	fields, _ := plan["fields"].([]any)
+	changed := false
+	normalize := func(field map[string]any, key string) {
+		if n, ok := field[key].(json.Number); ok {
+			if index, err := strconv.Atoi(string(n)); err == nil && index >= 0 {
+				field[key] = string(n)
+				changed = true
+			}
+		}
+	}
+	for _, entry := range fields {
+		field, _ := entry.(map[string]any)
+		switch field["method"] {
+		case "position", "character", "byte", "line", "word", "token", "delimiter", "kv_all", "kv_eol":
+			normalize(field, "source")
+			normalize(field, "source_end")
+		}
+		switch field["method"] {
+		case "delimiter", "regex", "regex_all":
+			normalize(field, "part")
+		case "key_value":
+			normalize(field, "kv_start")
+		}
+	}
+	if !changed {
+		return decodeAIMappingPlan(data)
+	}
+	normalized, err := json.Marshal(root)
+	if err != nil {
+		return fieldmapping.Plan{}, err
+	}
+	return decodeAIMappingPlan(normalized)
 }
 
 func decodeAIMappingPlan(data []byte) (fieldmapping.Plan, error) {

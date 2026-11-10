@@ -185,6 +185,33 @@ test('Suggest Mappings with AI previews a labeled native fallback before import'
   expect(calls).toBe(1);
 });
 
+test('Auto Fix applies a verified AI draft and previews regex and unconfirmed delimiter fields in place', async ({page})=>{
+  await mockController(page);
+  const raw='Note;Delivery(2001/4)',actual={event:'Delivery(2001/4)',event_code:'2001/4'};
+  const fields=[
+    {name:'event',type:'string',policy:'required',method:'delimiter',source:'1',delimiter:';',part:'2',confirmed:false},
+    {name:'event_code',type:'string',policy:'required',method:'regex',source:'Delivery\\(([^)]+)\\)',part:'1'},
+  ];
+  await page.route('**/api/v1/ai/workspace',route=>{
+    expect(route.request().postDataJSON()).toMatchObject({raw,native_fallback:true,desired:{}});
+    return route.fulfill({json:{proposal_origin:'ai',proposal:{plan:{version:1,fields}},validation:{extraction_valid:true,actual}}});
+  });
+  await page.route('**/api/v1/assurance/mapping-preview',route=>{
+    const body=route.request().postDataJSON();
+    expect(body.raw).toBe(raw);
+    expect(body.plan.fields[0].confirmed).toBe(true);
+    return route.fulfill({json:{passed:true,actual}});
+  });
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  await page.locator('#nfi-raw').fill(raw);
+  await page.locator('.qrw-field-editor').getByRole('button',{name:'Auto Fix with AI',exact:true}).click();
+  await expect(page.locator('[data-qrw-key=name]')).toHaveCount(2);
+  await expect(page.locator('[data-qrw-key=confirmed]')).not.toBeChecked();
+  await expect(page.locator('#nfi-live-json')).toContainText('2001/4');
+  await expect(page.locator('#nfi-live-state')).toContainText('Confirm the highlighted delimiter');
+});
+
 test('Building Blocks adds pieces by drag and keyboard, reorders, and checks exact output',async({page})=>{
   await mockController(page);
   let request;
@@ -470,6 +497,28 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
   });
   return { observed, uploads, assuranceRequests, assuranceCorpora, assurancePlans, assuranceRuns, outputSaves, inputSaves, outputProfiles, inputProfiles, inputRolloutSaves, rolloutSaves, rolloutProposals, rolloutApprovalRequests, historyQueries, users, auditEvents, notificationPolicySaves, notificationActions, qrwParserActions, qrwReplays, qrwSyncVerifications, qrwRolloutRequests, qrwRecords:currentQRWRecords, qrwHistory:currentQRWHistory };
 }
+
+test('Controller Gateway separates reachable controller from AI probe failure and refreshes diagnostics', async ({page}) => {
+  await mockController(page);
+  let ready = false;
+  await page.route('**/api/v1/ai/capabilities', route => ready
+    ? route.fulfill({json:{status:'configured_not_connection_verified', enabled_profiles:2,
+      credential_ready_profiles:1, default_profile_id:'primary', connection_check:'Test the exact profile.'}})
+    : route.fulfill({status:503, json:{error:'Provider store unavailable'}}));
+  await page.route('**/api/v1/admin/ai-usage', route => route.fulfill({json:{requests:4, successes:3, failures:1, latency_ms_avg:200}}));
+  await login(page);
+  await page.getByTestId('nav-controller-gateway').click();
+  const gateway = page.locator('#page');
+  await expect(gateway.getByRole('heading', {name:'Controller Gateway'})).toBeVisible();
+  await expect(gateway.getByText('AI capabilities probe failed')).toBeVisible();
+  await expect(gateway.getByRole('row').filter({hasText:'GET /ai/capabilities'})).toContainText('503');
+  await expect(gateway.getByRole('row').filter({hasText:'GET /health'}).first()).toContainText('HTTP success');
+  ready = true;
+  await gateway.getByRole('button', {name:'Refresh gateway status'}).click();
+  await expect(gateway.getByText('Ready for a connection test')).toBeVisible();
+  await expect(gateway.getByText('Pinned profile')).toBeVisible();
+  await expect(gateway.getByText('sudo systemctl restart nli-controller-agent', {exact:false})).toBeVisible();
+});
 
 async function login(page) {
   await page.goto(origin);
@@ -956,6 +1005,7 @@ test('Quarantine inbox groups only controller-verified signatures and isolates u
 test('Quarantine Resolution Wizard maps the required unstructured fixture without fabricating delimiter values and saves a governed candidate', async ({ page }) => {
   const raw='20250812 130035122+0100 aaa-gmailrgo009 mail 3609 0 140293768701696 Note;systemlogs_for_data';
   const mock=await mockController(page,{quarantineRaw:raw,assurancePassed:true});
+  await page.route('**/api/v1/assurance/mapping-preview',route=>route.fulfill({json:{passed:true,actual:{date:'20250812',time:'130035122+0100',hostname:'aaa-gmailrgo009',service:'mail',pid:3609,status:0,minor_pid:140293768701696,event_type:'Note',event_name:'systemlogs_for_data'}}}));
   await login(page);
   await page.getByTestId('nav-quarantine-wizard').click();
   await expect(page.locator('#page').getByRole('heading',{name:'Quarantine Resolution Wizard',exact:true})).toBeVisible();
@@ -974,7 +1024,7 @@ test('Quarantine Resolution Wizard maps the required unstructured fixture withou
   const editor=page.locator('#gprs-parser-helper-form');
   const initialParser=await editor.locator('[name=parser]').inputValue();
   await page.getByRole('button',{name:'Test all fields'}).click();
-  await expect(page.locator('#qrw-field-status')).toContainText('2 field mapping error');
+  await expect(page.locator('#nfi-live-state')).toContainText('Confirm the highlighted delimiter');
   await expect(page.locator('[data-wizard-step="5"] button')).toBeDisabled();
   await expect(editor.locator('[name=parser]')).toHaveValue(initialParser);
   const confirmations=page.getByLabel('Confirm delimiter interpretation');

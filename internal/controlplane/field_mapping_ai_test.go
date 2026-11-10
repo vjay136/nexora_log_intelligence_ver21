@@ -17,7 +17,7 @@ import (
 	metastore "nexora.local/nli-v20/internal/store"
 )
 
-func mappingAIProviderFixture(t *testing.T, f *apiFixture, reply string, inspect func(map[string]any)) *atomic.Int32 {
+func mappingAIProviderFixture(t *testing.T, f *apiFixture, reply string, inspect func(map[string]any), status ...int) *atomic.Int32 {
 	t.Helper()
 	t.Setenv("NLI_AI_ALLOW_LOOPBACK", "true")
 	calls := new(atomic.Int32)
@@ -31,6 +31,9 @@ func mappingAIProviderFixture(t *testing.T, f *apiFixture, reply string, inspect
 			inspect(request)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if len(status) > 0 {
+			w.WriteHeader(status[0])
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": reply}, "finish_reason": "stop"}}})
 	}))
 	t.Cleanup(provider.Close)
@@ -264,5 +267,59 @@ func TestFieldMappingAISeedFallbackOnInvalidProviderReply(t *testing.T) {
 				t.Fatalf("incorrect proposal: %s", body)
 			}
 		})
+	}
+}
+
+func TestFieldMappingAIProviderNumericSelectorsUseExactNativePreview(t *testing.T) {
+	f := newAPIFixture(t)
+	const raw = "node Note;Delivery(2001/4)"
+	const reply = `{"plan":{"version":1,"fields":[{"name":"node","method":"position","source":1,"source_end":1},{"name":"level","method":"delimiter","source":2,"delimiter":";","part":1},{"name":"event_code","method":"regex","source":"[(]([^)]*)[)]","part":1}]}}`
+	calls := mappingAIProviderFixture(t, f, reply, nil)
+	response, body := f.request(http.MethodPost, "/api/v1/field-mapping/ai-suggest", map[string]any{
+		"raw": raw, "desired": map[string]any{"node": "node", "level": "Note", "event_code": "2001/4"},
+	})
+	if response.StatusCode != http.StatusOK || calls.Load() != 1 {
+		t.Fatalf("provider numeric selectors failed: %d %s", response.StatusCode, body)
+	}
+	result := decodeMap(t, body)
+	validation := result["validation"].(map[string]any)
+	if result["proposal_origin"] != "ai" || validation["desired_match"] != true || validation["publication_validated"] != false {
+		t.Fatalf("unexpected native validation: %s", body)
+	}
+	if _, err := decodeAIMappingPlan([]byte(reply)); err == nil {
+		t.Fatal("stored mapping plans must still use the native selector types")
+	}
+}
+
+func TestFieldMappingAINumericCoercionRejectsInvalidTypesAndUnknownFields(t *testing.T) {
+	for _, field := range []string{
+		`{"name":"event","method":"regex","source":123,"part":1}`,
+		`{"name":"event","method":"regex","source":"(x)","part":1.5}`,
+		`{"name":"event","method":"regex","source":"(x)","part":true}`,
+		`{"name":"event","method":"position","source":1,"unknown":true}`,
+	} {
+		input := []byte(`{"version":1,"fields":[` + field + `]}`)
+		if _, err := decodeAISeedOrMapping(input, fieldmapping.Plan{}); err == nil {
+			t.Errorf("accepted malformed provider field %s", field)
+		}
+	}
+}
+
+func TestFieldMappingAIProviderFailureKeepsVerifiedNativePreview(t *testing.T) {
+	f := newAPIFixture(t)
+	const raw = "20250811 080053105+0100 mail.example.test smtp 3692 0 140026854221568 Note;SieveRuleMsg |status:failed|reason:notneeded|server:cloud"
+	calls := mappingAIProviderFixture(t, f, "", nil, http.StatusServiceUnavailable)
+	response, body := f.request(http.MethodPost, "/api/v1/field-mapping/ai-suggest", map[string]any{
+		"raw": raw, "service": "smtp", "native_fallback": true,
+	})
+	if response.StatusCode != http.StatusOK || calls.Load() != 1 {
+		t.Fatalf("provider failure did not return native fallback: %d %s", response.StatusCode, body)
+	}
+	result := decodeMap(t, body)
+	validation := result["validation"].(map[string]any)
+	actual := validation["actual"].(map[string]any)
+	if result["proposal_origin"] != "native_fallback" || validation["extraction_valid"] != true ||
+		actual["status"] != "failed" || actual["reason"] != "notneeded" || actual["server"] != "cloud" {
+		t.Fatalf("unverified or mislabeled fallback: %s", body)
 	}
 }
