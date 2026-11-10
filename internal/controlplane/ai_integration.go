@@ -88,6 +88,22 @@ func (s *Server) loadAIProviders(ctx context.Context) ([]aiProviderConfig, error
 	return snapshot.configs, nil
 }
 func (s *Server) loadAIProvider(ctx context.Context) (aiProviderConfig, sealedAIProvider, error) {
+	id, err := s.aiProviderDefaultID(ctx)
+	if err != nil {
+		return aiProviderConfig{}, sealedAIProvider{}, err
+	}
+	if id == "" {
+		return s.loadAutomaticAIProvider(ctx)
+	}
+	cfg, sealed, err := s.loadAIProviderByID(ctx, id)
+	if err != nil || !cfg.Enabled {
+		return aiProviderConfig{}, sealedAIProvider{}, errors.New("default AI provider profile is unavailable")
+	}
+	cfg.Exclusive = true
+	return cfg, sealed, nil
+}
+
+func (s *Server) loadAutomaticAIProvider(ctx context.Context) (aiProviderConfig, sealedAIProvider, error) {
 	snapshot, err := s.readAIProviderSnapshot(ctx)
 	if err != nil {
 		return aiProviderConfig{}, sealedAIProvider{}, err
@@ -137,6 +153,7 @@ func (s *Server) aiProviderReady(cfg aiProviderConfig) bool {
 }
 func (s *Server) aiProviderCatalog(ctx context.Context, selectedID string) map[string]any {
 	snapshot, err := s.readAIProviderSnapshot(ctx)
+	defaultID, routingErr := s.aiProviderDefaultID(ctx)
 	status, message := "available", ""
 	switch {
 	case err != nil:
@@ -146,9 +163,13 @@ func (s *Server) aiProviderCatalog(ctx context.Context, selectedID string) map[s
 	case len(snapshot.blocked) > 0:
 		status, message = "degraded", "Some saved providers could not be decrypted. Restore the original controller encryption key or re-enter the affected credentials."
 	}
+	if routingErr != nil && status == "available" {
+		status, message = "unavailable", "Default provider routing could not be read. Retry or check controller metadata storage."
+	}
 	provider := map[string]any{"provider": "", "model": "", "endpoint": "", "configured": false, "key_last4": "", "enabled": false, "status": "not_configured", "last_test_at": nil, "credential_source": "encrypted_inline"}
 	if selectedID == "" {
-		if selected, ok := primaryAIProvider(snapshot.configs); ok {
+		selectedID = defaultID
+		if selected, ok := primaryAIProvider(snapshot.configs); ok && selectedID == "" {
 			selectedID = selected.ID
 		}
 	}
@@ -162,7 +183,7 @@ func (s *Server) aiProviderCatalog(ctx context.Context, selectedID string) map[s
 		if item.Enabled {
 			enabled++
 		}
-		if available {
+		if available && (defaultID == "" || defaultID == item.ID) {
 			ready++
 		}
 		profiles = append(profiles, view)
@@ -179,37 +200,46 @@ func (s *Server) aiProviderCatalog(ctx context.Context, selectedID string) map[s
 	}
 	result := providerCatalogResponse(provider)
 	result["store_status"], result["store_message"] = status, message
+	result["default_profile_id"] = defaultID
 	result["blocked_profile_count"] = len(snapshot.blocked)
 	result["profiles_unavailable"] = err != nil || s.assurance.providerAEAD == nil
 	result["profiles"] = profiles
-	result["capabilities"] = s.aiCapabilitiesResponse(len(snapshot.configs), enabled, ready, err != nil || s.assurance.providerAEAD == nil || len(snapshot.blocked) > 0 && len(snapshot.configs) == 0)
+	result["capabilities"] = s.aiCapabilitiesResponse(len(snapshot.configs), enabled, ready, defaultID, err != nil || routingErr != nil || s.assurance.providerAEAD == nil || len(snapshot.blocked) > 0 && len(snapshot.configs) == 0)
 	return result
 }
 func (s *Server) aiCapabilities(ctx context.Context) map[string]any {
 	configs, err := s.loadAIProviders(ctx)
+	defaultID, routingErr := s.aiProviderDefaultID(ctx)
 	enabled, ready := 0, 0
 	for _, cfg := range configs {
 		if cfg.Enabled {
 			enabled++
 		}
-		if s.aiProviderReady(cfg) {
+		if (defaultID == "" || cfg.ID == defaultID) && s.aiProviderReady(cfg) {
 			ready++
 		}
 	}
-	return s.aiCapabilitiesResponse(len(configs), enabled, ready, err != nil || s.assurance.providerAEAD == nil)
+	return s.aiCapabilitiesResponse(len(configs), enabled, ready, defaultID, err != nil || routingErr != nil || s.assurance.providerAEAD == nil)
 }
 
-func (s *Server) aiCapabilitiesResponse(configured, enabled, ready int, unavailable bool) map[string]any {
+func (s *Server) aiCapabilitiesResponse(configured, enabled, ready int, defaultID string, unavailable bool) map[string]any {
 	status := "not_configured"
 	if unavailable {
 		status = "configuration_unavailable"
+		ready = 0
+	} else if defaultID != "" && ready == 0 {
+		status = "default_unavailable"
 	} else if enabled > 0 {
 		status = "credential_unavailable"
 		if ready > 0 {
 			status = "configured_not_connection_verified"
 		}
 	}
-	return map[string]any{"status": status, "configured_profiles": configured, "enabled_profiles": enabled, "credential_ready_profiles": ready, "available": ready > 0, "connection_check": "Run an explicit connection test; credential presence is not proof of provider availability.", "features": []map[string]any{{"id": "assurance_failure_remediation", "available": ready > 0, "requires": "Explicit operator action after deterministic Assurance failure"}, {"id": "fieldsense_mapping_help", "available": ready > 0, "requires": "Explicit operator action with a new or quarantined sample. NLI checks the proposed extraction on the exact sample."}, {"id": "workspace_ai", "available": ready > 0, "requires": "Explicit Ask AI or Fix with AI request. Returned proposals remain review-only."}, {"id": "quarantine_repair", "available": ready > 0, "requires": "Retained failing evidence and normal parser review gates"}, {"id": "agent_cluster_discovery", "available": false, "requires": "Separate explicit agent-local AI configuration and environment credentials; controller keys are never distributed to clients"}}, "encryption_ready": s.assurance.providerAEAD != nil, "automatic_activation": false, "live_parsing_dependency": false, "max_parallel_reviews": 2, "max_provider_attempts": 3, "request_deadline_seconds": 17}
+	maxAttempts := 3
+	if defaultID != "" {
+		maxAttempts = 1
+	}
+	return map[string]any{"status": status, "default_profile_id": defaultID, "configured_profiles": configured, "enabled_profiles": enabled, "credential_ready_profiles": ready, "available": ready > 0, "connection_check": "Run an explicit connection test; credential presence is not proof of provider availability.", "features": []map[string]any{{"id": "assurance_failure_remediation", "available": ready > 0, "requires": "Explicit operator action after deterministic Assurance failure"}, {"id": "fieldsense_mapping_help", "available": ready > 0, "requires": "Explicit operator action with a new or quarantined sample. NLI checks the proposed extraction on the exact sample."}, {"id": "workspace_ai", "available": ready > 0, "requires": "Explicit Ask AI or Fix with AI request. Returned proposals remain review-only."}, {"id": "quarantine_repair", "available": ready > 0, "requires": "Retained failing evidence and normal parser review gates"}, {"id": "agent_cluster_discovery", "available": false, "requires": "Separate explicit agent-local AI configuration and environment credentials; controller keys are never distributed to clients"}}, "encryption_ready": s.assurance.providerAEAD != nil, "automatic_activation": false, "live_parsing_dependency": false, "max_parallel_reviews": 2, "max_provider_attempts": maxAttempts, "request_deadline_seconds": 17}
 }
 func (s *Server) handleAICapabilities(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -219,20 +249,20 @@ func (s *Server) handleAICapabilities(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, s.aiCapabilities(r.Context()))
 }
 func (s *Server) callConfiguredAI(ctx context.Context, primary aiProviderConfig, prompt string) (string, string, int, error) {
-	configs, err := s.loadAIProviders(ctx)
+	configs, err := s.aiProviderRouteConfigs(ctx, primary)
 	if err != nil {
 		return "", "", 0, err
 	}
 	profiles := make([]aiprovider.Profile, 0, len(configs))
 	byID := map[string]aiProviderConfig{}
 	for _, cfg := range configs {
-		if cfg.FallbackGroup != primary.FallbackGroup {
+		if !primary.Exclusive && cfg.FallbackGroup != primary.FallbackGroup {
 			continue
 		}
 		profiles = append(profiles, profileFromConfig(cfg))
 		byID[cfg.ID] = cfg
 	}
-	route := aiprovider.Route(profiles, primary.FallbackGroup)
+	route := aiprovider.Route(profiles, "")
 	attempts := 0
 	for _, profile := range route {
 		if attempts >= 3 || ctx.Err() != nil {

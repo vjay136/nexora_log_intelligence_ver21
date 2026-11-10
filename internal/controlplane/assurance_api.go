@@ -40,6 +40,7 @@ type aiProviderConfig struct {
 	TimeoutSeconds    int                   `json:"timeout_seconds,omitempty"`
 	MaxResponseBytes  int64                 `json:"max_response_bytes,omitempty"`
 	CredentialRemoved bool                  `json:"credential_removed,omitempty"`
+	Exclusive         bool                  `json:"-"`
 }
 type sealedAIProvider struct {
 	Nonce        string     `json:"nonce"`
@@ -266,13 +267,18 @@ func (s *Server) handleAIProvider(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodDelete, http.MethodPost:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		actionName := r.URL.Query().Get("action")
+		if r.Method == http.MethodPost && (actionName == "set-default" || actionName == "clear-default") {
+			s.handleAIProviderDefault(w, r, p, actionName, id)
+			return
+		}
 		if !validAIProfileRemovalID(id) {
 			jsonError(w, "An exact valid profile id is required", 400)
 			return
 		}
 		clear := r.Method == http.MethodPost
-		if clear && r.URL.Query().Get("action") != "clear-credential" {
-			jsonError(w, "Supported POST action is clear-credential", 405)
+		if clear && actionName != "clear-credential" {
+			jsonError(w, "Supported POST actions are clear-credential, set-default and clear-default", 405)
 			return
 		}
 		result, err := s.removeAIProviderCredential(r.Context(), id, p.Username, clear)
@@ -452,9 +458,12 @@ func (s *Server) handleAIProviderTest(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid provider test request", 400)
 		return
 	}
-	cfg, _, loadErr := s.loadAIProvider(r.Context())
+	var cfg aiProviderConfig
+	var loadErr error
 	if input.ID != "" {
 		cfg, _, loadErr = s.loadAIProviderByID(r.Context(), input.ID)
+	} else {
+		cfg, _, loadErr = s.loadAutomaticAIProvider(r.Context())
 	}
 	if loadErr != nil {
 		cfg = aiProviderConfig{Enabled: true}

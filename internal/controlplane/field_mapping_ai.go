@@ -297,14 +297,14 @@ func containsMappingString(values []string, value string) bool {
 // The default Assurance remediation prompt remains unchanged. This variant
 // reuses only the configured provider group, credentials and bounded fallback.
 func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProviderConfig, prompt, system string) (string, string, int, error) {
-	configs, err := s.loadAIProviders(ctx)
+	configs, err := s.aiProviderRouteConfigs(ctx, primary)
 	if err != nil {
 		return "", "", 0, err
 	}
 	profiles := []aiprovider.Profile{}
 	byID := map[string]aiProviderConfig{}
 	for _, cfg := range configs {
-		if cfg.FallbackGroup != primary.FallbackGroup {
+		if !primary.Exclusive && cfg.FallbackGroup != primary.FallbackGroup {
 			continue
 		}
 		profile := profileFromConfig(cfg)
@@ -316,7 +316,7 @@ func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProvi
 	}
 	attempts := 0
 	var lastErr error
-	for _, profile := range aiprovider.Route(profiles, primary.FallbackGroup) {
+	for _, profile := range aiprovider.Route(profiles, "") {
 		if attempts >= 3 || ctx.Err() != nil {
 			break
 		}
