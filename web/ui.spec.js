@@ -273,7 +273,15 @@ test('Building Blocks adds pieces by drag and keyboard, reorders, and checks exa
   await page.getByTestId('nav-building-blocks').click();
   await page.locator('#block-raw').fill('smtp=failed');
   const tray=page.locator('#block-fields');
-  await page.locator('#block-source button').filter({hasText:'failed'}).dragTo(tray);
+  await page.locator('#block-source button').filter({hasText:'failed'}).hover();
+  await page.mouse.down();
+  try {
+    // Chromium may need a second move inside the tray to deliver dragover.
+    await tray.hover({position:{x:12,y:12}});
+    await tray.hover({position:{x:14,y:14}});
+  } finally {
+    await page.mouse.up();
+  }
   await page.locator('#block-source button').filter({hasText:'='}).press('Enter');
   await expect(tray.locator('[data-block-card]')).toHaveCount(2);
   await tray.locator('[data-block-name]').nth(0).fill('status');
