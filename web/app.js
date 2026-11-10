@@ -3375,7 +3375,15 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     form.querySelector('[data-workspace-ai-result]').textContent='';
     for(const button of form.querySelectorAll('[data-action=workspace-ai-import],[data-action=workspace-ai-download]'))button.hidden=true;
   });
-  page.addEventListener('click',async event=>{const button=event.target.closest('[data-action]');if(!button)return;button.disabled=true;try{await action(button);}catch(error){toast(error.message,true);}finally{button.disabled=false;if(['qrw-token-field','qrw-selection-field','qrw-add-field','qrw-field-duplicate','qrw-field-delete','qrw-field-up','qrw-field-down','qrw-operation-add','qrw-operation-delete','qrw-operation-up','qrw-suggest-fields','qrw-import-plan'].includes(button.dataset.action))nfiScheduleLive();queueMicrotask(nfiDecorate);}});
+  const AI_REQUEST_ACTIONS=new Set(['workspace-ai-run','workspace-ai-auto','mapping-ai-suggest','mapping-ai-readiness','nfi-ai-status','request-ai-proposal','test-ai-provider']);
+  page.addEventListener('click',async event=>{const button=event.target.closest('[data-action]');if(!button)return;
+    const aiPending=AI_REQUEST_ACTIONS.has(button.dataset.action);
+    if(aiPending){button.dataset.aiPending='true';button.setAttribute('aria-busy','true');}
+    button.disabled=true;
+    try{await action(button);}catch(error){toast(error.message,true);}finally{
+    button.disabled=false;
+    if(aiPending){delete button.dataset.aiPending;button.removeAttribute('aria-busy');}
+    if(['qrw-token-field','qrw-selection-field','qrw-add-field','qrw-field-duplicate','qrw-field-delete','qrw-field-up','qrw-field-down','qrw-operation-add','qrw-operation-delete','qrw-operation-up','qrw-suggest-fields','qrw-import-plan'].includes(button.dataset.action))nfiScheduleLive();queueMicrotask(nfiDecorate);}});
   const updateChartReadout=event=>{const point=event.target.closest?.('[data-chart-category],[data-chart-summary]');if(!point)return;const chart=point.closest('.multi-chart,.stacked-volume'),target=chart?.querySelector('.chart-hover-readout');if(!target)return;target.textContent=point.dataset.chartSummary||`${point.dataset.chartCategory} · ${countText(point.dataset.chartValue)} ${point.dataset.chartUnit} · ${point.dataset.chartTime}`;};
   page.addEventListener('focusin',event=>{const row=event.target.closest('[data-qrw-row]');if(row){const field=state.qrwFields.find(f=>f.id===row.dataset.qrwRow);if(field)nfiHighlight(field);}});
   page.addEventListener('pointerover',updateChartReadout);page.addEventListener('focusin',updateChartReadout);

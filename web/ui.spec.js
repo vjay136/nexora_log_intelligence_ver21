@@ -76,6 +76,26 @@ test('refresh shows only a spinner while the existing page reload runs',async({p
   await expect(refresh.locator('.refresh-spinner')).toBeHidden();
 });
 
+test('AI spinner clears after a delayed provider rejection',async({page})=>{
+  await mockController(page);
+  let pending;
+  await page.route('**/api/v1/ai/workspace',route=>{pending=route;});
+  await login(page);
+  await page.getByTestId('nav-reference-ai').click();
+  const help=page.locator('[data-ai-help-desk]');
+  await help.getByLabel('What do you need help with?').fill('How do I map status?');
+  const submit=help.getByRole('button',{name:'Get guidance'});
+  await submit.click();
+  await expect.poll(()=>!!pending).toBe(true);
+  await expect(submit).toHaveAttribute('data-ai-pending','true');
+  await expect(submit).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Refresh',exact:true})).not.toHaveAttribute('aria-busy','true');
+  await pending.fulfill({status:502,json:{error:'Provider rejected the key',error_code:'http_401'}});
+  await expect(help.getByRole('status')).toHaveText('Provider rejected the key');
+  await expect(submit).not.toHaveAttribute('data-ai-pending');
+  await expect(submit).toBeEnabled();
+});
+
 test('AI request errors distinguish provider, controller transport, and field extraction',async({page})=>{
   await mockController(page);
   let issue=0;
