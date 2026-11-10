@@ -3,10 +3,12 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestAIProviderDefaultIsExclusiveAndExplicitProbeIsIndependent(t *testing.T) {
@@ -44,6 +46,10 @@ func TestAIProviderDefaultIsExclusiveAndExplicitProbeIsIndependent(t *testing.T)
 	}
 	if _, used, attempts, err := f.server.callConfiguredAI(ctx, cfg, "synthetic test"); err != nil || used != "alternate" || attempts != 2 {
 		t.Fatalf("automatic fallback did not try providers in saved order: %s %d %v", used, attempts, err)
+	}
+	response, body = f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{"mode": "ask", "workspace": "field-mapping", "question": "What can I map?"})
+	if response.StatusCode != http.StatusOK || decodeMap(t, body)["provider_routing"] != "standby" {
+		t.Fatalf("successful standby use was not reported: %d %s", response.StatusCode, body)
 	}
 	defaultCalls.Store(0)
 	alternateCalls.Store(0)
@@ -104,5 +110,41 @@ func TestAIProviderDefaultIsExclusiveAndExplicitProbeIsIndependent(t *testing.T)
 	cfg, _, err = f.server.loadAIProvider(ctx)
 	if err != nil || cfg.ID != "alternate" || cfg.Exclusive {
 		t.Fatalf("automatic routing did not select the remaining provider: %v", err)
+	}
+}
+
+func TestAIProviderRoutingReachesFourthProfileWithinDeadline(t *testing.T) {
+	t.Setenv("NLI_AI_ALLOW_LOOPBACK", "true")
+	f := newAPIFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var unavailableCalls, standbyCalls atomic.Int32
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		unavailableCalls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer unavailable.Close()
+	standby := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		standbyCalls.Add(1)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"OK"}}]}`))
+	}))
+	defer standby.Close()
+	for i := 1; i <= 4; i++ {
+		id := fmt.Sprintf("profile-%d", i)
+		base := unavailable.URL
+		if i == 4 {
+			base = standby.URL
+		}
+		if err := f.server.storeAIProvider(ctx, aiProviderConfig{ID: id, Name: id, Provider: "openai_compatible", Model: "test-model", BaseURL: base, Enabled: true, Priority: i, APIKey: "synthetic-provider-key-1234", FallbackGroup: "review"}, "admin"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, _, err := f.server.loadAIProvider(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, provider, attempts, err := f.server.callConfiguredAI(ctx, cfg, "synthetic test")
+	if err != nil || provider != "profile-4" || attempts != 4 || unavailableCalls.Load() != 3 || standbyCalls.Load() != 1 {
+		t.Fatalf("ordered routing did not reach the fourth profile: provider=%q attempts=%d err=%v", provider, attempts, err)
 	}
 }

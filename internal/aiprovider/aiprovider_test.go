@@ -252,6 +252,37 @@ func TestConnectionResultDoesNotExposeResponseOrCredential(t *testing.T) {
 	}
 }
 
+func TestHostedPresetsBuildModelRequests(t *testing.T) {
+	for _, preset := range Templates() {
+		if !preset.FillModel {
+			continue
+		}
+		t.Run(preset.ID, func(t *testing.T) {
+			baseURL := strings.ReplaceAll(preset.BaseURL, "{account_id}", strings.Repeat("a", 32))
+			profile := Profile{ID: preset.ID, Name: preset.Name, Kind: preset.Kind, BaseURL: baseURL, Model: preset.ModelHint}
+			if err := ValidateMetadata(profile, ValidationPolicy{}); err != nil {
+				t.Fatal(err)
+			}
+			req, err := BuildRequest(context.Background(), profile, "synthetic-test-key", "Return OK")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var want string
+			switch preset.Kind {
+			case KindGemini:
+				want = baseURL + "/models/" + preset.ModelHint + ":generateContent"
+			case KindAnthropic:
+				want = baseURL + "/messages"
+			default:
+				want = baseURL + "/chat/completions"
+			}
+			if req.URL.String() != want || req.Method != http.MethodPost || strings.Contains(req.URL.String(), "synthetic-test-key") {
+				t.Fatalf("unexpected preset request: %s %s", req.Method, req.URL)
+			}
+		})
+	}
+}
+
 func TestTemplatesCoverAllKindsWithoutSecrets(t *testing.T) {
 	wanted := map[Kind]bool{
 		KindOpenAI: false, KindNVIDIANIM: false, KindAnthropic: false, KindMiniMax: false,

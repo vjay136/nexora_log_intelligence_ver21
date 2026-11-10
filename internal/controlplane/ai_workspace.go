@@ -216,7 +216,7 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := map[string]any{"provider_id": provider, "provider_attempts": attempts,
-		"review_only": true, "activated": false, "persisted": false}
+		"review_only": true, "activated": false, "persisted": false, "provider_routing": aiRoutingOutcome(cfg.ID, provider, attempts)}
 	if isDraft {
 		var draft struct {
 			Answer string         `json:"answer"`

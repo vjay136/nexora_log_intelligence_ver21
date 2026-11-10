@@ -763,7 +763,7 @@ func (s *Server) handleAssuranceAIProposal(w http.ResponseWriter, r *http.Reques
 	proposal["diagnosis"] = diagnosis
 	proposal["suggested_method"] = suggestedMethod
 	aiMetricsSuccess = true
-	jsonOK(w, map[string]any{"id": saved.ID, "proposal": proposal, "suggestions": suggestions, "categories": []string{"parser", "regex", "template", "kv", "field_mapping", "projection"}, "review_state": "draft", "requires_human_approval": true, "published": false, "stored": true, "provider_id": usedProvider, "provider_attempts": attempts})
+	jsonOK(w, map[string]any{"id": saved.ID, "proposal": proposal, "suggestions": suggestions, "categories": []string{"parser", "regex", "template", "kv", "field_mapping", "projection"}, "review_state": "draft", "requires_human_approval": true, "published": false, "stored": true, "provider_id": usedProvider, "provider_attempts": attempts, "provider_routing": aiRoutingOutcome(cfg.ID, usedProvider, attempts)})
 }
 
 type assuranceParserInput struct {

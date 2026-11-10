@@ -218,8 +218,9 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 		"proposal":   map[string]any{"kind": "mapping", "plan": plan, "parser": parser},
 		"validation": map[string]any{"syntax_valid": true, "extraction_valid": true, "desired_provided": len(input.Desired) > 0, "desired_match": desiredMatch, "diff": diff, "errors": errors, "actual": result.Values, "evidence": result.Evidence, "trace": result.Trace, "assessment": assessMappingEvidence(result, len(input.Raw)), "publication_validated": false, "ready_for_publish": false, "operator_confirmation_required": true, "confirmation_mode": "mechanical_preview_only"},
 		"raw_sha256": rawHash, "provider_id": provider, "provider_attempts": attempts,
-		"runtime":     map[string]any{"pool": native["runtime_pool"], "parser": native["parser"], "trace": native["trace"]},
-		"review_only": true, "persisted": false, "activated": false, "requires_human_approval": true, "operator_confirmation_required": true,
+		"provider_routing": aiRoutingOutcome(cfg.ID, provider, attempts),
+		"runtime":          map[string]any{"pool": native["runtime_pool"], "parser": native["parser"], "trace": native["trace"]},
+		"review_only":      true, "persisted": false, "activated": false, "requires_human_approval": true, "operator_confirmation_required": true,
 		"next_step": "Inspect the separate proposal, explicitly import it into your draft, verify exact desired JSON and regression fixtures, then use normal approval, publication and client acknowledgement. This reply changes no parser.",
 	})
 }
@@ -484,7 +485,7 @@ func containsMappingString(values []string, value string) bool {
 // The default Assurance remediation prompt remains unchanged. This variant
 // reuses only the configured provider group, credentials and bounded fallback.
 func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProviderConfig, prompt, system string) (string, string, int, error) {
-	return s.callAIProviderRoute(ctx, primary, func(profile aiprovider.Profile, cfg aiProviderConfig) (string, error) {
+	return s.callAIProviderRoute(ctx, primary, func(ctx context.Context, profile aiprovider.Profile, cfg aiProviderConfig) (string, error) {
 		if profile.MaxResponseBytes > 256<<10 {
 			profile.MaxResponseBytes = 256 << 10
 		}
@@ -502,7 +503,7 @@ func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProvi
 	})
 }
 
-func (s *Server) callAIProviderRoute(ctx context.Context, primary aiProviderConfig, invoke func(aiprovider.Profile, aiProviderConfig) (string, error)) (string, string, int, error) {
+func (s *Server) callAIProviderRoute(ctx context.Context, primary aiProviderConfig, invoke func(context.Context, aiprovider.Profile, aiProviderConfig) (string, error)) (string, string, int, error) {
 	configs, err := s.aiProviderRouteConfigs(ctx, primary)
 	if err != nil {
 		return "", "", 0, err
@@ -510,7 +511,7 @@ func (s *Server) callAIProviderRoute(ctx context.Context, primary aiProviderConf
 	profiles := []aiprovider.Profile{}
 	byID := map[string]aiProviderConfig{}
 	for _, cfg := range configs {
-		if !primary.Exclusive && cfg.FallbackGroup != primary.FallbackGroup {
+		if !s.aiProviderReady(cfg) || (!primary.Exclusive && cfg.FallbackGroup != primary.FallbackGroup) {
 			continue
 		}
 		profile := profileFromConfig(cfg)
@@ -522,7 +523,7 @@ func (s *Server) callAIProviderRoute(ctx context.Context, primary aiProviderConf
 	route := orderedAIProviderRoute(profiles, primary.RoutingOrder)
 	var retry *aiprovider.Profile
 	for i := 0; i < len(route) || retry != nil; i++ {
-		if attempts >= 3 || ctx.Err() != nil {
+		if attempts >= aiProviderAttemptLimit || ctx.Err() != nil {
 			break
 		}
 		isRetry := i == len(route)
@@ -538,7 +539,9 @@ func (s *Server) callAIProviderRoute(ctx context.Context, primary aiProviderConf
 			profile = route[i]
 		}
 		attempts++
-		text, callErr := invoke(profile, byID[profile.ID])
+		attemptCtx, cancel := aiProviderAttemptContext(ctx, i+1 < len(route))
+		text, callErr := invoke(attemptCtx, profile, byID[profile.ID])
+		cancel()
 		if callErr == nil {
 			return text, profile.ID, attempts, nil
 		}

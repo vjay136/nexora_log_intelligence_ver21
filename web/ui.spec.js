@@ -13,7 +13,7 @@ test('contextual Ask Nexora AI and visual blocks start from an empty mapping', a
   await page.route('**/api/v1/ai/workspace',route=>{
     const body=route.request().postDataJSON();
     expect(body).toMatchObject({workspace:'building-blocks',mode:'ask',question:'How do I split a field?'});
-    return route.fulfill({json:{answer:'Select the exact source range.',review_only:true}});
+    return route.fulfill({json:{answer:'Select the exact source range.',review_only:true,provider_id:'standby-test',provider_routing:'standby'}});
   });
   await login(page);
   await page.getByTestId('nav-building-blocks').click();
@@ -22,6 +22,7 @@ test('contextual Ask Nexora AI and visual blocks start from an empty mapping', a
   await dialog.getByRole('textbox',{name:'What do you need help with?'}).fill('How do I split a field?');
   await dialog.getByRole('button',{name:'Get guidance'}).click();
   await expect(dialog.getByRole('status')).toHaveText('Select the exact source range.');
+  await expect(page.locator('#toast-region .warning')).toContainText('Nexora AI switched to standby profile standby-test.');
   await dialog.getByRole('button',{name:'Close',exact:true}).click();
   const raw=page.locator('#block-raw');
   await raw.fill('smtp status=failed');
@@ -338,6 +339,35 @@ test('Manual test samples can be retained and reopened through encrypted fixture
   await page.getByTestId('nav-sample-history').click();
   await page.getByRole('button',{name:'Open in Guided Repair'}).click();
   await expect(page.locator('#gprs-preview-form [name=raw_evidence]')).toHaveValue(raw);
+});
+
+test('Nexora AI provider preset fills a fresh profile and requires the Cloudflare account ID',async({page})=>{
+  await mockController(page);
+  await page.route('**/api/v1/admin/ai-provider',route=>route.fulfill({json:{
+    provider:{id:'old',name:'Old',provider:'openai_compatible'},
+    profiles:[{id:'groq',name:'Existing Groq'}],
+    templates:[
+      {id:'groq',name:'Groq',kind:'openai_compatible',base_url:'https://api.groq.com/openai/v1',model_hint:'openai/gpt-oss-20b',fill_model:true,credential_source:'encrypted_inline'},
+      {id:'cloudflare-workers-ai',name:'Cloudflare Workers AI',kind:'openai_compatible',base_url:'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1',model_hint:'@cf/meta/llama-3.1-8b-instruct',fill_model:true,credential_source:'encrypted_inline'},
+    ],
+  }}));
+  await login(page);
+  await page.getByTestId('nav-ai').click();
+  const form=page.locator('#ai-provider-form');
+  const start=form.getByRole('button',{name:'Start Nexora AI profile from preset'});
+  await form.locator('[name=api_key]').fill('synthetic-unsaved-key');
+  await form.locator('#ai-provider-preset').selectOption('groq');
+  await start.click();
+  await expect(form.locator('[name=id]')).toHaveValue('groq-2');
+  await expect(form.locator('[name=model]')).toHaveValue('openai/gpt-oss-20b');
+  await expect(form.locator('[name=api_key]')).toHaveValue('');
+  await form.locator('#ai-provider-preset').selectOption('cloudflare-workers-ai');
+  await start.click();
+  await expect(page.locator('#toast-region')).toContainText('32-character Cloudflare account ID');
+  const account='a'.repeat(32);
+  await form.locator('#ai-preset-account').fill(account);
+  await start.click();
+  await expect(form.locator('[name=endpoint]')).toHaveValue('https://api.cloudflare.com/client/v4/accounts/'+account+'/ai/v1');
 });
 
 test('Provider storage failure keeps the provider manager and recovery control visible',async({page})=>{

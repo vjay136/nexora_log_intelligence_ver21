@@ -239,9 +239,9 @@ func (s *Server) aiCapabilitiesResponse(configured, enabled, ready int, defaultI
 			status = "configured_not_connection_verified"
 		}
 	}
-	maxAttempts := 3
-	if defaultID != "" {
-		maxAttempts = 1
+	maxAttempts := min(ready+1, aiProviderAttemptLimit)
+	if ready == 0 {
+		maxAttempts = 0
 	}
 	return map[string]any{"status": status, "default_profile_id": defaultID, "configured_profiles": configured, "enabled_profiles": enabled, "credential_ready_profiles": ready, "available": ready > 0, "connection_check": "Run an explicit connection test; credential presence is not proof of provider availability.", "features": []map[string]any{{"id": "assurance_failure_remediation", "available": ready > 0, "requires": "Explicit operator action after deterministic Assurance failure"}, {"id": "fieldsense_mapping_help", "available": ready > 0, "requires": "Explicit operator action with a new or quarantined sample. NLI checks the proposed extraction on the exact sample."}, {"id": "workspace_ai", "available": ready > 0, "requires": "Explicit Ask AI or Fix with AI request. Returned proposals remain review-only."}, {"id": "quarantine_repair", "available": ready > 0, "requires": "Retained failing evidence and normal parser review gates"}, {"id": "agent_cluster_discovery", "available": false, "requires": "Separate explicit agent-local AI configuration and environment credentials; controller keys are never distributed to clients"}}, "encryption_ready": s.assurance.providerAEAD != nil, "automatic_activation": false, "live_parsing_dependency": false, "max_parallel_reviews": 2, "max_provider_attempts": maxAttempts, "request_deadline_seconds": 17}
 }
@@ -253,10 +253,32 @@ func (s *Server) handleAICapabilities(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, s.aiCapabilities(r.Context()))
 }
 func (s *Server) callConfiguredAI(ctx context.Context, primary aiProviderConfig, prompt string) (string, string, int, error) {
-	return s.callAIProviderRoute(ctx, primary, func(_ aiprovider.Profile, cfg aiProviderConfig) (string, error) {
+	return s.callAIProviderRoute(ctx, primary, func(ctx context.Context, _ aiprovider.Profile, cfg aiProviderConfig) (string, error) {
 		return s.callAIWithPolicy(ctx, cfg, prompt, providerPolicy())
 	})
 }
+
+// The provider catalog has a matching 16-profile bound. The overall request
+// deadline remains authoritative even if every provider is configured.
+const aiProviderAttemptLimit = 16
+
+func aiProviderAttemptContext(ctx context.Context, hasStandby bool) (context.Context, context.CancelFunc) {
+	if deadline, ok := ctx.Deadline(); hasStandby && ok {
+		return context.WithTimeout(ctx, time.Until(deadline)*2/3)
+	}
+	return ctx, func() {}
+}
+
+func aiRoutingOutcome(primary, selected string, attempts int) string {
+	if selected == "" || attempts < 2 {
+		return ""
+	}
+	if selected != primary {
+		return "standby"
+	}
+	return "retry"
+}
+
 func (s *Server) aiReviewPromptWithContext(ctx context.Context, input assuranceRequest, result map[string]any) string {
 	copy := make(map[string]any, len(result)+1)
 	for key, value := range result {
