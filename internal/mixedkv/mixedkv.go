@@ -56,6 +56,9 @@ type Config struct {
 	ValueTypes           map[string]string `json:"value_types,omitempty"`
 	DuplicatePolicy      DuplicatePolicy   `json:"duplicate_policy,omitempty"`
 	RejectEmptyValues    bool              `json:"reject_empty_values,omitempty"`
+	LiteralBoundaries    bool              `json:"literal_boundaries,omitempty"`
+	BareField            string            `json:"bare_field,omitempty"`
+	EmptyKeyField        string            `json:"empty_key_field,omitempty"`
 	AllowLeadingText     bool              `json:"allow_leading_text,omitempty"`
 	MaxInputBytes        int               `json:"max_input_bytes,omitempty"`
 	MaxFields            int               `json:"max_fields,omitempty"`
@@ -212,6 +215,14 @@ func Compile(input Config) (*Parser, error) {
 	if err != nil {
 		return nil, configError("invalid key_pattern: " + err.Error())
 	}
+	for _, name := range []string{cfg.BareField, cfg.EmptyKeyField} {
+		if name != "" && (!cfg.LiteralBoundaries || len(name) > cfg.MaxKeyBytes || !keyRE.MatchString(name)) {
+			return nil, configError("unnamed segment fields need literal boundaries and a valid output identifier")
+		}
+	}
+	if cfg.LiteralBoundaries && (cfg.AllowLeadingText || cfg.BareField != "" && cfg.BareField == cfg.EmptyKeyField) {
+		return nil, configError("literal boundaries require complete input and distinct unnamed segment fields")
+	}
 	allowRE, err := compilePatterns(cfg.KeyAllowPatterns)
 	if err != nil {
 		return nil, configError("invalid key allow pattern: " + err.Error())
@@ -314,6 +325,9 @@ func (p *Parser) parse(input string, strictPipe bool) (Result, error) {
 		return result, parseError(CodeInputTooLarge, p.config.MaxInputBytes, "", "input exceeds configured maximum")
 	}
 
+	if p.config.LiteralBoundaries {
+		input = strings.TrimRight(input, " \t\r\n")
+	}
 	position := skipSpace(input, 0)
 	if p.config.AllowLeadingText {
 		if _, ok := p.headerAt(input, position); !ok {
@@ -330,6 +344,14 @@ func (p *Parser) parse(input string, strictPipe bool) (Result, error) {
 	}
 	for position < len(input) {
 		h, ok := p.headerAt(input, position)
+		if !ok && p.config.LiteralBoundaries {
+			next, err := p.captureUnnamed(input, position, &result)
+			if err != nil {
+				return result, err
+			}
+			position = next
+			continue
+		}
 		if !ok {
 			if len(result.Entries) == 0 {
 				return result, parseError(CodeNoKeyValue, position, "", "expected a configured key and assignment separator")
@@ -349,7 +371,7 @@ func (p *Parser) parse(input string, strictPipe bool) (Result, error) {
 		}
 
 		fieldType := p.valueType(h.key)
-		end, err := p.findBoundary(input, h.valueStart, fieldType, false, strictPipe)
+		end, err := p.findBoundary(input, h.valueStart, fieldType, p.config.LiteralBoundaries, strictPipe)
 		if err != nil {
 			return result, err
 		}
@@ -357,6 +379,9 @@ func (p *Parser) parse(input string, strictPipe bool) (Result, error) {
 		pairSeparator := ""
 		next := len(input)
 		if end != nil {
+			if p.config.LiteralBoundaries && end.next == len(input) {
+				return result, parseError(CodeNoKeyValue, end.start, "", "trailing pair separator has no segment")
+			}
 			valueEnd = end.start
 			pairSeparator = end.separator
 			next = end.next
@@ -376,6 +401,9 @@ func (p *Parser) parse(input string, strictPipe bool) (Result, error) {
 		outputKey := h.key
 		if alias, exists := p.config.KeyAliases[h.key]; exists {
 			outputKey = alias
+		}
+		if p.unnamedField(h.key) || p.unnamedField(outputKey) {
+			return result, parseError(CodeDuplicateKey, h.keyStart, h.key, "key collides with an unnamed segment output")
 		}
 		kind := p.valueTypeForOutput(h.key, outputKey)
 		value, err := convertValue(decoded, rawValue, kind)
@@ -406,6 +434,67 @@ func (p *Parser) parse(input string, strictPipe bool) (Result, error) {
 		return result, parseError(CodeNoKeyValue, 0, "", "no key/value pairs were recognized")
 	}
 	return result, nil
+}
+
+func (p *Parser) unnamedField(name string) bool {
+	return name != "" && (name == p.config.BareField || name == p.config.EmptyKeyField)
+}
+
+func (p *Parser) captureUnnamed(input string, position int, result *Result) (int, error) {
+	name, valueStart, assignment := p.config.BareField, position, ""
+	for _, separator := range p.assignSeps {
+		if strings.HasPrefix(input[position:], separator) {
+			name, valueStart, assignment = p.config.EmptyKeyField, position+len(separator), separator
+			break
+		}
+	}
+	if name == "" {
+		return 0, parseError(CodeNoKeyValue, position, "", "segment needs a configured key or an explicit unnamed segment field")
+	}
+	if len(result.Entries) >= p.config.MaxFields {
+		return 0, parseError(CodeTooManyFields, position, name, "maximum field count exceeded")
+	}
+	end, err := p.findBoundary(input, valueStart, "string", true, false)
+	if err != nil {
+		return 0, err
+	}
+	valueEnd, next, pairSeparator := len(input), len(input), ""
+	if end != nil {
+		if end.next == len(input) {
+			return 0, parseError(CodeNoKeyValue, end.start, "", "trailing pair separator has no segment")
+		}
+		valueEnd, next, pairSeparator = end.start, end.next, end.separator
+	}
+	a, b := p.trimValueBounds(input, valueStart, valueEnd)
+	if b-a > p.config.MaxValueBytes {
+		return 0, parseError(CodeValueTooLarge, a, name, "value exceeds configured maximum")
+	}
+	raw := input[a:b]
+	if raw == "" && (assignment == "" || p.config.RejectEmptyValues) {
+		return 0, parseError(CodeEmptyValue, a, name, "empty unnamed segment")
+	}
+	if assignment == "" {
+		for _, separator := range p.assignSeps {
+			if strings.Contains(raw, separator) {
+				return 0, parseError(CodeNoKeyValue, position, "", "assignment has an invalid key")
+			}
+		}
+	}
+	decoded, err := p.decodeValue(raw)
+	if err != nil {
+		return 0, parseError(CodeDanglingEscape, a, name, err.Error())
+	}
+	entry := Entry{
+		SourceKey: name, Key: name, Value: decoded, Emitted: true,
+		KeySpan: Span{Start: position, End: position}, ValueSpan: Span{Start: a, End: b},
+		PairSpan: Span{Start: position, End: valueEnd}, AssignmentSeparator: assignment,
+		PairSeparator: pairSeparator,
+	}
+	values, _ := result.Fields[name].([]interface{})
+	result.Fields[name] = append(values, decoded)
+	result.Entries = append(result.Entries, entry)
+	result.ConsumedSpans = append(result.ConsumedSpans, entry.PairSpan)
+	return next, nil
 }
 
 func (p *Parser) emit(result *Result, entry *Entry) error {

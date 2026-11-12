@@ -13,6 +13,9 @@ import (
 	"nexora.local/nli-v20/internal/mixedkv"
 )
 
+// MaxAdvancedKVPairs bounds per-record dynamic pair extraction.
+const MaxAdvancedKVPairs = 1024
+
 // ErrIncompleteKV identifies malformed or ambiguous structured input that
 // must remain available for recovery instead of entering a generic fallback.
 var ErrIncompleteKV = errors.New("incomplete_structured_tail")
@@ -27,6 +30,10 @@ type KVProfile struct {
 	PairDelimiters       string                `json:"pair_delimiters"`
 	Observations         []KeyValueObservation `json:"observations"`
 	InputEdits           []KVInputEdit         `json:"kv_input_edits,omitempty"`
+	PairSeparators       []string              `json:"pair_separators,omitempty"`
+	LiteralBoundaries    bool                  `json:"literal_boundaries,omitempty"`
+	BareField            string                `json:"bare_field,omitempty"`
+	EmptyKeyField        string                `json:"empty_key_field,omitempty"`
 }
 
 type kvieProfile struct {
@@ -39,6 +46,8 @@ type kvieProfile struct {
 	brackets    map[string]string
 	signature   string
 	parser      *mixedkv.Parser
+
+	literalBoundaries bool
 }
 
 type kvieCacheKey struct {
@@ -83,8 +92,14 @@ func compileKVIEProfile(assignments []string, delimiters string, field Field) (*
 		cfg.KeyPattern = field.KVKeyPattern
 	}
 	cfg.RejectEmptyValues = field.KVRejectEmpty
+	cfg.LiteralBoundaries = field.KVLiteralBoundaries
+	cfg.BareField = field.KVBareField
+	cfg.EmptyKeyField = field.KVEmptyKeyField
 	cfg.DuplicatePolicy = mixedkv.DuplicateArray
 	cfg.MaxFields = MaxFields
+	if field.KVMaxPairs > 0 {
+		cfg.MaxFields = field.KVMaxPairs
+	}
 	parser, err := mixedkv.Compile(cfg)
 	if err != nil {
 		return nil, err
@@ -103,15 +118,16 @@ func compileKVIEProfile(assignments []string, delimiters string, field Field) (*
 		}
 	}
 	return &kvieProfile{
-		assignments: assignments,
-		delimiters:  single,
-		pairSeps:    cfg.PairSeparators,
-		multiSeps:   multiple,
-		quotes:      cfg.QuoteCharacters,
-		escape:      cfg.EscapeCharacter[0],
-		brackets:    cfg.BracketPairs,
-		signature:   string(signature),
-		parser:      parser,
+		assignments:       assignments,
+		delimiters:        single,
+		pairSeps:          cfg.PairSeparators,
+		multiSeps:         multiple,
+		quotes:            cfg.QuoteCharacters,
+		escape:            cfg.EscapeCharacter[0],
+		brackets:          cfg.BracketPairs,
+		signature:         string(signature),
+		parser:            parser,
+		literalBoundaries: cfg.LiteralBoundaries,
 	}, nil
 }
 
@@ -178,7 +194,7 @@ func (p *kvieProfile) observe(raw string, offset int) ([]KeyValueObservation, er
 	// and only recognize framing when the selected profile allows pipes.
 	body := strings.TrimLeft(raw, " \t\r\n")
 	offset += len(raw) - len(body)
-	if len(p.pairSeps) == 1 && p.pairSeps[0] == "|" && strings.HasPrefix(body, "|") {
+	if !p.literalBoundaries && len(p.pairSeps) == 1 && p.pairSeps[0] == "|" && strings.HasPrefix(body, "|") {
 		fields, err := p.parser.ScanPipeTail(body)
 		if err != nil {
 			if lexical, ok := err.(*mixedkv.Error); ok && lexical.Offset >= 0 {
@@ -399,6 +415,10 @@ func InspectKeyValues(ctx context.Context, raw string, field Field) ([]KVProfile
 	if field.Method == "key_value" {
 		selector.Source = field.KVStart
 	}
+	if field.KVHeaderPattern != "" {
+		selector = field
+		selector.Name = "tail"
+	}
 	compiled, err := Compile(Plan{Version: 1, Fields: []Field{selector}})
 	if err != nil {
 		return nil, err
@@ -410,6 +430,31 @@ func InspectKeyValues(ctx context.Context, raw string, field Field) ([]KVProfile
 	}
 	if !found {
 		return nil, fmt.Errorf("key/value source position is absent from this record")
+	}
+	if field.KVLiteralBoundaries {
+		assignments, delimiters := keySettings(field)
+		profile, err := compileKVIEProfile(assignments, delimiters, field)
+		if err != nil {
+			return nil, err
+		}
+		cleaned, err := editKVInput(selected, field.KVInputEdits)
+		if err != nil {
+			return nil, err
+		}
+		observations, err := profile.observe(cleaned, start)
+		if err != nil {
+			return nil, err
+		}
+		if cleaned != selected {
+			for i := range observations {
+				observations[i].Start, observations[i].End = start, start+len(selected)
+			}
+		}
+		return []KVProfile{{
+			AssignmentSeparators: assignments, PairDelimiters: delimiters, PairSeparators: profile.pairSeps,
+			Observations: observations, InputEdits: field.KVInputEdits, LiteralBoundaries: true,
+			BareField: field.KVBareField, EmptyKeyField: field.KVEmptyKeyField,
+		}}, nil
 	}
 	if len(field.KVInputEdits) > 0 {
 		return nil, fmt.Errorf("preview the KV row to verify its configured separators and input edits")
@@ -545,7 +590,7 @@ func (r *record) extractKVIE(cf compiledField, evidence Evidence) (any, Evidence
 					observations[i].Start, observations[i].End = start, end
 				}
 			}
-			if scan.err != nil && !errors.Is(scan.err, ErrIncompleteKV) && kvieHeader.MatchString(strings.TrimLeft(selected, " \t\r\n")) {
+			if scan.err != nil && !errors.Is(scan.err, ErrIncompleteKV) && (f.KVLiteralBoundaries || kvieHeader.MatchString(strings.TrimLeft(selected, " \t\r\n"))) {
 				scan.err = fmt.Errorf("%w: %w", ErrIncompleteKV, scan.err)
 			}
 		} else {

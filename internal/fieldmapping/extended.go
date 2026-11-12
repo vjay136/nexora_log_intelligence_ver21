@@ -1,9 +1,9 @@
 package fieldmapping
 
 import (
-	"encoding/json"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/mail"
@@ -138,6 +138,44 @@ func compileExtended(cf *compiledField, seen map[string]bool) error {
 		return fmt.Errorf("kv_profile requires key/value extraction and must be auto or configured")
 	}
 	namedProfile := f.Method == "key_value" && f.KVProfile != ""
+	if f.UsesAdvancedKV() {
+		if f.Method != "kv_all" || f.KVProfile != "configured" || !f.RequireComplete || !f.KVLiteralBoundaries {
+			return fmt.Errorf("advanced KV boundaries require a configured dynamic KV field with complete coverage")
+		}
+		for _, name := range []string{f.KVBareField, f.KVEmptyKeyField} {
+			if name != "" && (!fieldName.MatchString(name) || strings.HasPrefix(name, "_") || contains(ReservedNames, strings.ToLower(name))) {
+				return fmt.Errorf("unnamed segment output %q must be a non-reserved field identifier", name)
+			}
+			if name == "" {
+				continue
+			}
+			if _, exists := f.KeyAliases[name]; exists {
+				return fmt.Errorf("unnamed segment output %q cannot also be aliased", name)
+			}
+			for _, alias := range f.KeyAliases {
+				if alias == name {
+					return fmt.Errorf("unnamed segment output %q collides with a key alias", name)
+				}
+			}
+		}
+	}
+	if f.KVMaxPairs < 0 || f.KVMaxPairs > MaxAdvancedKVPairs {
+		return fmt.Errorf("advanced KV maximum pairs must be between 1 and %d", MaxAdvancedKVPairs)
+	}
+	if f.KVHeaderPattern != "" {
+		if f.Source != "" && f.Source != "raw" || f.SourceEnd != "" || !strings.HasPrefix(f.KVHeaderPattern, "^") {
+			return fmt.Errorf("KV header pattern must start at record start and replace positional KV selectors")
+		}
+		if cf.kvHeader == nil {
+			cf.kvHeader, err = boundedRegex(f.KVHeaderPattern)
+			if err != nil {
+				return err
+			}
+		}
+		if cf.kvHeader.MatchString("") {
+			return fmt.Errorf("KV header pattern must consume a nonempty header")
+		}
+	}
 	if len(f.KVInputEdits) > 0 {
 		if f.Method != "kv_all" || f.KVProfile != "configured" || !f.RequireComplete || len(f.KVInputEdits) > 16 {
 			return fmt.Errorf("KV input edits require a configured dynamic KV field with complete coverage and at most 16 edits")
@@ -489,9 +527,19 @@ func projectKeys(pairs map[string][]pair, f Field, e Evidence) (any, Evidence, b
 		if len(f.KeyInclude) > 0 && !contains(f.KeyInclude, key) || contains(f.KeyExclude, key) {
 			continue
 		}
-		v, err := selectValues(values)
-		if err != nil {
-			return nil, e, false, err
+		var v any
+		if key != "" && (key == f.KVBareField || key == f.KVEmptyKeyField) {
+			segments := make([]any, 0, len(values))
+			for _, value := range values {
+				segments = append(segments, value.value)
+			}
+			v = segments
+		} else {
+			var err error
+			v, err = selectValues(values)
+			if err != nil {
+				return nil, e, false, err
+			}
 		}
 		out[f.KeyPrefix+key+f.KeySuffix] = v
 	}

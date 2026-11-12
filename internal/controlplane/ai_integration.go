@@ -243,7 +243,7 @@ func (s *Server) aiCapabilitiesResponse(configured, enabled, ready int, defaultI
 	if ready == 0 {
 		maxAttempts = 0
 	}
-	return map[string]any{"status": status, "default_profile_id": defaultID, "configured_profiles": configured, "enabled_profiles": enabled, "credential_ready_profiles": ready, "available": ready > 0, "connection_check": "Run an explicit connection test; credential presence is not proof of provider availability.", "features": []map[string]any{{"id": "assurance_failure_remediation", "available": ready > 0, "requires": "Explicit operator action after deterministic Assurance failure"}, {"id": "fieldsense_mapping_help", "available": ready > 0, "requires": "Explicit operator action with a new or quarantined sample. NLI checks the proposed extraction on the exact sample."}, {"id": "workspace_ai", "available": ready > 0, "requires": "Explicit Ask AI or Fix with AI request. Returned proposals remain review-only."}, {"id": "quarantine_repair", "available": ready > 0, "requires": "Retained failing evidence and normal parser review gates"}, {"id": "agent_cluster_discovery", "available": false, "requires": "Separate explicit agent-local AI configuration and environment credentials; controller keys are never distributed to clients"}}, "encryption_ready": s.assurance.providerAEAD != nil, "automatic_activation": false, "live_parsing_dependency": false, "max_parallel_reviews": 2, "max_provider_attempts": maxAttempts, "request_deadline_seconds": 17}
+	return map[string]any{"status": status, "default_profile_id": defaultID, "configured_profiles": configured, "enabled_profiles": enabled, "credential_ready_profiles": ready, "available": ready > 0, "connection_check": "Run an explicit connection test; credential presence is not proof of provider availability.", "features": []map[string]any{{"id": "assurance_failure_remediation", "available": ready > 0, "requires": "Explicit operator action after deterministic Assurance failure"}, {"id": "fieldsense_mapping_help", "available": ready > 0, "requires": "Explicit operator action with a new or quarantined sample. NLI checks the proposed extraction on the exact sample."}, {"id": "workspace_ai", "available": ready > 0, "requires": "Explicit Ask AI or Fix with AI request. Returned proposals remain review-only."}, {"id": "quarantine_repair", "available": ready > 0, "requires": "Retained failing evidence and normal parser review gates"}, {"id": "agent_cluster_discovery", "available": false, "requires": "Separate explicit agent-local AI configuration and environment credentials; controller keys are never distributed to clients"}}, "encryption_ready": s.assurance.providerAEAD != nil, "automatic_activation": false, "live_parsing_dependency": false, "max_parallel_reviews": 2, "max_provider_attempts": maxAttempts, "request_deadline_seconds": int(aiRequestDeadline / time.Second)}
 }
 func (s *Server) handleAICapabilities(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -252,15 +252,22 @@ func (s *Server) handleAICapabilities(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOK(w, s.aiCapabilities(r.Context()))
 }
-func (s *Server) callConfiguredAI(ctx context.Context, primary aiProviderConfig, prompt string) (string, string, int, error) {
+func (s *Server) callConfiguredAI(ctx context.Context, primary aiProviderConfig, prompt string, validators ...func(string) error) (string, string, int, error) {
 	return s.callAIProviderRoute(ctx, primary, func(ctx context.Context, _ aiprovider.Profile, cfg aiProviderConfig) (string, error) {
-		return s.callAIWithPolicy(ctx, cfg, prompt, providerPolicy())
+		reply, err := s.callAIWithPolicy(ctx, cfg, prompt, providerPolicy())
+		if err == nil && len(validators) > 0 {
+			err = validators[0](reply)
+		}
+		return reply, err
 	})
 }
 
 // The provider catalog has a matching 16-profile bound. The overall request
 // deadline remains authoritative even if every provider is configured.
 const aiProviderAttemptLimit = 16
+
+// Leave time for the browser proxy to deliver the controller response.
+const aiRequestDeadline = 45 * time.Second
 
 func aiProviderAttemptContext(ctx context.Context, hasStandby bool) (context.Context, context.CancelFunc) {
 	if deadline, ok := ctx.Deadline(); hasStandby && ok {
@@ -417,7 +424,7 @@ func (s *Server) aiTestInfo(ctx context.Context, cfg aiProviderConfig, stream bo
 			target = "saved_profile"
 		}
 	}
-	public := map[string]any{"profile_id": cfg.ID, "provider": cfg.Provider, "model": cfg.Model, "endpoint_host": host, "test_mode": map[bool]string{true: "sse", false: "json"}[stream], "vision_probe": image != "", "max_tokens": budget, "timeout_seconds": p.TimeoutSeconds, "max_response_bytes": p.MaxResponseBytes, "configuration": target}
+	public := map[string]any{"profile_id": cfg.ID, "provider": cfg.Provider, "model": cfg.Model, "endpoint_host": host, "test_mode": map[bool]string{true: "sse", false: "json"}[stream], "vision_probe": image != "", "max_tokens": budget, "timeout_seconds": p.TimeoutSeconds, "effective_timeout_seconds": min(p.TimeoutSeconds, int(aiRequestDeadline/time.Second)), "max_response_bytes": p.MaxResponseBytes, "configuration": target}
 	data, _ := json.Marshal(public)
 	sum := sha256.Sum256(data)
 	public["config_checksum"] = hex.EncodeToString(sum[:])

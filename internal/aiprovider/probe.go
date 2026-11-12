@@ -29,6 +29,9 @@ func ValidateImageProbeURL(value string) error {
 }
 func InspectJSONProbe(kind Kind, data []byte) (usable, acknowledged bool, errorCode string) {
 	text, err := ResponseText(kind, data)
+	if errors.Is(err, ErrOutputTokenLimit) {
+		return false, true, "incomplete_output"
+	}
 	var envelope struct {
 		Choices []struct {
 			Message struct {

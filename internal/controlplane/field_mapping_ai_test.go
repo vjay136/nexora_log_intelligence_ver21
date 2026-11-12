@@ -72,8 +72,8 @@ func TestFieldMappingAICompoundProposalUsesNativeSchemaAndStaysEphemeral(t *test
 				t.Errorf("actual native schema omitted %s", required)
 			}
 		}
-		if request["max_tokens"] != float64(4096) {
-			t.Error("mapping generation budget was not bounded4096")
+		if request["max_tokens"] != float64(8192) {
+			t.Errorf("mapping generation budget = %v, want 8192", request["max_tokens"])
 		}
 	})
 	before, _, err := f.server.loadAIProviderByID(context.Background(), "mapping-assistant")

@@ -27,6 +27,8 @@ type record struct {
 	object     any
 	jsonParsed bool
 	jsonError  error
+
+	regexMatches map[*regexp.Regexp][]int
 }
 
 func newRecord(raw string) (*record, error) {
@@ -70,6 +72,18 @@ func newRecord(raw string) (*record, error) {
 	}
 	r.lines = append(r.lines, span{lineStart, len(raw)})
 	return r, nil
+}
+
+func (r *record) matchRegex(pattern *regexp.Regexp) []int {
+	if indexes, found := r.regexMatches[pattern]; found {
+		return indexes
+	}
+	indexes := pattern.FindStringSubmatchIndex(r.raw)
+	if r.regexMatches == nil {
+		r.regexMatches = make(map[*regexp.Regexp][]int)
+	}
+	r.regexMatches[pattern] = indexes
+	return indexes
 }
 
 func (r *record) extract(cf compiledField, prior map[string]any) (any, Evidence, bool, error) {
@@ -173,7 +187,7 @@ func (r *record) extract(cf compiledField, prior map[string]any) (any, Evidence,
 		}
 		return item.value, e, true, nil
 	case "regex":
-		indexes := cf.pattern.FindStringSubmatchIndex(r.raw)
+		indexes := r.matchRegex(cf.pattern)
 		if indexes == nil {
 			return nil, e, false, nil
 		}

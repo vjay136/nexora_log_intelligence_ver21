@@ -20,7 +20,7 @@ func Templates() []Template {
 		{ID: "anthropic", Name: "Anthropic Claude", Kind: KindAnthropic, BaseURL: "https://api.anthropic.com/v1", ModelHint: "claude-haiku-5-5", FillModel: true, Credential: CredentialEncryptedInline},
 		{ID: "minimax", Name: "MiniMax", Kind: KindMiniMax, BaseURL: "https://api.minimax.io/v1", ModelHint: "MiniMax model", Credential: CredentialEncryptedInline},
 		{ID: "qwen-dashscope", Name: "Qwen / DashScope", Kind: KindQwenDashScope, BaseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", ModelHint: "qwen model", Credential: CredentialEncryptedInline},
-		{ID: "gemini", Name: "Gemini / Google", Kind: KindGemini, BaseURL: "https://generativelanguage.googleapis.com/v1beta", ModelHint: "gemini-3.5-flash-lite", Models: []string{"gemini-3.5-flash"}, FillModel: true, Credential: CredentialEncryptedInline},
+		{ID: "gemini", Name: "Gemini / Google", Kind: KindGemini, BaseURL: "https://generativelanguage.googleapis.com/v1beta", ModelHint: "gemini-3.5-flash-lite", Models: []string{"gemini-3.5-flash", "gemma-4-26b-a4b-it", "gemma-4-31b-it"}, FillModel: true, Credential: CredentialEncryptedInline},
 		{ID: "groq", Name: "Groq", Kind: KindOpenAICompatible, BaseURL: "https://api.groq.com/openai/v1", ModelHint: "openai/gpt-oss-20b", Models: []string{"openai/gpt-oss-120b"}, FillModel: true, Credential: CredentialEncryptedInline},
 		{ID: "openrouter", Name: "OpenRouter", Kind: KindOpenAICompatible, BaseURL: "https://openrouter.ai/api/v1", ModelHint: "openai/gpt-4o", FillModel: true, Credential: CredentialEncryptedInline},
 		{ID: "deepseek", Name: "DeepSeek", Kind: KindOpenAICompatible, BaseURL: "https://api.deepseek.com", ModelHint: "deepseek-flash", FillModel: true, Credential: CredentialEncryptedInline},

@@ -148,3 +148,30 @@ func TestAIProviderRoutingReachesFourthProfileWithinDeadline(t *testing.T) {
 		t.Fatalf("ordered routing did not reach the fourth profile: provider=%q attempts=%d err=%v", provider, attempts, err)
 	}
 }
+
+func TestAIWorkspaceUsesStandbyForInvalidDraft(t *testing.T) {
+	t.Setenv("NLI_AI_ALLOW_LOOPBACK", "true")
+	f := newAPIFixture(t)
+	for _, tc := range []struct {
+		id, reply string
+		priority  int
+	}{
+		{"malformed", "not JSON", 10},
+		{"verified", `{"answer":"Named capture","config":{"pattern":"^status=(?P<value>[^ ]+)$","fields":{"value":"status"}}}`, 20},
+	} {
+		reply := tc.reply
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": reply}}}})
+		}))
+		t.Cleanup(upstream.Close)
+		cfg := aiProviderConfig{ID: tc.id, Provider: "openai_compatible", Model: "test-model", BaseURL: upstream.URL, Enabled: true, Priority: tc.priority, APIKey: "fake-provider-key-1234"}
+		if err := f.server.storeAIProvider(context.Background(), cfg, "admin"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, body := f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{"mode": "fix", "workspace": "regex", "artifact": "regex", "raw": "status=failed"})
+	result := decodeMap(t, body)
+	if resp.StatusCode != http.StatusOK || result["provider_id"] != "verified" || result["provider_attempts"] != float64(2) || result["provider_routing"] != "standby" {
+		t.Fatalf("expected valid standby draft: %d %s", resp.StatusCode, body)
+	}
+}

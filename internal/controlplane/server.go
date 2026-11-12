@@ -118,6 +118,7 @@ type Server struct {
 	enrollmentMu             sync.Mutex
 	artifactKeys             [][]byte
 	aiMetrics                *aiUsageStore
+	aiPrivacy                aiPrivacyStore
 	metricHistory            *metricHistory
 	metricIngestMu           sync.Mutex
 	fleetSyncMu              sync.Mutex
@@ -573,6 +574,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/assurance/mapping-preview", guard(middleware.PermissionParsePreview, s.handleMappingPreview))
 	s.mux.HandleFunc("/api/v1/assurance/kv-inspect", guard(middleware.PermissionParsePreview, s.handleKVInspect))
 	s.mux.HandleFunc("/api/v1/field-mapping", guard(middleware.PermissionReadParsers, s.handleFieldMappingStatus))
+	s.mux.HandleFunc("/api/v1/field-mapping/template-compose", guard(middleware.PermissionParsePreview, s.handleTemplateCompose))
 	s.mux.HandleFunc("/api/v1/field-mapping/suggest", guard(middleware.PermissionParsePreview, s.handleFieldMappingSuggest))
 	s.mux.HandleFunc("/api/v1/field-mapping/ai-suggest", guard(middleware.PermissionParsePreview, s.handleFieldMappingAISuggest))
 	s.mux.HandleFunc("/api/v1/ai/workspace", guard(middleware.PermissionParsePreview, s.handleAIWorkspace))
@@ -590,8 +592,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/assurance/ai-proposals/", guard(middleware.PermissionReadParsers, s.handleAIProposal))
 	s.mux.HandleFunc("/api/v1/admin/ai-provider", s.handleAIProvider)
 	s.mux.HandleFunc("/api/v1/admin/ai-provider/test", s.handleAIProviderTest)
+	s.mux.HandleFunc("/api/v1/admin/ai-provider/models", s.handleAIProviderModels)
 	s.mux.HandleFunc("/api/v1/admin/ai-usage", guard(middleware.PermissionReadTelemetry, s.handleAIUsage))
 	s.mux.HandleFunc("/api/v1/ai/capabilities", guard(middleware.PermissionReadTelemetry, s.handleAICapabilities))
+	s.mux.HandleFunc("/api/v1/ai/privacy", guard(middleware.PermissionReadTelemetry, s.handleAIPrivacy))
 	s.mux.HandleFunc("/api/v1/migration/import", guard(middleware.PermissionMigration, s.handleMigrationImport))
 	s.mux.HandleFunc("/api/v1/migration/reports", guard(middleware.PermissionReadParsers, s.handleMigrationReports))
 	s.mux.HandleFunc("/api/v1/migration/reports/", guard(middleware.PermissionReadParsers, s.handleMigrationReport))

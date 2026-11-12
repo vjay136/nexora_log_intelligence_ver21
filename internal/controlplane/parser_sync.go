@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"nexora.local/nli-v20/internal/canonicaljson"
+	"nexora.local/nli-v20/internal/fieldmapping"
 	"nexora.local/nli-v20/internal/fleet"
 	"nexora.local/nli-v20/internal/middleware"
 	"nexora.local/nli-v20/internal/protocol"
@@ -421,6 +422,7 @@ func (s *Server) readMaterializedParserBundleHash() (string, error) {
 const (
 	kvOutputEditsMinimumRelease = "22.1.0-0"
 	kvInputEditsMinimumRelease  = "22.2.0-0"
+	advancedKVMinimumRelease    = "22.11.0-0"
 )
 
 // Inspect native stage content so imported packs cannot bypass the release
@@ -436,10 +438,7 @@ func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
 				Stages []struct {
 					Type   string `json:"type"`
 					Config struct {
-						Fields []struct {
-							InputEdits  []json.RawMessage `json:"kv_input_edits"`
-							OutputEdits []json.RawMessage `json:"key_value_edits"`
-						} `json:"fields"`
+						Fields []fieldmapping.Field `json:"fields"`
 					} `json:"config"`
 				} `json:"stages"`
 			} `json:"rules"`
@@ -451,10 +450,12 @@ func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
 					continue
 				}
 				for _, field := range stage.Config.Fields {
-					if len(field.InputEdits) > 0 {
-						return kvInputEditsMinimumRelease
+					if field.UsesAdvancedKV() {
+						return advancedKVMinimumRelease
 					}
-					if len(field.OutputEdits) > 0 {
+					if len(field.KVInputEdits) > 0 {
+						minimum = kvInputEditsMinimumRelease
+					} else if len(field.KeyValueEdits) > 0 && minimum == "" {
 						minimum = kvOutputEditsMinimumRelease
 					}
 				}

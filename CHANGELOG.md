@@ -1,5 +1,9 @@
 # Changelog
 
+## 22.11.0-0
+
+- Add strict advanced KV tail mapping, AI privacy monitoring and a longer AI deadline.
+
 ## 22.10.0-0
 
 - Add hosted AI provider presets, editable model IDs and ordered provider failover.

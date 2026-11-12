@@ -415,7 +415,7 @@ func (s *Server) callAI(ctx context.Context, cfg aiProviderConfig, prompt string
 func (s *Server) callAIWithPolicy(ctx context.Context, cfg aiProviderConfig, prompt string, policy aiprovider.ValidationPolicy) (string, error) {
 	cfg = normalizeProvider(cfg)
 	profile := profileFromConfig(cfg)
-	options := aiprovider.RequestOptions{SystemPrompt: aiReviewSystemPrompt, MaxTokens: 2048}
+	options := aiprovider.RequestOptions{SystemPrompt: aiReviewSystemPrompt, MaxTokens: 4096, JSONResponse: true}
 	if cfg.APIKey != "" {
 		profile.Credential = aiprovider.Credential{Source: aiprovider.CredentialEnvironment, Reference: "NLI_AI_TRANSIENT_CREDENTIAL"}
 		return aiprovider.GenerateWithCredential(ctx, profile, cfg.APIKey, policy, prompt, options)
@@ -546,7 +546,7 @@ func (s *Server) handleAIProviderTest(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]any{"connected": false, "status": "failed", "message": message, "error_code": code, "tested_config": testInfo})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 17*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), aiRequestDeadline)
 	defer cancel()
 	result := (aiprovider.Tester{Policy: policy, Resolver: aiprovider.SecretResolver{AEAD: s.assurance.providerAEAD, SecretRoot: policy.SecretRoot}}).TestWithOptions(ctx, profileFromConfig(cfg), aiprovider.RequestOptions{Stream: input.Stream, ImageURL: input.ImageURL, MaxTokens: input.TestMaxTokens})
 	if !result.OK {
@@ -612,12 +612,23 @@ func (s *Server) handleAssuranceAIProposal(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "raw input is required", 400)
 		return
 	}
-	result := s.runAssurance(input)
+	if !validAIEvidenceSource(input.EvidenceSource) {
+		jsonError(w, "Invalid AI evidence source", http.StatusBadRequest)
+		return
+	}
+	if productionAssuranceEvidence(input.EvidenceSource, input.Source) {
+		s.aiPrivacy.record("assurance_proposal", aiPrivacyWithheld)
+		jsonError(w, "Production evidence stays on this controller. Use native mapping or a redacted manual example for external AI.", http.StatusUnprocessableEntity)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), aiRequestDeadline)
+	defer cancel()
+	result := s.runAssuranceContext(ctx, input)
 	if result["passed"] == true {
 		jsonError(w, "AI proposal is only available when deterministic assurance fails", 409)
 		return
 	}
-	cfg, _, err := s.loadAIProvider(r.Context())
+	cfg, _, err := s.loadAIProvider(ctx)
 	if err != nil {
 		jsonError(w, "AI provider is not configured or encryption is unavailable", 503)
 		return
@@ -633,33 +644,31 @@ func (s *Server) handleAssuranceAIProposal(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "AI review is busy; deterministic parsing remains available", 429)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 17*time.Second)
-	defer cancel()
 	prompt := s.aiReviewPromptWithContext(ctx, input, result)
 	aiStarted := time.Now()
 	aiMetricsSuccess := false
 	defer func() { s.aiMetrics.record(aiMetricsSuccess, time.Since(aiStarted)) }()
-	raw, usedProvider, attempts, err := s.callConfiguredAI(ctx, cfg, prompt)
+	s.recordAIAuthoring("assurance_proposal", input.Raw)
+	var proposal, parser map[string]any
+	_, usedProvider, attempts, err := s.callConfiguredAI(ctx, cfg, prompt, func(raw string) error {
+		proposal = nil
+		if json.Unmarshal(aiReplyJSON(raw), &proposal) != nil {
+			return &aiInvalidDraftError{message: "The model returned an invalid parser draft. Try Auto Fix with AI for a FieldSense mapping, or switch the model in AI Resolution & Providers."}
+		}
+		parser, _ = proposal["parser"].(map[string]any)
+		if parser == nil {
+			return &aiInvalidDraftError{message: "The model returned no declarative parser. Try Auto Fix with AI for a FieldSense mapping."}
+		}
+		if err := unsafeDeclarative(parser); err != nil {
+			return &aiInvalidDraftError{message: "AI proposal failed declarative safety validation"}
+		}
+		if err := validateAIParserSyntax(parser); err != nil {
+			return &aiInvalidDraftError{message: "AI proposal is not valid NLI parser syntax; no proposal was saved. Use the schema-aware Suggest with AI mapping option or correct the native parser definition."}
+		}
+		return nil
+	})
 	if err != nil {
 		writeAIWorkspaceFailure(w, err, attempts)
-		return
-	}
-	var proposal map[string]any
-	if json.Unmarshal(aiReplyJSON(raw), &proposal) != nil {
-		jsonError(w, "The model returned an invalid parser draft. Try Auto Fix with AI for a FieldSense mapping, or switch the model in AI Resolution & Providers.", http.StatusUnprocessableEntity)
-		return
-	}
-	parser, _ := proposal["parser"].(map[string]any)
-	if parser == nil {
-		jsonError(w, "The model returned no declarative parser. Try Auto Fix with AI for a FieldSense mapping.", http.StatusUnprocessableEntity)
-		return
-	}
-	if err := unsafeDeclarative(parser); err != nil {
-		jsonError(w, "AI proposal failed declarative safety validation", 422)
-		return
-	}
-	if err := validateAIParserSyntax(parser); err != nil {
-		jsonError(w, "AI proposal is not valid NLI parser syntax; no proposal was saved. Use the schema-aware Suggest with AI mapping option or correct the native parser definition.", 422)
 		return
 	}
 	categoryAliases := map[string][]string{

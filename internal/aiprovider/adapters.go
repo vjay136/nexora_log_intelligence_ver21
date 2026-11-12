@@ -43,6 +43,29 @@ type RequestOptions struct {
 	ImageURL     string
 }
 
+// Scope thinking controls to Gemini models with known support. A short
+// connection probe needs visible output within its bounded token allowance.
+func geminiThinkingConfig(model string, maxTokens int) map[string]any {
+	switch {
+	case strings.HasPrefix(model, "gemma-4-"):
+		return map[string]any{"thinkingLevel": "minimal"}
+	case strings.HasPrefix(model, "gemini-3.5-flash-lite"), strings.HasPrefix(model, "gemini-3.1-flash-lite") && !strings.Contains(model, "image"):
+		return map[string]any{"thinkingLevel": "minimal"}
+	case strings.HasPrefix(model, "gemini-3.5-flash"), strings.HasPrefix(model, "gemini-3.6-flash"), strings.HasPrefix(model, "gemini-3-flash"):
+		if maxTokens <= 1024 {
+			return map[string]any{"thinkingLevel": "minimal"}
+		}
+		return map[string]any{"thinkingLevel": "low"}
+	case strings.HasPrefix(model, "gemini-3.1-pro"), strings.HasPrefix(model, "gemini-3.7-flash"), strings.HasPrefix(model, "gemini-3.8-flash"):
+		return map[string]any{"thinkingLevel": "low"}
+	case strings.HasPrefix(model, "gemini-2.5-flash") && !strings.Contains(model, "image"):
+		if maxTokens <= 1024 {
+			return map[string]any{"thinkingBudget": 0}
+		}
+	}
+	return nil
+}
+
 func BuildRequestWithOptions(ctx context.Context, profile Profile, credential, prompt string, options RequestOptions) (*http.Request, error) {
 	profile = Normalize(profile)
 	if len(prompt) == 0 || len(prompt) > 64*1024 {
@@ -70,7 +93,11 @@ func BuildRequestWithOptions(ctx context.Context, profile Profile, credential, p
 	case KindGemini:
 		endpoint = appendEndpoint(profile.BaseURL, "models/"+url.PathEscape(profile.Model)+":generateContent")
 		generation := map[string]any{"maxOutputTokens": maxTokens}
-		if options.JSONResponse {
+		if thinking := geminiThinkingConfig(profile.Model, maxTokens); thinking != nil {
+			generation["thinkingConfig"] = thinking
+		}
+		// Gemma can emit JSON text, but the hosted API can reject forced JSON mode.
+		if options.JSONResponse && !strings.HasPrefix(profile.Model, "gemma-") {
 			generation["responseMimeType"] = "application/json"
 		}
 		body = map[string]any{"contents": []map[string]any{{"role": "user", "parts": []map[string]string{{"text": prompt}}}}, "generationConfig": generation}

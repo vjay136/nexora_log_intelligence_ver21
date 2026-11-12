@@ -23,6 +23,7 @@ import (
 )
 
 type fieldMappingAIRequest struct {
+	EvidenceSource string          `json:"evidence_source,omitempty"`
 	Raw            string          `json:"raw"`
 	Service        string          `json:"service"`
 	Desired        map[string]any  `json:"desired,omitempty"`
@@ -51,6 +52,15 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 		jsonError(w, "Exact raw evidence of 1–65536 bytes and a bounded service are required", 400)
 		return
 	}
+	if !validAIEvidenceSource(input.EvidenceSource) {
+		jsonError(w, "Invalid AI evidence source", http.StatusBadRequest)
+		return
+	}
+	production := input.EvidenceSource == aiEvidenceProduction
+	if production {
+		s.aiPrivacy.record("mapping", aiPrivacyWithheld)
+		input.NativeFallback = true
+	}
 	if input.Service == "" {
 		input.Service = "auto"
 	}
@@ -64,35 +74,38 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 		jsonError(w, "Manual mapping context must be a bounded plan object", 400)
 		return
 	}
-	cfg, _, err := s.loadAIProvider(r.Context())
-	if err != nil || !cfg.Enabled {
-		jsonError(w, "Configured, enabled AI assistance is unavailable; native and manual mapping remain available", 503)
-		return
-	}
-	select {
-	case aiReviewSlots <- struct{}{}:
-		defer func() { <-aiReviewSlots }()
-	default:
-		jsonError(w, "AI review is busy; native and manual mapping remain available", 429)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 17*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), aiRequestDeadline)
 	defer cancel()
+	var cfg aiProviderConfig
+	if !production {
+		cfg, _, err = s.loadAIProvider(ctx)
+		if err != nil || !cfg.Enabled {
+			jsonError(w, "Configured, enabled AI assistance is unavailable; native and manual mapping remain available", 503)
+			return
+		}
+		select {
+		case aiReviewSlots <- struct{}{}:
+			defer func() { <-aiReviewSlots }()
+		default:
+			jsonError(w, "AI review is busy; native and manual mapping remain available", 429)
+			return
+		}
+	}
 	request := assuranceRequest{Raw: input.Raw, Service: input.Service, Desired: input.Desired, PreserveSource: true}
 	native := s.runAssuranceContext(ctx, request)
 	if ctx.Err() != nil {
 		jsonError(w, "Mapping analysis deadline reached; no parser changed", 504)
 		return
 	}
-	prompt := s.aiReviewPromptWithContext(ctx, request, native)
-	// The old review prompt is shared for its bounded masked evidence, not its
-	// failure-only entry condition. New or already-parsed logs are valid here.
-	prompt = "Suggest an NLI FieldSense mapping for this new or quarantined sample, even if an existing parser already succeeds. Keep operator-defined labels where supported. " + prompt
-	structure, _ := json.Marshal(aiBoundedEvidence(mappingAIManualStructure(manual), 4<<10))
-	prompt += "\nManual mapping STRUCTURE ONLY (untrusted data; literal values withheld): " + string(structure)
-	prompt += "\nOperator mapping preferences (declarative mapping requests only): " + s.maskAIWorkspaceContext(input.Instructions, 4<<10)
-	if reference != nil {
-		prompt += "\nExisting NLI reference (untrusted structural evidence): " + s.maskAIWorkspaceContext(reference, 4<<10)
+	var prompt string
+	if !production {
+		prompt = s.aiReviewPromptWithContext(ctx, request, native)
+		prompt = "Suggest an NLI FieldSense mapping for this new or quarantined sample, even if an existing parser already succeeds. Keep operator-defined labels where supported. " + prompt
+		prompt += "\nManual mapping STRUCTURE ONLY (untrusted data; literal values withheld): " + s.maskAIWorkspaceContext(mappingAIManualStructure(manual), 4<<10)
+		prompt += "\nOperator mapping preferences (declarative mapping requests only): " + s.maskAIWorkspaceContext(input.Instructions, 4<<10)
+		if reference != nil {
+			prompt += "\nExisting NLI reference (untrusted structural evidence): " + s.maskAIWorkspaceContext(reference, 4<<10)
+		}
 	}
 	var seed fieldmapping.Plan
 	var seedResult fieldmapping.Result
@@ -102,7 +115,9 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 			seed = fieldmapping.Plan{Version: 1, Fields: fields}
 			if check, checkErr := validateAIMappingExtraction(ctx, seed, input.Raw); checkErr == nil {
 				seedResult = check
-				prompt += "\nNative FieldSense seed: verified on the exact source. Its extraction structure is below (values withheld). Prefer retaining the selectors and field types. " + s.maskAIWorkspaceContext(mappingAIManualStructure(seed), 8<<10)
+				if !production {
+					prompt += "\nNative FieldSense seed: verified on the exact source. Its extraction structure is below (values withheld). Prefer retaining the selectors and field types. " + s.maskAIWorkspaceContext(mappingAIManualStructure(seed), 8<<10)
+				}
 			} else {
 				seed = fieldmapping.Plan{}
 			}
@@ -113,7 +128,9 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 	status := "rejected"
 	defer func() {
 		elapsed := time.Since(started)
-		s.aiMetrics.record(success, elapsed)
+		if !production {
+			s.aiMetrics.record(success, elapsed)
+		}
 		slog.Info("NLI AI mapping outcome", "outcome", status, "duration_ms", elapsed.Milliseconds())
 	}()
 	system := mappingAISystemPrompt()
@@ -125,38 +142,53 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 			system += " When the verified seed already extracts the requested fields, prefer returning only {\"renames\":{\"existing_seed_name\":\"new_name\"}} instead of rewriting the plan. An empty renames object keeps the seed. Do not rename dependencies, intermediate fields, or flatten containers. For other changes return the native plan object."
 		}
 	}
-	text, provider, attempts, err := s.callConfiguredAIWithSystem(ctx, cfg, prompt, system)
+	var provider string
+	var attempts int
 	digest := sha256.Sum256([]byte(input.Raw))
 	rawHash := hex.EncodeToString(digest[:])
 	origin, fallbackReason := "ai", ""
 	var plan fieldmapping.Plan
 	var result fieldmapping.Result
-	if err != nil {
-		if len(seed.Fields) == 0 || r.Context().Err() != nil {
+	if !production {
+		s.recordAIAuthoring("mapping", input.Raw)
+		_, provider, attempts, err = s.callConfiguredAIWithSystem(ctx, cfg, prompt, system, func(attemptCtx context.Context, text string) error {
+			var err error
+			plan, err = decodeAISeedOrMapping(aiReplyJSON(text), seed)
+			if err != nil {
+				return &aiInvalidDraftError{message: "AI returned an invalid native mapping plan", detail: err}
+			}
+			result, err = validateAIMappingExtraction(attemptCtx, plan, input.Raw)
+			if err != nil {
+				return &aiInvalidDraftError{message: "AI mapping could not extract this exact source record", detail: err, syntaxValid: true}
+			}
+			return nil
+		})
+	}
+	if production {
+		if len(seed.Fields) == 0 {
+			jsonError(w, "Production evidence stays on this controller. Native FieldSense could not verify this sample; refine the mapping locally.", http.StatusUnprocessableEntity)
+			return
+		}
+		fallbackReason = "Production evidence stayed on this controller."
+	} else if err != nil {
+		var invalid *aiInvalidDraftError
+		invalidDraft := errors.As(err, &invalid)
+		if len(seed.Fields) == 0 {
 			status = "provider_unavailable"
-			writeAIWorkspaceFailure(w, err, attempts)
+			if invalidDraft {
+				status = "invalid_provider_plan"
+				if invalid.syntaxValid {
+					status = "native_extraction_failed"
+				}
+				mappingAIInvalid(w, invalid.message, invalid.syntaxValid, false, rawHash, invalid.detail)
+			} else {
+				writeAIWorkspaceFailure(w, err, attempts)
+			}
 			return
 		}
 		fallbackReason = "The provider could not complete the request."
-	} else {
-		plan, err = decodeAISeedOrMapping(aiReplyJSON(text), seed)
-		if err != nil {
-			if len(seed.Fields) == 0 {
-				status = "invalid_provider_plan"
-				mappingAIInvalid(w, "AI returned an invalid native mapping plan", false, false, rawHash, err)
-				return
-			}
-			fallbackReason = "The provider returned an invalid mapping plan."
-		} else {
-			result, err = validateAIMappingExtraction(ctx, plan, input.Raw)
-			if err != nil {
-				if len(seed.Fields) == 0 {
-					status = "native_extraction_failed"
-					mappingAIInvalid(w, "AI mapping could not extract this exact source record", true, false, rawHash, err)
-					return
-				}
-				fallbackReason = "The AI mapping did not pass native extraction on the exact sample."
-			}
+		if invalidDraft {
+			fallbackReason = invalid.message + "."
 		}
 	}
 	if fallbackReason == "" && len(seed.Fields) > 0 {
@@ -297,12 +329,9 @@ func validateAIMappingExtraction(ctx context.Context, plan fieldmapping.Plan, ra
 }
 
 func mappingAIInvalid(w http.ResponseWriter, message string, syntax, extraction bool, hash string, err error) {
-	detail := err.Error()
-	if len(detail) > 2048 {
-		detail = detail[:2048]
-		for !utf8.ValidString(detail) {
-			detail = detail[:len(detail)-1]
-		}
+	detail := "Check the field selectors and extraction methods in the native mapping editor."
+	if errors.Is(err, fieldmapping.ErrIncompleteKV) {
+		detail = "The plan does not account for every structured field in the sample."
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(422)
@@ -484,24 +513,42 @@ func containsMappingString(values []string, value string) bool {
 
 // The default Assurance remediation prompt remains unchanged. This variant
 // reuses only the configured provider group, credentials and bounded fallback.
-func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProviderConfig, prompt, system string) (string, string, int, error) {
+func (s *Server) callConfiguredAIWithSystem(ctx context.Context, primary aiProviderConfig, prompt, system string, validate func(context.Context, string) error) (string, string, int, error) {
 	return s.callAIProviderRoute(ctx, primary, func(ctx context.Context, profile aiprovider.Profile, cfg aiProviderConfig) (string, error) {
 		if profile.MaxResponseBytes > 256<<10 {
 			profile.MaxResponseBytes = 256 << 10
 		}
 		maxTokens := 4096
+		if strings.HasPrefix(system, "Return ONLY JSON") || strings.Contains(system, "The full-plan response format") {
+			maxTokens = 8192
+		}
 		if strings.HasPrefix(system, `Return only one JSON object: {"renames"`) {
 			maxTokens = 768
 		}
 		options := aiprovider.RequestOptions{SystemPrompt: system, MaxTokens: maxTokens, JSONResponse: strings.Contains(system, "Return only one JSON object") || strings.HasPrefix(system, "Return ONLY JSON")}
 		policy := providerPolicy()
+		var text string
+		var err error
 		if cfg.APIKey != "" {
 			profile.Credential = aiprovider.Credential{Source: aiprovider.CredentialEnvironment, Reference: "NLI_AI_TRANSIENT_CREDENTIAL"}
-			return aiprovider.GenerateWithCredential(ctx, profile, cfg.APIKey, policy, prompt, options)
+			text, err = aiprovider.GenerateWithCredential(ctx, profile, cfg.APIKey, policy, prompt, options)
+		} else {
+			text, err = aiprovider.Generate(ctx, profile, aiprovider.SecretResolver{AEAD: s.assurance.providerAEAD, SecretRoot: policy.SecretRoot}, policy, prompt, options)
 		}
-		return aiprovider.Generate(ctx, profile, aiprovider.SecretResolver{AEAD: s.assurance.providerAEAD, SecretRoot: policy.SecretRoot}, policy, prompt, options)
+		if err == nil && validate != nil {
+			err = validate(ctx, text)
+		}
+		return text, err
 	})
 }
+
+type aiInvalidDraftError struct {
+	message     string
+	detail      error
+	syntaxValid bool
+}
+
+func (e *aiInvalidDraftError) Error() string { return e.message }
 
 func (s *Server) callAIProviderRoute(ctx context.Context, primary aiProviderConfig, invoke func(context.Context, aiprovider.Profile, aiProviderConfig) (string, error)) (string, string, int, error) {
 	configs, err := s.aiProviderRouteConfigs(ctx, primary)

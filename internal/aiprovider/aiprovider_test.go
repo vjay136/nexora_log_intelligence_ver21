@@ -301,3 +301,45 @@ func TestTemplatesCoverAllKindsWithoutSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestGeminiThinkingAndTruncatedOutput(t *testing.T) {
+	for _, tc := range []struct {
+		model  string
+		tokens int
+		level  string
+	}{
+		{"gemma-4-31b-it", 64, "minimal"},
+		{"gemini-3.5-flash-lite", 4096, "minimal"},
+		{"gemini-3.1-pro-preview", 64, "low"},
+		{"custom-model", 4096, ""},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			req, err := BuildRequestWithOptions(context.Background(), Profile{Kind: KindGemini, Model: tc.model}, "test-key", "test", RequestOptions{MaxTokens: tc.tokens, JSONResponse: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer req.Body.Close()
+			var body struct {
+				Generation struct {
+					MIME     string `json:"responseMimeType"`
+					Thinking struct {
+						Level string `json:"thinkingLevel"`
+					} `json:"thinkingConfig"`
+				} `json:"generationConfig"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil || body.Generation.Thinking.Level != tc.level {
+				t.Fatalf("thinking level = %q, want %q, decode error %v", body.Generation.Thinking.Level, tc.level, err)
+			}
+			if hasJSON := body.Generation.MIME == "application/json"; hasJSON == strings.HasPrefix(tc.model, "gemma-") {
+				t.Fatalf("unexpected response MIME %q for %s", body.Generation.MIME, tc.model)
+			}
+		})
+	}
+	truncated := []byte(`{"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[{"text":"partial"}]}}]}`)
+	if _, err := ResponseText(KindGemini, truncated); !errors.Is(err, ErrOutputTokenLimit) {
+		t.Fatalf("truncated provider reply returned %v", err)
+	}
+	if usable, acknowledged, code := InspectJSONProbe(KindGemini, truncated); usable || !acknowledged || code != "incomplete_output" {
+		t.Fatalf("truncated probe result = %v, %v, %q", usable, acknowledged, code)
+	}
+}

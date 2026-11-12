@@ -109,6 +109,23 @@ func strictUnquotedPairValue(value, delimiters string, escape byte, multiSeparat
 
 func (r *record) keySource(cf compiledField) (string, int, int, bool, error) {
 	f := cf.field
+	if cf.kvHeader != nil {
+		indexes := r.matchRegex(cf.kvHeader)
+		if len(indexes) < 2 || indexes[0] != 0 || indexes[1] <= 0 {
+			return "", 0, 0, false, fmt.Errorf("%w: record does not match the configured header", ErrIncompleteKV)
+		}
+		start := indexes[1]
+		end := len(r.raw)
+		if f.EndOfLine {
+			if i := strings.IndexAny(r.raw[start:], "\r\n"); i >= 0 {
+				end = start + i
+			}
+		}
+		if strings.TrimSpace(r.raw[start:end]) == "" {
+			return "", 0, 0, false, nil
+		}
+		return r.raw[start:end], start, end, true, nil
+	}
 	if f.Source == "" || f.Source == "raw" {
 		end := len(r.raw)
 		if f.EndOfLine {

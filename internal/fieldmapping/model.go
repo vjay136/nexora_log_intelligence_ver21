@@ -108,6 +108,13 @@ type Field struct {
 	CustomPattern    string             `json:"custom_pattern,omitempty"`
 	Description      string             `json:"description,omitempty"`
 	Example          string             `json:"example,omitempty"`
+
+	KVHeaderPattern     string `json:"kv_header_pattern,omitempty"`
+	KVMaxPairs          int    `json:"kv_max_pairs,omitempty"`
+	KVLiteralBoundaries bool   `json:"kv_literal_boundaries,omitempty"`
+	KVBareField         string `json:"kv_bare_field,omitempty"`
+	KVEmptyKeyField     string `json:"kv_empty_key_field,omitempty"`
+
 	// These bounded display-only values allow existing browser drafts to be
 	// round-tripped without permitting arbitrary configuration properties.
 	ID         string `json:"id,omitempty"`
@@ -115,6 +122,11 @@ type Field struct {
 	Preview    string `json:"preview,omitempty"`
 	Evidence   string `json:"evidence,omitempty"`
 	Confidence string `json:"confidence,omitempty"`
+}
+
+// UsesAdvancedKV reports whether this field requires the advanced KV runtime.
+func (f Field) UsesAdvancedKV() bool {
+	return f.KVLiteralBoundaries || f.KVBareField != "" || f.KVEmptyKeyField != "" || f.KVHeaderPattern != "" || f.KVMaxPairs != 0
 }
 
 type KVInputEdit struct {
@@ -218,6 +230,7 @@ type compiledField struct {
 	tokenPattern  *regexp.Regexp
 	customPattern *regexp.Regexp
 	kvie          *kvieProfile
+	kvHeader      *regexp.Regexp
 }
 
 type Compiled struct{ fields []compiledField }
@@ -262,6 +275,7 @@ func Compile(plan Plan) (*Compiled, error) {
 	}
 	compiled := &Compiled{}
 	seen := map[string]bool{}
+	patterns := map[string]*regexp.Regexp{}
 	planBytes := 0
 	for _, original := range plan.Fields {
 		f := original
@@ -361,9 +375,14 @@ func Compile(plan Plan) (*Compiled, error) {
 				return nil, fmt.Errorf("field %q duplicate array policy requires array output type", f.Name)
 			}
 		case "regex":
-			re, err := boundedRegex(f.Source)
-			if err != nil {
-				return nil, fmt.Errorf("field %q: %w", f.Name, err)
+			re, ok := patterns[f.Source]
+			if !ok {
+				var err error
+				re, err = boundedRegex(f.Source)
+				if err != nil {
+					return nil, fmt.Errorf("field %q: %w", f.Name, err)
+				}
+				patterns[f.Source] = re
 			}
 			cf.pattern = re
 			if f.Part != "" {
@@ -443,6 +462,9 @@ func Compile(plan Plan) (*Compiled, error) {
 				value := *op.QuoteAware
 				cf.field.Operations[i].QuoteAware = &value
 			}
+		}
+		if f.KVHeaderPattern != "" {
+			cf.kvHeader = patterns[f.KVHeaderPattern]
 		}
 		if err := compileExtended(&cf, seen); err != nil {
 			return nil, fmt.Errorf("field %q: %w", f.Name, err)

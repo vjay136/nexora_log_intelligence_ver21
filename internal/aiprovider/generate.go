@@ -60,12 +60,18 @@ func GenerateWithCredential(ctx context.Context, profile Profile, credential str
 	client := NewSafeHTTPClient(policy, timeout)
 	response, err := client.Do(request)
 	if err != nil {
-		return "", errors.New("provider request failed or timed out")
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return "", errWithoutProviderDetails(err)
+		}
+		return "", ErrRequestTransport
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, profile.MaxResponseBytes+1))
 	if err != nil {
-		return "", errors.New("provider response could not be read")
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return "", errWithoutProviderDetails(err)
+		}
+		return "", ErrRequestTransport
 	}
 	if int64(len(data)) > profile.MaxResponseBytes {
 		return "", errors.New("provider response exceeded configured limit")
@@ -76,6 +82,18 @@ func GenerateWithCredential(ctx context.Context, profile Profile, credential str
 	return ResponseText(profile.Kind, data)
 }
 
+func errWithoutProviderDetails(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return context.Canceled
+}
+
+var (
+	ErrOutputTokenLimit = errors.New("provider output reached the token limit")
+	ErrRequestTransport = errors.New("provider transport did not complete the request")
+)
+
 // ResponseText shares existing supported response envelopes with review calls.
 func ResponseText(kind Kind, data []byte) (string, error) {
 	var envelope struct {
@@ -84,7 +102,8 @@ func ResponseText(kind Kind, data []byte) (string, error) {
 			Text string `json:"text"`
 		} `json:"content"`
 		Candidates []struct {
-			Content struct {
+			FinishReason string `json:"finishReason"`
+			Content      struct {
 				Parts []struct {
 					Text    string `json:"text"`
 					Thought bool   `json:"thought"`
@@ -95,7 +114,8 @@ func ResponseText(kind Kind, data []byte) (string, error) {
 			Content string `json:"content"`
 		} `json:"message"`
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
@@ -113,6 +133,9 @@ func ResponseText(kind Kind, data []byte) (string, error) {
 		}
 	case KindGemini:
 		if len(envelope.Candidates) > 0 {
+			if envelope.Candidates[0].FinishReason == "MAX_TOKENS" {
+				return "", ErrOutputTokenLimit
+			}
 			for _, part := range envelope.Candidates[0].Content.Parts {
 				if !part.Thought {
 					text.WriteString(part.Text)
@@ -123,6 +146,9 @@ func ResponseText(kind Kind, data []byte) (string, error) {
 		text.WriteString(envelope.Message.Content)
 	default:
 		if len(envelope.Choices) > 0 {
+			if envelope.Choices[0].FinishReason == "length" {
+				return "", ErrOutputTokenLimit
+			}
 			text.WriteString(envelope.Choices[0].Message.Content)
 		}
 	}

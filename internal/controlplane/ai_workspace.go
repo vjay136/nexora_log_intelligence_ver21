@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"nexora.local/nli-v20/internal/aiprovider"
 	"nexora.local/nli-v20/internal/masker"
 	"nexora.local/nli-v20/internal/middleware"
 	"nexora.local/nli-v20/internal/mixedkv"
@@ -161,13 +162,15 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "Unsupported AI draft type", http.StatusBadRequest)
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), aiRequestDeadline)
+	defer cancel()
 	var reference map[string]any
 	if input.Reference != nil {
 		if s.authorize(w, r, middleware.PermissionReadParsers) == nil {
 			return
 		}
 		var err error
-		reference, err = s.aiWorkspaceReference(r.Context(), *input.Reference)
+		reference, err = s.aiWorkspaceReference(ctx, *input.Reference)
 		if err != nil {
 			jsonError(w, "The selected NLI reference revision is unavailable", http.StatusBadRequest)
 			return
@@ -175,7 +178,17 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Mode == "fix" && (input.Artifact == "mapping" || input.Artifact == "parser") {
 		input.Instructions = input.Question
-		s.suggestAIMapping(w, r, input.fieldMappingAIRequest, reference)
+		s.suggestAIMapping(w, r.WithContext(ctx), input.fieldMappingAIRequest, reference)
+		return
+	}
+
+	if !validAIEvidenceSource(input.EvidenceSource) {
+		jsonError(w, "Invalid AI evidence source", http.StatusBadRequest)
+		return
+	}
+	if input.EvidenceSource == aiEvidenceProduction {
+		s.aiPrivacy.record("workspace", aiPrivacyWithheld)
+		jsonError(w, "Production evidence stays on this controller. Use native mapping or a redacted manual example for external AI.", http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -188,7 +201,7 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 		system = aiWorkspaceGuide + " " + aiWorkspaceWorkflows[input.Workspace] + " Return only one JSON object with keys answer and config. " + aiWorkspaceArtifactInstructions[input.Artifact]
 	}
-	cfg, _, err := s.loadAIProvider(r.Context())
+	cfg, _, err := s.loadAIProvider(ctx)
 	if err != nil || !cfg.Enabled {
 		jsonError(w, "Enable and test an AI provider in AI Resolution & Providers first", http.StatusServiceUnavailable)
 		return
@@ -200,8 +213,6 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "AI is busy. Retry after the current requests finish", http.StatusTooManyRequests)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 17*time.Second)
-	defer cancel()
 	prompt := "NLI workspace request and evidence (masked): " + s.maskAIWorkspaceContext(map[string]any{
 		"workspace": input.Workspace, "tab": input.Tab, "controls": input.Controls, "mode": input.Mode,
 		"question": input.Question, "artifact": input.Artifact, "service": input.Service,
@@ -210,7 +221,27 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	success := false
 	defer func() { s.aiMetrics.record(success, time.Since(started)) }()
-	reply, provider, attempts, err := s.callConfiguredAIWithSystem(ctx, cfg, prompt, system)
+	s.recordAIAuthoring("workspace", input.Raw)
+	var draft struct {
+		Answer string         `json:"answer"`
+		Config map[string]any `json:"config"`
+	}
+	var validation map[string]any
+	reply, provider, attempts, err := s.callConfiguredAIWithSystem(ctx, cfg, prompt, system, func(_ context.Context, reply string) error {
+		if !isDraft {
+			return nil
+		}
+		draft.Answer, draft.Config = "", nil
+		if strictJSON(aiReplyJSON(reply), &draft) != nil || draft.Config == nil {
+			return &aiInvalidDraftError{message: "The provider did not return a usable NLI draft. Retry with a more specific sample or request"}
+		}
+		var err error
+		validation, err = validateAIWorkspaceAsset(input.Artifact, input.Raw, draft.Config)
+		if err != nil {
+			return &aiInvalidDraftError{message: err.Error()}
+		}
+		return nil
+	})
 	if err != nil {
 		writeAIWorkspaceFailure(w, err, attempts)
 		return
@@ -218,19 +249,6 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 	response := map[string]any{"provider_id": provider, "provider_attempts": attempts,
 		"review_only": true, "activated": false, "persisted": false, "provider_routing": aiRoutingOutcome(cfg.ID, provider, attempts)}
 	if isDraft {
-		var draft struct {
-			Answer string         `json:"answer"`
-			Config map[string]any `json:"config"`
-		}
-		if strictJSON(aiReplyJSON(reply), &draft) != nil || draft.Config == nil {
-			jsonError(w, "The provider did not return a usable NLI draft. Retry with a more specific sample or request", http.StatusUnprocessableEntity)
-			return
-		}
-		validation, err := validateAIWorkspaceAsset(input.Artifact, input.Raw, draft.Config)
-		if err != nil {
-			jsonError(w, err.Error(), http.StatusUnprocessableEntity)
-			return
-		}
 		response["answer"] = masker.MaskSecrets(draft.Answer)
 		response["proposal"] = map[string]any{"kind": input.Artifact, "config": draft.Config}
 		response["validation"] = validation
@@ -477,13 +495,18 @@ var aiProviderHTTPStatus = regexp.MustCompile(`provider returned HTTP ([0-9]{3})
 func writeAIWorkspaceFailure(w http.ResponseWriter, err error, attempts int) {
 	status, code := http.StatusBadGateway, "provider_failure"
 	message := "AI did not return a usable reply. Check the saved provider with Test connection and retry."
+	var invalid *aiInvalidDraftError
 	switch {
+	case errors.As(err, &invalid):
+		status, code, message = http.StatusUnprocessableEntity, "invalid_draft", invalid.message
 	case errors.Is(err, context.DeadlineExceeded):
-		status, code, message = http.StatusGatewayTimeout, "timeout", "AI did not reply before the request deadline. Retry or choose a faster configured model."
+		status, code, message = http.StatusGatewayTimeout, "timeout", "The provider reached its configured attempt timeout or the controller request deadline. Check the profile timeout or select an available fallback model."
 	case strings.Contains(err.Error(), "credential"):
 		code, message = "credential_unavailable", aiConnectionMessage("credential_unavailable")
-	case strings.Contains(err.Error(), "request failed or timed out"):
+	case errors.Is(err, aiprovider.ErrRequestTransport):
 		code, message = "network_error", "The controller could not complete the provider request. Check its network connection and configured provider timeout."
+	case errors.Is(err, aiprovider.ErrOutputTokenLimit):
+		status, code, message = http.StatusUnprocessableEntity, "incomplete_output", "The model reached its output token limit before completing the reply. Try a smaller sample or another model."
 	case strings.Contains(err.Error(), "no text content"), strings.Contains(err.Error(), "invalid JSON"):
 		code, message = "invalid_protocol_response", aiConnectionMessage("invalid_protocol_response")
 	case strings.Contains(err.Error(), "exceeded configured limit"):

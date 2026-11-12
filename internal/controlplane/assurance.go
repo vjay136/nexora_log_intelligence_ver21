@@ -71,6 +71,7 @@ type assuranceSecret struct {
 	FieldMapping map[string]string `json:"field_mapping,omitempty"`
 }
 type assuranceRequest struct {
+	EvidenceSource string            `json:"evidence_source,omitempty"`
 	Raw            string            `json:"raw"`
 	Desired        map[string]any    `json:"desired,omitempty"`
 	Service        string            `json:"service"`
