@@ -1,5 +1,9 @@
 # Changelog
 
+## 22.14.0-0
+
+- Account for a fourth component in numeric-prefix mail headers and verify the combined KV output.
+
 ## 22.13.0-0
 
 - Verify structural source coverage before selecting a parser and add sample-driven template authoring.

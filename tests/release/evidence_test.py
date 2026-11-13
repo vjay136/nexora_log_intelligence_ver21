@@ -39,7 +39,7 @@ class EvidenceGeneratorTest(unittest.TestCase):
                 "CLOUDFLARE_PAGES_DEPLOYMENT.md",
                 "WEBAPP_OPERATOR_AND_PARSER_GUIDE.md",
                 "PARSER_CATALOG.md",
-                "V22_13_RELEASE_NOTES.md",
+                "V22_14_RELEASE_NOTES.md",
                 "All_NLI_features.md",
                 "V21_R1_RELEASE_NOTES.md",
                 "V21_R1_TEST_RESULTS.md",

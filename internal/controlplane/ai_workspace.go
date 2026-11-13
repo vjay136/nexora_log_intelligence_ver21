@@ -351,7 +351,7 @@ func (s *Server) aiWorkspaceReference(ctx context.Context, reference aiWorkspace
 
 var aiObservedKey = regexp.MustCompile(`(?:^|[\s;:|,\[{])([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*[=:;]`)
 
-const aiMailHeaderPattern = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>[^ \t\r\n]+)[ \t]+(?P<service>[^ \t\r\n]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?:(?P<random_number>[0-9]+);)?(?P<event_type>[^; \t\r\n]+);(?P<event>[^;() \t\r\n]+)(?:\((?P<event_code>[^()\s]+)\))?`
+const aiMailHeaderPattern = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>[^ \t\r\n]+)[ \t]+(?P<service>[^ \t\r\n]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?:(?P<random_number>[0-9]+);(?:(?P<extra_tag>[^; \t\r\n]+);)?)?(?P<event_type>[^; \t\r\n]+);(?P<event>[^;() \t\r\n]+)(?:\((?P<event_code>[^()\s]+)\))?`
 
 var aiMailHeader = regexp.MustCompile(aiMailHeaderPattern)
 
@@ -391,7 +391,7 @@ func aiNativeMailAsset(kind, raw string) map[string]any {
 		}
 		config := map[string]any{"engine": "re2", "pattern": pattern, "fields": fields}
 		if kind == "template" {
-			config["optional_fields"] = []any{"random_number", "event_code"}
+			config["optional_fields"] = []any{"random_number", "extra_tag", "event_code"}
 		}
 		return config
 	case "pattern":

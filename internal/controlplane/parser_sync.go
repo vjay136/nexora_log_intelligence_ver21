@@ -424,6 +424,7 @@ const (
 	kvInputEditsMinimumRelease  = "22.2.0-0"
 	advancedKVMinimumRelease    = "22.11.0-0"
 	largeKVMinimumRelease       = "22.12.0-0"
+	taggedMailMinimumRelease    = "22.14.0-0"
 )
 
 // Inspect native stage content so imported packs cannot bypass the release
@@ -451,8 +452,15 @@ func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
 					continue
 				}
 				for _, field := range stage.Config.Fields {
+					if taggedMailTemplateField(field) {
+						return taggedMailMinimumRelease
+					}
 					if field.UsesLargeKV() {
-						return largeKVMinimumRelease
+						minimum = largeKVMinimumRelease
+						continue
+					}
+					if minimum == largeKVMinimumRelease {
+						continue
 					}
 					if field.UsesAdvancedKV() {
 						minimum = advancedKVMinimumRelease
@@ -466,6 +474,10 @@ func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
 		}
 	}
 	return minimum
+}
+
+func taggedMailTemplateField(field fieldmapping.Field) bool {
+	return strings.Contains(field.KVHeaderPattern, "<extra_tag>")
 }
 
 func parserClientSupportsKVRelease(version, minimumRelease string) bool {

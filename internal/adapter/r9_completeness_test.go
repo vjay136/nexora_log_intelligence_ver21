@@ -241,6 +241,13 @@ func TestNumericSMTPHeaderBuiltInAndReviewedComposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := engine.Source{Service: "auto"}
+	tagged := baseline.TryParseV5Production(strings.Replace(header, "123456;", "123456;abcd;", 1)+" status=failed;reason=not needed", source)
+	if !tagged.Success || tagged.EventPayload == nil || tagged.EventPayload.FieldCount() != 13 ||
+		tagged.EventPayload.Fields["extra_tag"] != "abcd" || tagged.EventPayload.Fields["loglevel"] != "Note" ||
+		tagged.EventPayload.Fields["event"] != "SieveRuleMsg" || tagged.EventPayload.Fields["status"] != "failed" ||
+		tagged.EventPayload.Fields["reason"] != "not needed" {
+		t.Fatalf("tagged header and KV tail were not normalized together: %+v", tagged)
+	}
 	for _, test := range []struct {
 		tail       string
 		wantFields int

@@ -353,6 +353,12 @@ func assuranceMappingRuntimePack(id, version, author string, definition map[stri
 			minimumClient = advancedKVMinimumRelease
 		}
 	}
+	for _, field := range plan.Fields {
+		if taggedMailTemplateField(field) {
+			minimumClient = taggedMailMinimumRelease
+			break
+		}
+	}
 	sort.Strings(names)
 	limits := parserpolicy.DefaultResourceLimits()
 	limits.MaxAttempts = 1

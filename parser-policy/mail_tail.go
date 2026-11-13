@@ -248,7 +248,7 @@ func DefaultCompleteSMTPMailPack() *ParserPack {
 }
 
 func numericSMTPHeaderRule() (ParserRule, []RegressionCase) {
-	const pattern = `^[ \t]*(?P<date>[0-9]{8})[ \t]+(?P<time_timezone>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>\S+)[ \t]+(?P<service>smtp)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?P<random_number>[0-9]+);(?P<loglevel>[^;\s]+);(?P<event>[^;()\s]+)(?:\((?P<event_code>[^()\s]+)\))?(?:[ \t]+|[\r\n]*$)`
+	const pattern = `^[ \t]*(?P<date>[0-9]{8})[ \t]+(?P<time_timezone>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>\S+)[ \t]+(?P<service>smtp)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?P<random_number>[0-9]+);(?:(?P<extra_tag>[^;\s]+);)?(?P<loglevel>[^;\s]+);(?P<event>[^;()\s]+)(?:\((?P<event_code>[^()\s]+)\))?(?:[ \t]+|[\r\n]*$)`
 	const ruleID = "smtp_numeric_prefix"
 	plan := fieldmapping.Plan{Version: 1}
 	for _, name := range []string{"date", "time_timezone", "hostname", "service", "pid", "minor_pid", "thread_id", "random_number", "loglevel", "event"} {
@@ -258,7 +258,9 @@ func numericSMTPHeaderRule() (ParserRule, []RegressionCase) {
 		}
 		plan.Fields = append(plan.Fields, fieldmapping.Field{Name: name, Type: typeName, Method: "regex", Source: pattern, Part: name, Policy: "required"})
 	}
-	plan.Fields = append(plan.Fields, fieldmapping.Field{Name: "event_code", Type: "string", Method: "regex", Source: pattern, Part: "event_code", Policy: "optional"})
+	for _, name := range []string{"extra_tag", "event_code"} {
+		plan.Fields = append(plan.Fields, fieldmapping.Field{Name: name, Type: "string", Method: "regex", Source: pattern, Part: name, Policy: "optional"})
+	}
 	plan.Fields = append(plan.Fields, fieldmapping.Field{
 		Name: "kv_pair", Type: "object", Method: "kv_all", Policy: "optional", OutputPolicy: "flatten",
 		KVHeaderPattern: pattern, KVProfile: "configured", KVLiteralBoundaries: true,
@@ -282,7 +284,12 @@ func numericSMTPHeaderRule() (ParserRule, []RegressionCase) {
 	withTail := output()
 	withTail["status"] = "failed"
 	withTail["reason"] = "not needed"
+	tagged := output()
+	tagged["extra_tag"] = "abcd"
+	tagged["status"] = "failed"
+	tagged["reason"] = "not needed"
 	return rule, []RegressionCase{
+		{Name: "smtp_numeric_prefix_with_extra_tag", Input: strings.Replace(header, "123456;", "123456;abcd;", 1) + " status=failed;reason=not needed", Service: "smtp", SourceType: "file", ExpectedParser: MailTailPackID + "/" + ruleID, ExpectedRoute: "normal", ExpectedPayload: tagged},
 		{Name: "smtp_numeric_prefix_only", Input: header, Service: "smtp", SourceType: "file", ExpectedParser: MailTailPackID + "/" + ruleID, ExpectedRoute: "normal", ExpectedPayload: output()},
 		{Name: "smtp_numeric_prefix_and_tail", Input: header + " status=failed;reason=not needed", Service: "smtp", SourceType: "file", ExpectedParser: MailTailPackID + "/" + ruleID, ExpectedRoute: "normal", ExpectedPayload: withTail},
 	}

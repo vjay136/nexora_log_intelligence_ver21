@@ -13,15 +13,15 @@ const extendedMailLead = `^\s*(\d{8})\s+(\d{9}[+-]\d{4})\s+(\S+)\s+(\S+)\s+(\d+)
 
 var (
 	extendedMailPrefix = regexp.MustCompile(extendedMailLead)
-	extendedMailHeader = regexp.MustCompile(extendedMailLead + `([^;\s]+);([^;()\s]+)(?:\(([^()\s]+)\))?(?:\s|$)`)
+	extendedMailHeader = regexp.MustCompile(extendedMailLead + `(?:([^;\s]+);)?([^;\s]+);([^;()\s]+)(?:\(([^()\s]+)\))?(?:\s|$)`)
 )
 
-var mailComponentNames = [...]string{"date", "timestamp", "hostname", "service", "pid", "minor_pid", "thread_id", "random_number", "loglevel", "event", "event_code"}
+var mailComponentNames = [...]string{"date", "timestamp", "hostname", "service", "pid", "minor_pid", "thread_id", "random_number", "extra_tag", "loglevel", "event", "event_code"}
 
 var extendedMailAliases = map[string]string{
 	"date": "date", "timestamp": "timestamp", "time_timezone": "timestamp",
 	"hostname": "hostname", "service": "service", "pid": "pid", "thread_id": "thread_id",
-	"random_number": "random_number",
+	"random_number": "random_number", "extra_tag": "extra_tag",
 	"loglevel":      "loglevel", "event_type": "loglevel", "level": "loglevel",
 	"event": "event", "event_name": "event", "event_code": "event_code", "code": "event_code",
 }

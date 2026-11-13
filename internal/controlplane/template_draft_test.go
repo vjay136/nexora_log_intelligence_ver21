@@ -2,12 +2,13 @@ package controlplane
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
 func TestTemplateDraftFromSamples(t *testing.T) {
 	f := newAPIFixture(t)
-	smtp := "20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 123456;Note;SieveRuleMsg status=failed;reason=not needed"
+	smtp := "20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 123456;abcd;Note;SieveRuleMsg status=failed;reason=not needed"
 	card := "20260401 134601279+0100 server001 pabd 250410 0 139764638705408 Note;CARDDAV id=002fac3e:HTTP CHALLENGE REQUEST:method=1:realm=mx:address=11.22.33.44"
 	samples := []string{smtp, card}
 	const path = "/api/v1/field-mapping/template-draft"
@@ -25,9 +26,18 @@ func TestTemplateDraftFromSamples(t *testing.T) {
 	}
 	header := check("template")
 	examples := header["examples"].([]any)
+	if got := examples[0].(map[string]any)["tail_start_byte"]; got != float64(strings.Index(smtp, "status=")) {
+		t.Fatalf("KV boundary does not point to the first assignment: %v", got)
+	}
 	prefix := examples[0].(map[string]any)["actual"].(map[string]any)
-	if prefix["random_number"] != "123456" || prefix["event_type"] != "Note" || prefix["event"] != "SieveRuleMsg" {
+	if prefix["extra_tag"] != "abcd" || prefix["random_number"] != "123456" || prefix["event_type"] != "Note" || prefix["event"] != "SieveRuleMsg" {
 		t.Fatalf("incorrect prefix: %v", prefix)
+	}
+	legacy := aiNativeMailAsset("template", card)
+	delete(legacy["fields"].(map[string]any), "extra_tag")
+	legacy["optional_fields"] = []any{"random_number", "event_code"}
+	if _, err := validateAIWorkspaceAsset("template", smtp, legacy); err == nil {
+		t.Fatal("a template missing extra_tag passed on the tagged sample")
 	}
 	kv := check("kv_template")
 	examples = kv["examples"].([]any)

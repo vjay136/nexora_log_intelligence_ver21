@@ -51,7 +51,7 @@ test('Log Pattern Templates opens a combined header and advanced KV plan', async
   await page.getByRole('button', {name:'Open combined mapping in FieldSense'}).click();
   await expect(page.locator('#nfi-raw')).toHaveValue(sample);
   const fields = page.locator('#qrw-field-rows tr');
-  await expect(fields).toHaveCount(12);
+  await expect(fields).toHaveCount(13);
   await expect(fields.last().locator('[data-qrw-key=source]')).toHaveValue('9');
   await expect(fields.last().locator('[data-qrw-key=policy]')).toHaveValue('optional');
   await expect(fields.last().locator('[data-qrw-key=kv_literal_boundaries]')).toBeChecked();

@@ -34,7 +34,7 @@ func TestStructuralMailHeaderIntegrity(t *testing.T) {
 			t.Fatalf("%s: source proof %+v, expected %q", key, proof, want)
 		}
 	}
-	malformed := strings.Replace(raw, "Note;SieveRuleMsg", "Note;SieveRuleMsg;lost", 1)
+	malformed := strings.Replace(raw, "Note;SieveRuleMsg", "extra;another;Note;SieveRuleMsg", 1)
 	if !HasMailHeaderExtension(malformed) || !errors.Is(ValidateMailHeader(malformed, result.Evidence), ErrIncompleteHeader) {
 		t.Fatal("malformed recognized prefix bypassed header integrity")
 	}

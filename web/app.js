@@ -62,9 +62,9 @@
     kv: ['/config/kv', 'KV delimiter policy', { pair_separators: [':', ';', ','], assignment_separators: ['=', ':'], quotes: ['single', 'double'], duplicate_policy: 'last', max_fields: 256 }],
     'header-templates': ['/config/templates', 'Log pattern templates', {
       engine:'re2',
-      pattern:'^(?P<date>[0-9]{8})[ \\t]+(?P<timestamp>[^ \\t]+)[ \\t]+(?P<hostname>[^ \\t]+)[ \\t]+(?P<service>[^ \\t]+)[ \\t]+(?P<pid>[0-9]+)[ \\t]+(?P<minor_pid>[0-9]+)[ \\t]+(?P<thread_id>[0-9]+)[ \\t]+(?:(?P<random_number>[0-9]+);)?(?P<event_type>[^; \\t]+);(?P<event>[^;() \\t]+)(?:\\((?P<event_code>[^()\\s]+)\\))?(?:[ \\t]+|$)',
-      fields:{date:'date',timestamp:'timestamp',hostname:'hostname',service:'service',pid:'pid',minor_pid:'minor_pid',thread_id:'thread_id',random_number:'random_number',event_type:'event_type',event:'event',event_code:'event_code'},
-      optional_fields:['random_number','event_code'],resource_limits:{max_input_bytes:1048576,timeout_ms:50},
+      pattern:'^(?P<date>[0-9]{8})[ \\t]+(?P<timestamp>[^ \\t]+)[ \\t]+(?P<hostname>[^ \\t]+)[ \\t]+(?P<service>[^ \\t]+)[ \\t]+(?P<pid>[0-9]+)[ \\t]+(?P<minor_pid>[0-9]+)[ \\t]+(?P<thread_id>[0-9]+)[ \\t]+(?:(?P<random_number>[0-9]+);(?:(?P<extra_tag>[^; \\t]+);)?)?(?P<event_type>[^; \\t]+);(?P<event>[^;() \\t]+)(?:\\((?P<event_code>[^()\\s]+)\\))?(?:[ \\t]+|$)',
+      fields:{date:'date',timestamp:'timestamp',hostname:'hostname',service:'service',pid:'pid',minor_pid:'minor_pid',thread_id:'thread_id',random_number:'random_number',extra_tag:'extra_tag',event_type:'event_type',event:'event',event_code:'event_code'},
+      optional_fields:['random_number','extra_tag','event_code'],resource_limits:{max_input_bytes:1048576,timeout_ms:50},
     }],
     'kv-templates': ['/config/kv', 'KV pair templates', {
       pair_separators:[':', ';', '|'],assignment_separators:['='],literal_boundaries:true,
@@ -3406,6 +3406,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         const body = {kind:button.dataset.artifact,samples};
         if (!generate) body.config=parseJSON(original,'Configuration JSON');
         if (!generate && (!body.config || Array.isArray(body.config) || typeof body.config!=='object')) throw new Error('Enter a configuration JSON object.');
+        page.dataset.dirty='true';
         host.hidden=false;
         host.textContent='Checking the supplied samples…';
         button.disabled=true;
@@ -3474,7 +3475,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         const raw = el('template-composition-sample')?.value.split(/\r?\n/).find(line=>line.trim());
         if (!raw) throw new Error('Paste one representative log record.');
         state.nfiRaw = raw;
-        state.nfiScopePattern = /^[0-9]{8}\s+\S+\s+\S+\s+\S+\s+[0-9]+\s+[0-9]+\s+[0-9]+\s+(?:[0-9]+;)?[^;\s]+;[^;\s]+(\s|$)/.source;
+        state.nfiScopePattern = /^[0-9]{8}\s+\S+\s+\S+\s+\S+\s+[0-9]+\s+[0-9]+\s+[0-9]+\s+(?:[0-9]+;(?:[^;\s]+;)?)?[^;\s]+;[^;\s]+(\s|$)/.source;
         state.nfiService='auto';
         state.nfiGlobalScope=false;
         await navigate('field-mapping');
@@ -3483,7 +3484,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
           name,label:name,method:'position',source:String(index+1),policy:'required',
         }));
         const eventHeader = CONFIG['header-templates'][2].pattern;
-        for (const name of ['random_number','event_type','event','event_code']) {
+        for (const name of ['random_number','extra_tag','event_type','event','event_code']) {
           state.qrwFields.push(qrwField({name,label:name,method:'regex',source:eventHeader,part:name,
             policy:CONFIG['header-templates'][2].optional_fields.includes(name)?'optional':'required'}));
         }
@@ -3881,7 +3882,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   setInterval(()=>refreshDashboardHistoryInBackground(),5000);
   // Reconcile the current workspace while preserving any form the operator has started editing.
   setInterval(async()=>{
-    if(!state.user || state.loadingPage || document.hidden || page.dataset.dirty==='true' || !LOADERS[state.page] || SYNC_PAGES.has(state.page))return;
+    if(!state.user || state.loadingPage || document.hidden || page.dataset.dirty==='true' || !LOADERS[state.page] || SYNC_PAGES.has(state.page) || ['header-templates','kv-templates'].includes(state.page))return;
     const refreshAge=state.page==='ai'?5000:(state.page==='operations'?15000:30000);
     if(state.loadedAt && Date.now()-state.loadedAt<refreshAge)return;
     const current=state.page;
