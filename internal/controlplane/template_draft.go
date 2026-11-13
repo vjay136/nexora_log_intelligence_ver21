@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"nexora.local/nli-v20/internal/mixedkv"
@@ -36,6 +37,14 @@ func (s *Server) handleTemplateDraft(w http.ResponseWriter, r *http.Request) {
 	if input.Config == nil {
 		if input.Kind == "template" {
 			input.Config = aiNativeMailAsset(input.Kind, input.Samples[0])
+			if input.Config != nil {
+				pattern, optional := mailTemplatePattern(input.Samples...)
+				fields := map[string]any{}
+				for _, name := range regexp.MustCompile(pattern).SubexpNames()[1:] {
+					fields[name] = name
+				}
+				input.Config["pattern"], input.Config["fields"], input.Config["optional_fields"] = pattern, fields, optional
+			}
 		} else {
 			input.Config = suggestKVTemplate(ctx, input.Samples)
 		}

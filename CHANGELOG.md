@@ -1,5 +1,9 @@
 # Changelog
 
+## 22.14.1-0
+
+- Add numbered template fields, sample reset and shared template authoring controls.
+
 ## 22.14.0-0
 
 - Account for a fourth component in numeric-prefix mail headers and verify the combined KV output.

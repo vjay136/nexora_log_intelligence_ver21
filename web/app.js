@@ -900,6 +900,19 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     page.insertAdjacentHTML('afterbegin',workspaceAIActions());
     const analysis=page.querySelector('#assurance-form');
     if(analysis)analysis.insertAdjacentHTML('beforeend',mapSampleButton('Assurance analysis')+'<button type="button" class="secondary" data-action="assurance-reset-sample">Reset analysis sample</button>');
+    if (!['header-templates','kv-templates'].includes(state.page)) {
+      if (state.page === 'knownkeys') {
+        page.querySelector('#config-form')?.insertAdjacentHTML('beforebegin', '<label class="field">Raw log sample for template creation<textarea name="raw" rows="3" spellcheck="false"></textarea></label>');
+      }
+      for (const input of page.querySelectorAll('textarea[name=raw],textarea[name=samples],textarea[name=raw_evidence],textarea[data-ai-mapping-raw],textarea#nfi-raw,textarea#block-raw')) {
+        input.insertAdjacentHTML('afterend','<div class="actions" data-sample-template-actions><button type="button" class="secondary" data-action="template-from-sample" data-kind="header-templates">Create log pattern template</button><button type="button" class="secondary" data-action="template-from-sample" data-kind="kv-templates">Create KV pair template</button><button type="button" class="secondary" data-action="reset-source-sample">Clear raw sample</button></div>');
+      }
+      if (['quarantine-wizard','field-mapping','assurance'].includes(state.page)) {
+        for (const editor of page.querySelectorAll('.qrw-field-editor .section-head .actions')) {
+          editor.insertAdjacentHTML('beforeend','<button type="button" class="secondary" data-action="template-from-sample" data-kind="header-templates">Create log pattern template</button><button type="button" class="secondary" data-action="template-from-sample" data-kind="kv-templates">Create KV pair template</button>');
+        }
+      }
+    }
     for(const form of page.querySelectorAll('#parser-workspace-form,#parser-helper-form,#gprs-parser-helper-form')){
       const sample=form.querySelector('[name=samples]');
       sample?.closest('label')?.insertAdjacentHTML('afterend',`<div class="actions wide">${mapSampleButton('Parser creation sample')}</div>`);
@@ -2240,6 +2253,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         '<label class="field">Sample log<textarea id="template-composition-sample" rows="6" spellcheck="false"></textarea></label>' +
         '<div class="actions"><button type="button" class="primary" data-action="template-draft-generate" data-artifact="' + artifact + '">Generate draft JSON</button>' +
         '<button type="button" class="secondary" data-action="workspace-ai-open" data-template-sample data-mode="fix" data-tab="' + title + '" data-artifact="' + artifact + '">Draft with Nexora AI</button>' +
+        '<button type="button" class="secondary" data-action="template-reset-samples">Reset samples</button>' +
         '<button type="button" class="secondary" data-action="template-draft-verify" data-artifact="' + artifact + '">Verify current JSON</button></div>' +
         '<pre class="json-output" id="template-draft-result" role="status" hidden></pre>') +
         panel('Preview header and KV together','Choose exact saved revisions and verify both templates against the sample logs above. Open the verified mapping in FieldSense to build a parser pack for review.',
@@ -3394,6 +3408,40 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       case 'nfi-use-profile': {nfiLoadProfile(Number(button.dataset.index));break;}
       case 'nfi-repair-candidate': {const result=await api('/assurance/parsers/'+encodeURIComponent(id)+'/clone-draft',{method:'POST',body:{reason:'Operator requested editable FieldSense repair revision'}});if(!result.id)throw new Error('Controller did not return a repair draft identifier');await action({dataset:{action:'nfi-edit-candidate',id:result.id}});toast('Repair draft created. The original production revision is preserved; validate and review this draft before any deployment.');break;}
       case 'nfi-edit-candidate': {const doc=await api('/assurance/parsers/'+encodeURIComponent(id)),payload=doc.payload||doc,parser=payload.parser;if(!['draft','rejected'].includes(doc.state))throw new Error('Only draft/rejected candidates can be edited');if(parser?.pattern_type!=='mapping'){await navigate('parser-workspace');await action({dataset:{action:'parser-workspace-load',id}});toast('Canonical repair draft loaded in Parser Creation Workspace; original production revision is preserved.');break;}state.nfiEditId=id;state.nfiName=payload.name||id;state.nfiVersion=payload.version||'0.1.0';state.nfiParser=parser;state.nfiCases=payload.cases||[];state.nfiRaw=state.nfiCases[0]?.raw||'';state.nfiService=Array.isArray(parser.service_scope)?parser.service_scope.join(','):parser.service_scope||'auto';state.nfiMappingPriority=Number(parser.mapping_priority)||0;state.nfiScopePattern=parser.scope_pattern||'';state.nfiGlobalScope=parser.reviewed_global_scope===true;state.qrwFields=(parser.mapping_plan?.fields||[]).map(field=>qrwField({...field,status:'unresolved'}));qrwControllerPreview=null;await navigate('field-mapping');toast('Native plan loaded for an editable revision; service scope and ordered operations preserved');break;}
+      case 'reset-source-sample': {
+        const input = button.closest('[data-sample-template-actions]')?.previousElementSibling;
+        if (!(input instanceof HTMLTextAreaElement)) break;
+        input.value = '';
+        input.dispatchEvent(new Event('input',{bubbles:true}));
+        input.focus();
+        break;
+      }
+      case 'template-from-sample': {
+        const source = button.closest('[data-sample-template-actions]')?.previousElementSibling;
+        const raw = source?.value ?? workspaceAISample(button);
+        if (!raw.trim()) throw new Error('Load or paste a raw log sample first.');
+        await navigate(button.dataset.kind);
+        const sample = el('template-composition-sample');
+        if (sample && state.page === button.dataset.kind) {
+          sample.value = raw;
+          sample.dispatchEvent(new Event('input',{bubbles:true}));
+          sample.focus();
+        }
+        break;
+      }
+      case 'template-reset-samples': {
+        const sample = el('template-composition-sample');
+        sample.value = '';
+        for (const id of ['template-draft-result','template-composition-result']) {
+          const output = el(id);
+          output.textContent = '';
+          output.hidden = true;
+          output.verifiedComposition = null;
+          output.parentElement.querySelector('[data-action=template-open-verified]')?.remove();
+        }
+        sample.focus();
+        break;
+      }
       case 'template-draft-generate':
       case 'template-draft-verify': {
         const input = el('template-composition-sample');

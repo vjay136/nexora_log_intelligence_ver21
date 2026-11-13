@@ -5,24 +5,28 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 var ErrIncompleteHeader = errors.New("incomplete_structured_header")
+
+const MaxMailExtraTags = 16
 
 const extendedMailLead = `^\s*(\d{8})\s+(\d{9}[+-]\d{4})\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+);`
 
 var (
 	extendedMailPrefix = regexp.MustCompile(extendedMailLead)
-	extendedMailHeader = regexp.MustCompile(extendedMailLead + `(?:([^;\s]+);)?([^;\s]+);([^;()\s]+)(?:\(([^()\s]+)\))?(?:\s|$)`)
+	extendedMailHeader = regexp.MustCompile(extendedMailLead + fmt.Sprintf(`((?:[^;\s]+;){0,%d})([^;\s]+);([^;()\s]+)(?:\(([^()\s]+)\))?(?:\s|$)`, MaxMailExtraTags))
 )
 
-var mailComponentNames = [...]string{"date", "timestamp", "hostname", "service", "pid", "minor_pid", "thread_id", "random_number", "extra_tag", "loglevel", "event", "event_code"}
+var mailComponentNames = [...]string{"date", "timestamp", "hostname", "service", "pid", "minor_pid", "thread_id", "random_number", "", "loglevel", "event", "event_code"}
 
 var extendedMailAliases = map[string]string{
 	"date": "date", "timestamp": "timestamp", "time_timezone": "timestamp",
 	"hostname": "hostname", "service": "service", "pid": "pid", "thread_id": "thread_id",
 	"random_number": "random_number", "extra_tag": "extra_tag",
-	"loglevel":      "loglevel", "event_type": "loglevel", "level": "loglevel",
+	"loglevel": "loglevel", "event_type": "loglevel", "level": "loglevel",
 	"event": "event", "event_name": "event", "event_code": "event_code", "code": "event_code",
 }
 
@@ -42,13 +46,22 @@ func ValidateMailHeader(raw string, fields map[string]Evidence) error {
 		}
 		return nil
 	}
-	return validateMailHeader(matches, fields)
+	return validateMailHeader(raw, matches, fields)
 }
 
-func validateMailHeader(matches []int, fields map[string]Evidence) error {
+func validateMailHeader(raw string, matches []int, fields map[string]Evidence) error {
 	required := make(map[Span]string, len(mailComponentNames))
 	for i, name := range mailComponentNames {
 		start, end := matches[2*i+2], matches[2*i+3]
+		if name == "" {
+			for index, part := range strings.Split(strings.TrimSuffix(raw[start:end], ";"), ";") {
+				if part != "" {
+					required[Span{start, start + len(part)}] = "extra_tag" + strconv.Itoa(index+1)
+				}
+				start += len(part) + 1
+			}
+			continue
+		}
 		if start >= 0 {
 			required[Span{start, end}] = name
 		}
@@ -70,6 +83,14 @@ func validateMailHeader(matches []int, fields map[string]Evidence) error {
 		for _, span := range spans {
 			component, found := required[span]
 			alias := extendedMailAliases[name]
+			if alias == "extra_tag" {
+				alias = "extra_tag1"
+			}
+			if alias == "" && strings.HasPrefix(name, "extra_tag") {
+				if _, err := strconv.Atoi(strings.TrimPrefix(name, "extra_tag")); err == nil {
+					alias = name
+				}
+			}
 			if alias != "" && span.Start < matches[1] && component != alias {
 				return fmt.Errorf("%w: field %q does not match its %s source component", ErrIncompleteHeader, name, alias)
 			}
@@ -82,11 +103,14 @@ func validateMailHeader(matches []int, fields map[string]Evidence) error {
 			}
 		}
 	}
-	for i, name := range mailComponentNames {
-		span := Span{matches[2*i+2], matches[2*i+3]}
-		if span.Start >= 0 && !covered[span] {
-			return fmt.Errorf("%w: %s has no exact mapped or intentionally omitted source component at byte %d", ErrIncompleteHeader, name, span.Start+1)
+	firstMissing := Span{Start: len(raw) + 1}
+	for span := range required {
+		if !covered[span] && span.Start < firstMissing.Start {
+			firstMissing = span
 		}
+	}
+	if name, missing := required[firstMissing]; missing {
+		return fmt.Errorf("%w: %s has no exact mapped or intentionally omitted source component at byte %d", ErrIncompleteHeader, name, firstMissing.Start+1)
 	}
 	return nil
 }

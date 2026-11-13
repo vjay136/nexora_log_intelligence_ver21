@@ -15,9 +15,9 @@ import (
 func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 	f := newAPIFixture(t)
 	ctx := context.Background()
-	const header = `^(?P<date>[0-9]{8})\s+(?P<timestamp>\S+)\s+(?P<hostname>\S+)\s+(?P<service>\S+)\s+(?P<pid>\d+)\s+(?P<minor_pid>\d+)\s+(?P<thread_id>\d+)\s+(?:(?P<random_number>\d+);(?:(?P<extra_tag>[^;\s]+);)?)?(?P<event_type>[^;\s]+);(?P<event>\S+)(?:[ \t]+|$)`
+	const header = `^(?P<date>[0-9]{8})\s+(?P<timestamp>\S+)\s+(?P<hostname>\S+)\s+(?P<service>\S+)\s+(?P<pid>\d+)\s+(?P<minor_pid>\d+)\s+(?P<thread_id>\d+)\s+(?:(?P<random_number>\d+);(?:(?P<extra_tag1>[^;\s]+);)?(?:(?P<extra_tag2>[^;\s]+);)?)?(?P<event_type>[^;\s]+);(?P<event>\S+)(?:[ \t]+|$)`
 	capture := map[string]string{}
-	for _, field := range []string{"date", "timestamp", "hostname", "service", "pid", "minor_pid", "thread_id", "event_type", "event", "random_number", "extra_tag"} {
+	for _, field := range []string{"date", "timestamp", "hostname", "service", "pid", "minor_pid", "thread_id", "event_type", "event", "random_number", "extra_tag1", "extra_tag2"} {
 		capture[field] = field
 	}
 	save := func(collection, id string, config any) templateComposeRef {
@@ -32,7 +32,7 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 		}
 		return templateComposeRef{ID: doc.ID, Revision: doc.Revision}
 	}
-	headerRef := save("templates", "test-header", map[string]any{"engine": "re2", "pattern": header, "fields": capture, "optional_fields": []string{"random_number", "extra_tag"}})
+	headerRef := save("templates", "test-header", map[string]any{"engine": "re2", "pattern": header, "fields": capture, "optional_fields": []string{"random_number", "extra_tag1", "extra_tag2"}})
 	kvRef := save("kv-config", "test-kv", map[string]any{
 		"pair_separators": []string{":", ";"}, "assignment_separators": []string{"="},
 		"bare_field": "messages", "max_fields": 256,
@@ -43,7 +43,7 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 	samples := []string{smtp, smtp + " status=failed;reason=not needed",
 		card + " id=002fac3e:HTTP CHALLENGE REQUEST:method=1:realm=mx:address=11.22.33.44",
 		smtp + " status=failed;invalid key=hidden",
-		strings.Replace(smtp, "Note;", "123456;abcd;Note;", 1) + " status=failed;reason=not needed",
+		strings.Replace(smtp, "Note;", "123456;abcd;efgh;Note;", 1) + " status=failed;reason=not needed",
 	}
 	response, data := f.request(http.MethodPost, "/api/v1/field-mapping/template-compose", map[string]any{
 		"header": headerRef, "kv": kvRef, "samples": samples,
@@ -59,7 +59,7 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 	if header := examples[0].(map[string]any)["actual"].(map[string]any); len(header) != 9 || header["event"] != "SieveRuleMsg" {
 		t.Fatalf("header-only record returned unexpected values: %v", header)
 	}
-	if variant := examples[3].(map[string]any)["actual"].(map[string]any); variant["extra_tag"] != "abcd" || variant["random_number"] != "123456" || variant["event"] != "SieveRuleMsg" {
+	if variant := examples[3].(map[string]any)["actual"].(map[string]any); variant["extra_tag1"] != "abcd" || variant["extra_tag2"] != "efgh" || variant["random_number"] != "123456" || variant["event"] != "SieveRuleMsg" {
 		t.Fatalf("variant mismatch: %v", variant)
 	}
 	actual := examples[2].(map[string]any)["actual"].(map[string]any)

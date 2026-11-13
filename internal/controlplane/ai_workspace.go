@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -43,7 +44,7 @@ var aiWorkspaceCollections = map[string]string{
 
 var aiWorkspaceArtifactInstructions = map[string]string{
 	"regex":       `Use {"pattern":"^...$","fields":{"capture":"output_name"},"engine":"re2"} and named Go RE2 captures.`,
-	"template":    `Use {"pattern":"^...$","fields":{"capture":"output_name"},"engine":"re2","resource_limits":{"max_input_bytes":1048576,"timeout_ms":50}} and named Go RE2 captures. For a field that may be absent, put its mapped output name in optional_fields. For a recognized mail header, end the pattern after the event. NLI will validate the remaining tail separately.`,
+	"template":    `Use {"pattern":"^...","fields":{"capture":"output_name"},"engine":"re2","resource_limits":{"max_input_bytes":1048576,"timeout_ms":50}} and named Go RE2 captures. List mapped output names that may be absent in optional_fields. Capture every component from the supplied sample. In a numeric-prefix mail header, preserve extra components between the numeric prefix and the level as separate extra_tag1, extra_tag2 captures. End the header after the event or event code and leave the KV tail for its separate template.`,
 	"pattern":     `Use {"tokens":["field_1","field_2"],"rest_field":"message","failure_policy":"reject_rule"}. Tokens are ordered output field names.`,
 	"key_pack":    `Use {"keys":["observed_key"],"aliases":{},"delimiters":["="]}. List identifiers actually observed in the source.`,
 	"keys":        `Use {"keys":["observed_key"],"aliases":{},"delimiters":["="]}. List identifiers actually observed in the source.`,
@@ -353,7 +354,8 @@ var aiObservedKey = regexp.MustCompile(`(?:^|[\s;:|,\[{])([A-Za-z_][A-Za-z0-9_.-
 
 const aiMailHeaderPattern = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>[^ \t\r\n]+)[ \t]+(?P<service>[^ \t\r\n]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?:(?P<random_number>[0-9]+);(?:(?P<extra_tag>[^; \t\r\n]+);)?)?(?P<event_type>[^; \t\r\n]+);(?P<event>[^;() \t\r\n]+)(?:\((?P<event_code>[^()\s]+)\))?`
 
-var aiMailHeader = regexp.MustCompile(aiMailHeaderPattern)
+var aiMailHeader = regexp.MustCompile(strings.Replace(aiMailHeaderPattern, `(?:(?P<extra_tag>[^; \t\r\n]+);)?`,
+	fmt.Sprintf(`(?:[^; \t\r\n]+;){0,%d}`, fieldmapping.MaxMailExtraTags), 1))
 
 var aiWorkspaceNextAction = map[string]string{
 	"regex":       "Open the draft in Regex Pattern Library and test it against representative records.",
@@ -381,17 +383,21 @@ func aiNativeMailAsset(kind, raw string) map[string]any {
 	switch kind {
 	case "regex", "template":
 		fields := map[string]any{}
-		for _, name := range aiMailHeader.SubexpNames()[1:] {
+		pattern := aiMailHeaderPattern
+		optional := []any{"random_number", "event_code"}
+		if kind == "template" {
+			pattern, optional = mailTemplatePattern(raw)
+		}
+		for _, name := range regexp.MustCompile(pattern).SubexpNames()[1:] {
 			fields[name] = name
 		}
-		pattern := aiMailHeaderPattern
 		if kind == "regex" {
 			pattern += `(?:[ \t]+(?P<kv_tail>[^\r\n]*))?$`
 			fields["kv_tail"] = "kv_tail"
 		}
 		config := map[string]any{"engine": "re2", "pattern": pattern, "fields": fields}
 		if kind == "template" {
-			config["optional_fields"] = []any{"random_number", "extra_tag", "event_code"}
+			config["optional_fields"] = optional
 		}
 		return config
 	case "pattern":
@@ -404,13 +410,35 @@ func aiNativeMailAsset(kind, raw string) map[string]any {
 	}
 }
 
+func mailTemplatePattern(samples ...string) (string, []any) {
+	maxTags := 0
+	for _, raw := range samples {
+		tokens := strings.Fields(raw)
+		if len(tokens) < 8 {
+			continue
+		}
+		components := strings.Split(tokens[7], ";")
+		if len(components) > 3 && regexp.MustCompile(`^[0-9]+$`).MatchString(components[0]) {
+			maxTags = max(maxTags, len(components)-3)
+		}
+	}
+	var captures strings.Builder
+	optional := []any{"random_number", "event_code"}
+	for i := 1; i <= min(maxTags, fieldmapping.MaxMailExtraTags); i++ {
+		name := fmt.Sprintf("extra_tag%d", i)
+		fmt.Fprintf(&captures, `(?:(?P<%s>[^; \t\r\n]+);)?`, name)
+		optional = append(optional, name)
+	}
+	return strings.Replace(aiMailHeaderPattern, `(?:(?P<extra_tag>[^; \t\r\n]+);)?`, captures.String(), 1), optional
+}
+
 var aiWorkspaceAssetKeys = map[string][]string{
 	"regex":       {"pattern", "fields", "engine"},
 	"template":    {"pattern", "fields", "engine", "resource_limits", "optional_fields"},
 	"pattern":     {"tokens", "rest_field", "failure_policy"},
 	"key_pack":    {"keys", "aliases", "delimiters"},
 	"keys":        {"keys", "aliases", "delimiters"},
-	"kv_template": {"pair_separators", "assignment_separators", "duplicate_policy", "max_fields", "literal_boundaries", "bare_field", "empty_key_field", "quote_characters", "escape_character", "bracket_pairs", "reject_empty_values"},
+	"kv_template": {"pair_separators", "assignment_separators", "duplicate_policy", "max_fields", "literal_boundaries", "bare_field", "empty_key_field", "quote_characters", "escape_character", "bracket_pairs", "reject_empty_values", "key_aliases"},
 }
 
 func validateAIWorkspaceAsset(kind, raw string, config map[string]any) (map[string]any, error) {

@@ -108,15 +108,15 @@ build_rpm_fixture() {
     -e NLI_VERSION_OVERRIDE="$version" -e NLI_RELEASE_OVERRIDE="$release" \
     "$RPM_BUILD_IMAGE" bash -lc "$rpm_command"
 }
-# Synthetic Ver22 22.13.0-0 payload for local package lifecycle mechanics only;
-# tag CI downloads the genuine published v22.13.0-0 RPMs.
-build_rpm_fixture "$work/previous" "$work/previous-work" 22.13.0 0
+# Synthetic Ver22 22.14.0-0 payload for local package lifecycle mechanics only;
+# tag CI downloads the genuine published v22.14.0-0 RPMs.
+build_rpm_fixture "$work/previous" "$work/previous-work" 22.14.0 0
 build_rpm_fixture "$work/pass1" "$work/pass1-work" "$NLI_VERSION" "$NLI_RELEASE"
 build_rpm_fixture "$work/pass2" "$work/pass2-work" "$NLI_VERSION" "$NLI_RELEASE"
 for name in nli_client_ver22.rpm nli_controller_agent_ver22.rpm webview_ver22.zip webapp_ver22.zip install-controller-ver22.sh install-client-ver22.sh install-controller-aws-ver22.sh install-client-aws-ver22.sh install-controller-aws-cloudflare-ver22.sh aws-rhel-preflight-ver22.sh aws-security-group-plan-ver22.sh setup-cloudflare-tunnel-v22.sh verify-cloudflare-tunnel-v22.sh uninstall-cloudflare-tunnel-v22.sh cloudflare-quick-diagnosis-v22.sh vercel-preflight.mjs uninstall-controller-ver22.sh uninstall-client-ver22.sh INSTALLATION_AND_CONFIGURATION.md VERCEL_DEPLOYMENT.md CLOUDFLARE_PAGES_DEPLOYMENT.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS RELEASE_ID; do
   cmp -s "$work/pass1/$name" "$work/pass2/$name" || { echo "fixture output is non-deterministic: $name" >&2; exit 1; }
 done
-for name in V22_14_RELEASE_NOTES.md All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md; do
+for name in V22_14_1_RELEASE_NOTES.md All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md; do
   cmp -s "$work/pass1/$name" "$work/pass2/$name" || { echo "fixture output is non-deterministic: $name" >&2; exit 1; }
 done
 cp -a "$work/pass1/." "$work/final/"

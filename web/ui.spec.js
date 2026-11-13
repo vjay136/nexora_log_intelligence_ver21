@@ -82,6 +82,10 @@ test('template editors generate and verify pasted samples and pass the same samp
     await expect(dialog.locator('[name=artifact]')).toHaveValue(kind);
     await expect(dialog.locator('[name=raw]')).toHaveValue(raw);
     await dialog.getByRole('button',{name:'Close',exact:true}).click();
+    await page.getByRole('button',{name:'Reset samples'}).click();
+    await expect(page.getByLabel('Sample log',{exact:true})).toHaveValue('');
+    await expect(page.locator('#template-draft-result')).toBeHidden();
+    await expect(page.locator('#config-form [name=config]')).toHaveValue(JSON.stringify(config,null,2));
     await page.unroute('**/api/v1/field-mapping/template-draft');
   }
 });
@@ -112,6 +116,8 @@ test('contextual Ask Nexora AI and visual blocks start from an empty mapping', a
   await page.getByRole('button',{name:'Open blocks in FieldSense'}).click();
   await expect(page.locator('#nfi-raw')).toHaveValue('smtp status=failed');
   await expect(page.locator('#qrw-field-rows [data-qrw-key=name]')).toHaveValue('status');
+  await page.getByRole('button',{name:'Create KV pair template',exact:true}).first().click();
+  await expect(page.getByLabel('Sample log',{exact:true})).toHaveValue('smtp status=failed');
 });
 
 test('Ask Nexora AI sends selected workspace, issue, and current raw sample to the live gateway',async({page})=>{

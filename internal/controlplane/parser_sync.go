@@ -477,7 +477,7 @@ func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
 }
 
 func taggedMailTemplateField(field fieldmapping.Field) bool {
-	return strings.Contains(field.KVHeaderPattern, "<extra_tag>")
+	return strings.Contains(field.KVHeaderPattern, "<extra_tag>") || strings.Contains(field.KVHeaderPattern, "<extra_tag1>")
 }
 
 func parserClientSupportsKVRelease(version, minimumRelease string) bool {
