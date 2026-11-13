@@ -140,3 +140,44 @@ func TestR9DynamicTailProductionAndNewKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewedComposedHeaderPreventsPartialFallback(t *testing.T) {
+	baseline, err := NewParserPackAdapter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := r9MailSamples[0]
+	source := engine.Source{Service: "smtp"}
+	if result := baseline.TryParseV5Production(raw, source); !result.Success || result.Quarantined {
+		t.Fatalf("expected eligible baseline candidate: %+v", result)
+	}
+	header := strings.Join(strings.Fields(raw)[:8], " ")
+	plan := r9HeaderPlan()
+	plan.Fields = append(plan.Fields, fieldmapping.Field{
+		Name: "tail", Type: "object", Method: "kv_all", Policy: "optional",
+		KVHeaderPattern: `^\d{8}\s+(?:\S+\s+){6}Note;SieveRuleMsg(?:[ \t]+|$)`,
+		KVProfile:       "configured", KVLiteralBoundaries: true, PairDelimiters: ";",
+		KeyOptions: fieldmapping.KeyOptions{AssignmentSeparators: []string{":"}, RequireComplete: true},
+	})
+	a, _ := sourceParityAdapter(t, header, plan)
+	for i := range a.profiles {
+		profile := &a.profiles[i]
+		if !profile.Managed {
+			continue
+		}
+		profile.Pack.Rules[0].ServiceSelectors = []string{"*"}
+		if err := parserpolicy.SealParserPack(profile.Pack); err != nil {
+			t.Fatal(err)
+		}
+		profile.Executor, err = parserpolicy.NewParserPackExecutor(profile.Pack)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if result := a.TryParseV5Production(header, source); !result.Success || result.Quarantined {
+		t.Fatalf("composed header without a payload should parse: %+v", result)
+	}
+	if result := a.TryParseV5Production(raw, source); result.Success || !result.Quarantined {
+		t.Fatalf("strict composed rejection allowed a legacy fallback: %+v", result)
+	}
+}

@@ -423,6 +423,7 @@ const (
 	kvOutputEditsMinimumRelease = "22.1.0-0"
 	kvInputEditsMinimumRelease  = "22.2.0-0"
 	advancedKVMinimumRelease    = "22.11.0-0"
+	largeKVMinimumRelease       = "22.12.0-0"
 )
 
 // Inspect native stage content so imported packs cannot bypass the release
@@ -450,10 +451,12 @@ func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
 					continue
 				}
 				for _, field := range stage.Config.Fields {
-					if field.UsesAdvancedKV() {
-						return advancedKVMinimumRelease
+					if field.UsesLargeKV() {
+						return largeKVMinimumRelease
 					}
-					if len(field.KVInputEdits) > 0 {
+					if field.UsesAdvancedKV() {
+						minimum = advancedKVMinimumRelease
+					} else if len(field.KVInputEdits) > 0 && minimum != advancedKVMinimumRelease {
 						minimum = kvInputEditsMinimumRelease
 					} else if len(field.KeyValueEdits) > 0 && minimum == "" {
 						minimum = kvOutputEditsMinimumRelease
@@ -1098,9 +1101,12 @@ func isParserAssetCollection(collection string) bool {
 }
 
 func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
-	bundle, err := s.buildActiveParserBundle(r.Context())
+	started := time.Now().UTC()
+	ctx, cancel := context.WithTimeout(r.Context(), metadataViewReadBudget)
+	defer cancel()
+	bundle, err := s.buildActiveParserBundle(ctx)
 	if err != nil {
-		jsonError(w, "parser sync metadata unavailable", http.StatusServiceUnavailable)
+		replyMetadataUnavailable(w, r, &s.parserSyncView, "parser sync metadata unavailable")
 		return
 	}
 	controllerHash := ""
@@ -1117,9 +1123,9 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	page, pageErr := s.listParserSyncDocuments(r.Context(), "fleet-sync", "", parserSyncTargetLimit)
+	page, pageErr := s.listParserSyncDocuments(ctx, "fleet-sync", "", parserSyncTargetLimit)
 	if pageErr != nil {
-		jsonError(w, "client parser acknowledgement telemetry unavailable", http.StatusServiceUnavailable)
+		replyMetadataUnavailable(w, r, &s.parserSyncView, "client parser acknowledgement telemetry unavailable")
 		return
 	}
 	byNode := map[string]map[string]any{}
@@ -1130,6 +1136,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	clients := []map[string]any{}
+	revisions := bundleRevisionMap(bundle)
 	minimumKVRelease := parserBundleMinimumKVRelease(bundle)
 	totalClients, onlineClients, exactClients := 0, 0, 0
 	pendingClients, driftedClients, failedClients, offlineClients := 0, 0, 0, 0
@@ -1162,7 +1169,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 			pendingClients++
 		}
 		code, next := parserSyncClientBlocker(node, minimumKVRelease, acknowledged, state)
-		clients = append(clients, map[string]any{"blocking_code": code, "next_action": next, "runtime_inventory": state["runtime_inventory"], "node_id": node.ID, "hostname": node.Hostname, "desired_revision": bundleRevisionMap(bundle), "desired_hash": desired, "applied_revision": state["active_asset_revisions"], "applied_hash": applied, "acknowledged_bundle_hash": applied, "exact_acknowledgement": acknowledged, "last_seen": state["last_seen"], "status": status, "drifted": drift, "error": state["asset_sync_error"]})
+		clients = append(clients, map[string]any{"blocking_code": code, "next_action": next, "runtime_inventory": state["runtime_inventory"], "node_id": node.ID, "hostname": node.Hostname, "desired_revision": revisions, "desired_hash": desired, "applied_revision": state["active_asset_revisions"], "applied_hash": applied, "acknowledged_bundle_hash": applied, "exact_acknowledgement": acknowledged, "last_seen": state["last_seen"], "status": status, "drifted": drift, "error": state["asset_sync_error"]})
 	}
 	sort.Slice(clients, func(i, j int) bool { return fmt.Sprint(clients[i]["node_id"]) < fmt.Sprint(clients[j]["node_id"]) })
 	var latest *rolloutRecord
@@ -1177,13 +1184,16 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var pendingProposal *metastore.Document
-	if proposals, err := s.listParserSyncDocuments(r.Context(), "rollout-proposals", "pending_approval", parserSyncTargetLimit); err == nil {
-		for i := range proposals {
-			var proposal map[string]any
-			if json.Unmarshal(proposals[i].Payload, &proposal) == nil && fmt.Sprint(proposal["type"]) == rolloutTypeParserSync && fmt.Sprint(proposal["bundle_hash"]) == bundle.BundleHash {
-				pendingProposal = &proposals[i]
-				break
-			}
+	proposals, err := s.listParserSyncDocuments(ctx, "rollout-proposals", "pending_approval", parserSyncTargetLimit)
+	if err != nil {
+		replyMetadataUnavailable(w, r, &s.parserSyncView, "parser sync rollout approvals unavailable")
+		return
+	}
+	for i := range proposals {
+		var proposal map[string]any
+		if json.Unmarshal(proposals[i].Payload, &proposal) == nil && fmt.Sprint(proposal["type"]) == rolloutTypeParserSync && fmt.Sprint(proposal["bundle_hash"]) == bundle.BundleHash {
+			pendingProposal = &proposals[i]
+			break
 		}
 	}
 	rolloutState := rolloutStatus(latest)
@@ -1215,7 +1225,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 		"acknowledgement_pct": acknowledgementPct, "desired_bundle_hash": bundle.BundleHash,
 		"controller_status": controllerStatus, "target_limit": parserSyncTargetLimit, "generated_at": time.Now().UTC(),
 	}
-	jsonOK(w, map[string]any{"controller": s.controllerParserInventory(bundle), "assets": assetViews, "count": len(assetViews), "bundle": map[string]any{"revision": bundleRevisionMap(bundle), "desired_hash": bundle.BundleHash, "controller_applied_hash": controllerHash, "controller_status": controllerStatus}, "clients": clients, "telemetry": telemetry, "rollout": rolloutSummary(latest), "rollout_proposal": proposalView, "automatic_rollout_policy": "approval_gated_parser_bundle_sync"})
+	replyMetadataCurrent(w, &s.parserSyncView, started, map[string]any{"controller": s.controllerParserInventory(bundle), "assets": assetViews, "count": len(assetViews), "bundle": map[string]any{"revision": revisions, "desired_hash": bundle.BundleHash, "controller_applied_hash": controllerHash, "controller_status": controllerStatus}, "clients": clients, "telemetry": telemetry, "rollout": rolloutSummary(latest), "rollout_proposal": proposalView, "automatic_rollout_policy": "approval_gated_parser_bundle_sync"})
 }
 
 func bundleRevisionMap(bundle parserAssetBundle) map[string]int {

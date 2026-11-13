@@ -8,7 +8,7 @@ import (
 	"nexora.local/nli-v20/internal/mixedkv"
 )
 
-var mailTail = regexp.MustCompile(`^\s*\d{8}\s+\d{9}[+-]\d{4}\s+\S+\s+\S+\s+\d+\s+\d+\s+\d+\s+[^;\s]+;\S+\s+`)
+var mailTail = regexp.MustCompile(`^\s*\d{8}\s+\d{9}[+-]\d{4}\s+\S+\s+\S+\s+\d+\s+\d+\s+\d+\s+(?:\d+;)?[^;\s]+;\S+\s+`)
 
 // ValidateComplete prevents a successful partial mapping from hiding structured
 // source data. Hidden/omitted fields retain evidence and are intentional choices.

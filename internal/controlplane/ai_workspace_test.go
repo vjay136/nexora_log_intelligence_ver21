@@ -120,3 +120,56 @@ func TestAIWorkspaceDirectAuthoringRequestsBuildDrafts(t *testing.T) {
 		}
 	}
 }
+
+func TestAIWorkspaceFullMailDraftTypes(t *testing.T) {
+	const sample = "20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 123456;Note;SieveRuleMsg status=failed;reason=not needed"
+	f := newAPIFixture(t)
+	reply := `{"answer":"Use semicolon boundaries.","config":{"pair_separators":[";"],"assignment_separators":["="],"duplicate_policy":"error","max_fields":512}}`
+	calls := mappingAIProviderFixture(t, f, reply, func(req map[string]any) {
+		data, _ := json.Marshal(req)
+		if bytes.Contains(data, []byte("123456;Note;")) {
+			t.Error("the provider received a header for a KV-only draft")
+		}
+	})
+	resp, body := f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{
+		"mode": "fix", "workspace": "assurance", "artifact": "kv_template", "raw": sample,
+	})
+	if resp.StatusCode != http.StatusOK || calls.Load() != 1 {
+		t.Fatalf("KV draft did not succeed: %d %s", resp.StatusCode, body)
+	}
+	result := decodeMap(t, body)
+	validation := result["validation"].(map[string]any)
+	if actual := validation["actual"].(map[string]any); actual["reason"] != "not needed" || actual["status"] != "failed" {
+		t.Fatalf("unexpected KV fields: %v", actual)
+	}
+	for _, kind := range []string{"regex", "template", "pattern"} {
+		draft := aiNativeMailAsset(kind, sample)
+		checked, err := validateAIWorkspaceAsset(kind, sample, draft)
+		if err != nil || checked["sample_matched"] != true {
+			t.Fatalf("%s draft failed: %v", kind, err)
+		}
+		actual := checked["actual"].(map[string]any)
+		if kind != "pattern" && (actual["random_number"] != "123456" || actual["event"] != "SieveRuleMsg") {
+			t.Fatalf("%s header captures: %v", kind, actual)
+		}
+		if kind == "template" && checked["tail_requires_kv_template"] != true {
+			t.Fatal("header template omitted the pending tail status")
+		}
+	}
+}
+
+func TestAIWorkspaceLabelsNativeMailFallback(t *testing.T) {
+	f := newAPIFixture(t)
+	mappingAIProviderFixture(t, f, `{"answer":"Use this.","config":{"pattern":"^(?P<date>[0-9]{8})","fields":{"date":"date"}}}`, nil)
+	resp, body := f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{
+		"mode": "fix", "workspace": "assurance", "artifact": "regex", "native_fallback": true,
+		"raw": "20250811 080053105+0100 host smtp 3692 0 140026854221568 Note;SieveRuleMsg status=failed",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("fallback failed: %d %s", resp.StatusCode, body)
+	}
+	result := decodeMap(t, body)
+	if result["proposal_origin"] != "native_fallback" || result["provider_id"] != "" || result["activated"] != false {
+		t.Fatalf("fallback origin incorrect: %s", body)
+	}
+}

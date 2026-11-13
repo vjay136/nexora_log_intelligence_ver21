@@ -8,7 +8,7 @@ import (
 	"nexora.local/nli-v20/internal/mixedkv"
 )
 
-var structuredMailHeader = regexp.MustCompile(`^\s*\d{8}\s+\d{9}[+-]\d{4}\s+\S+\s+\S+\s+\d+\s+\d+\s+\d+\s+[^;\s]+;\S+\s+`)
+var structuredMailHeader = regexp.MustCompile(`^\s*\d{8}\s+\d{9}[+-]\d{4}\s+\S+\s+\S+\s+\d+\s+\d+\s+\d+\s+(?:\d+;)?[^;\s]+;\S+\s+`)
 
 func framedKVBody(text string) (body string, offset int, framed bool, err error) {
 	body, offset, framed, err = mixedkv.UnwrapAssignmentEnvelope(text)

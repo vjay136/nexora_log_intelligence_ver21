@@ -122,6 +122,8 @@ type Server struct {
 	metricHistory            *metricHistory
 	metricIngestMu           sync.Mutex
 	fleetSyncMu              sync.Mutex
+	rolloutCatalogView       recoverableMetadataView
+	parserSyncView           recoverableMetadataView
 	quarantine               *quarantineVault
 	replaySnapshotMu         sync.Mutex
 	replaySnapshot           map[string]any
@@ -1193,7 +1195,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if storage != "ok" {
 		status = "degraded"
 	}
-	jsonOK(w, map[string]any{"service": "nli-controller-agent", "api_version": "v1", "status": status, "version": engine.Version, "storage": storage, "storage_diagnostic": diagnostic, "time": time.Now().UTC()})
+	jsonOK(w, map[string]any{"service": "nli-controller-agent", "api_version": "v1", "status": status, "version": engine.Version, "storage": storage, "storage_diagnostic": diagnostic, "time": time.Now().UTC(), "inventory": map[string]int{"role_count": len(auth.Roles()), "builtin_parser_count": len(s.parsers.All())}})
 }
 
 func storageDiagnostic(message string) string {

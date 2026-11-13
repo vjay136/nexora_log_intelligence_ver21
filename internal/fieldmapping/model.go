@@ -129,6 +129,30 @@ func (f Field) UsesAdvancedKV() bool {
 	return f.KVLiteralBoundaries || f.KVBareField != "" || f.KVEmptyKeyField != "" || f.KVHeaderPattern != "" || f.KVMaxPairs != 0
 }
 
+// KVPairLimit returns the bounded pair budget for this mapping.
+func (f Field) KVPairLimit() int {
+	if f.KVMaxPairs > 0 {
+		return f.KVMaxPairs
+	}
+	return MaxFields
+}
+
+// UsesLargeKV reports whether this plan depends on the raised pair or output budget.
+func (f Field) UsesLargeKV() bool {
+	return f.KVLiteralBoundaries && f.OutputPolicy == "flatten" && f.KVPairLimit() > MaxFields
+}
+
+// FlattenedKVFieldLimit includes room for the declared header fields.
+func (p Plan) FlattenedKVFieldLimit() int {
+	limit := MaxFields
+	for _, field := range p.Fields {
+		if field.Method == "kv_all" && field.OutputPolicy == "flatten" && field.KVLiteralBoundaries && field.KVPairLimit() > MaxFields {
+			limit = max(limit, MaxFields+field.KVPairLimit())
+		}
+	}
+	return limit
+}
+
 type KVInputEdit struct {
 	Action   string `json:"action"`
 	Find     string `json:"find"`
@@ -233,7 +257,10 @@ type compiledField struct {
 	kvHeader      *regexp.Regexp
 }
 
-type Compiled struct{ fields []compiledField }
+type Compiled struct {
+	fields           []compiledField
+	outputFieldLimit int
+}
 
 func contains(values []string, value string) bool {
 	for _, candidate := range values {
@@ -273,7 +300,7 @@ func Compile(plan Plan) (*Compiled, error) {
 	if len(plan.Fields) == 0 || len(plan.Fields) > MaxFields {
 		return nil, fmt.Errorf("mapping needs 1..%d fields", MaxFields)
 	}
-	compiled := &Compiled{}
+	compiled := &Compiled{outputFieldLimit: plan.FlattenedKVFieldLimit()}
 	seen := map[string]bool{}
 	patterns := map[string]*regexp.Regexp{}
 	planBytes := 0
@@ -477,6 +504,18 @@ func Compile(plan Plan) (*Compiled, error) {
 
 // Execute applies one immutable plan to one bounded record. Any invalid required
 // value rejects the record instead of emitting a partially successful payload.
+// MatchesKVHeader reports whether a bounded composed header applies to this input.
+func (c *Compiled) MatchesKVHeader(raw string) bool {
+	for _, field := range c.fields {
+		if field.kvHeader != nil {
+			if span := field.kvHeader.FindStringIndex(raw); len(span) == 2 && span[0] == 0 && span[1] > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (c *Compiled) Execute(ctx context.Context, raw string) (Result, error) {
 	return c.execute(ctx, raw, false)
 }
@@ -648,7 +687,7 @@ func (c *Compiled) execute(ctx context.Context, raw string, trace bool) (Result,
 					if _, exists := prior[key]; exists {
 						return result, fmt.Errorf("dynamic key %q collides with a mapped field", key)
 					}
-					if len(result.Values) >= MaxFields {
+					if len(result.Values) >= c.outputFieldLimit {
 						return result, fmt.Errorf("dynamic output exceeds field limit")
 					}
 					result.Values[key], prior[key] = object[key], object[key]

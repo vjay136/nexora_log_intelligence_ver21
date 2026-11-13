@@ -103,8 +103,7 @@ func (m *rolloutStateManager) Create(kind, name, actor string, targets []string,
 	if err = m.save(); err != nil {
 		return nil, err
 	}
-	copy := *item
-	return &copy, nil
+	return cloneRolloutRecord(item), nil
 }
 func (m *rolloutStateManager) Start(id string, targets []string) error {
 	m.mu.Lock()
@@ -186,16 +185,28 @@ func (m *rolloutStateManager) Get(id string) (*rolloutRecord, bool) {
 	if item == nil {
 		return nil, false
 	}
+	return cloneRolloutRecord(item), true
+}
+
+func cloneRolloutRecord(item *rolloutRecord) *rolloutRecord {
 	copy := *item
-	return &copy, true
+	copy.NodeResults = make(map[string]*rolloutNodeResult, len(item.NodeResults))
+	for id, result := range item.NodeResults {
+		if result == nil {
+			copy.NodeResults[id] = nil
+			continue
+		}
+		node := *result
+		copy.NodeResults[id] = &node
+	}
+	return &copy
 }
 func (m *rolloutStateManager) List() []*rolloutRecord {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]*rolloutRecord, 0, len(m.items))
 	for _, item := range m.items {
-		copy := *item
-		out = append(out, &copy)
+		out = append(out, cloneRolloutRecord(item))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out

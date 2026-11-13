@@ -25,9 +25,10 @@ type templateComposeRef struct {
 }
 
 type templateComposeHeader struct {
-	Engine  string            `json:"engine"`
-	Pattern string            `json:"pattern"`
-	Fields  map[string]string `json:"fields"`
+	Engine         string            `json:"engine"`
+	Pattern        string            `json:"pattern"`
+	Fields         map[string]string `json:"fields"`
+	OptionalFields []string          `json:"optional_fields,omitempty"`
 }
 
 func (s *Server) templateComposeConfig(ctx context.Context, collection string, ref templateComposeRef) (json.RawMessage, error) {
@@ -57,6 +58,17 @@ func composeTemplateMapping(header templateComposeHeader, kv mixedkv.Config) (fi
 	if err != nil || re.MatchString("") {
 		return plan, fmt.Errorf("header pattern must be valid RE2 and consume a nonempty prefix")
 	}
+	outputNames := make(map[string]bool, len(header.Fields))
+	for _, name := range header.Fields {
+		outputNames[name] = true
+	}
+	optional := make(map[string]bool, len(header.OptionalFields))
+	for _, name := range header.OptionalFields {
+		if !outputNames[name] || optional[name] {
+			return plan, fmt.Errorf("invalid or duplicate optional output field %q", name)
+		}
+		optional[name] = true
+	}
 	groups := make([]string, 0, len(header.Fields))
 	for group := range header.Fields {
 		if re.SubexpIndex(group) < 1 {
@@ -66,8 +78,12 @@ func composeTemplateMapping(header templateComposeHeader, kv mixedkv.Config) (fi
 	}
 	sort.Slice(groups, func(i, j int) bool { return re.SubexpIndex(groups[i]) < re.SubexpIndex(groups[j]) })
 	for _, group := range groups {
+		policy := "required"
+		if optional[header.Fields[group]] {
+			policy = "optional"
+		}
 		plan.Fields = append(plan.Fields, fieldmapping.Field{
-			Name: header.Fields[group], Method: "regex", Source: header.Pattern, Part: group, Type: "string",
+			Name: header.Fields[group], Method: "regex", Source: header.Pattern, Part: group, Type: "string", Policy: policy,
 		})
 	}
 	if len(kv.KeyAllowPatterns) != 0 || len(kv.KeyDenyPatterns) != 0 || len(kv.StopKeys) != 0 || len(kv.ValueTypes) != 0 ||
@@ -78,6 +94,9 @@ func composeTemplateMapping(header templateComposeHeader, kv mixedkv.Config) (fi
 	// Composition gives every configured separator literal boundary semantics.
 	// An unexplained segment must fail or be explicitly captured by the asset.
 	kv.LiteralBoundaries = true
+	if kv.MaxFields == 0 {
+		kv.MaxFields = fieldmapping.DefaultAdvancedKVPairs
+	}
 	if _, err := mixedkv.Compile(kv); err != nil {
 		return plan, err
 	}

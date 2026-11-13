@@ -1375,17 +1375,24 @@ func (s *Server) handleRollouts(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		proposals, err := listDocuments(r, s.metadata, "rollout-proposals")
+		started := time.Now().UTC()
+		ctx, cancel := context.WithTimeout(r.Context(), metadataViewReadBudget)
+		defer cancel()
+		var snapshot *recoverableMetadataView
+		if r.URL.Query().Get("state") == "" && r.URL.Query().Get("limit") == "" {
+			snapshot = &s.rolloutCatalogView
+		}
+		proposals, err := listDocuments(r.WithContext(ctx), s.metadata, "rollout-proposals")
 		if err != nil {
-			jsonError(w, "rollout catalog unavailable", http.StatusServiceUnavailable)
+			replyMetadataUnavailable(w, r, snapshot, "rollout catalog unavailable")
 			return
 		}
-		pending, err := s.metadata.List(r.Context(), "rollout-proposals", metastore.Query{State: "pending_approval", Limit: 1000})
+		pending, err := s.metadata.List(ctx, "rollout-proposals", metastore.Query{State: "pending_approval", Limit: 1000})
 		if err != nil {
-			jsonError(w, "rollout approval count unavailable", http.StatusServiceUnavailable)
+			replyMetadataUnavailable(w, r, snapshot, "rollout approval count unavailable")
 			return
 		}
-		jsonOK(w, map[string]any{"proposals": proposals, "pending_approval_count": len(pending), "live": s.rollouts.List()})
+		replyMetadataCurrent(w, snapshot, started, map[string]any{"proposals": proposals, "pending_approval_count": len(pending), "live": s.rollouts.List()})
 	case http.MethodPost:
 		var proposal map[string]any
 		if err := decodeJSON(r, &proposal, 2<<20); err != nil {

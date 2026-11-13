@@ -175,6 +175,12 @@ func predicateKey(ruleID string, include bool, index int) string {
 	return fmt.Sprintf("%s/%s/%d", ruleID, kind, index)
 }
 
+// MatchesKVHeader reports whether the named executed mapping stage applies its composed header.
+func (e *ParserPackExecutor) MatchesKVHeader(ruleID, stageID, input string) bool {
+	plan := e.mappingPlans[ruleID+"/"+stageID]
+	return plan != nil && plan.MatchesKVHeader(input)
+}
+
 func (e *ParserPackExecutor) Execute(request *ExecutionRequest) (*ExecutionResult, error) {
 	started := time.Now()
 	if !e.compiled {

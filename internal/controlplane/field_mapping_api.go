@@ -138,6 +138,8 @@ func (s *Server) handleFieldMappingStatus(w http.ResponseWriter, r *http.Request
 		"kv_edits_minimum_client_release":       kvOutputEditsMinimumRelease,
 		"kv_input_edits_minimum_client_release": kvInputEditsMinimumRelease,
 		"advanced_kv_minimum_client_release":    advancedKVMinimumRelease,
+		"large_kv_minimum_client_release":       largeKVMinimumRelease,
+		"advanced_kv_max_pairs":                 fieldmapping.MaxAdvancedKVPairs,
 		"execution":                             "The same bounded native plan runs in controller preview and enrolled clients. Legacy dynamic EOL plans require R9; KVIE profiles require R10. Saved drafts require validation, approval and exact-bundle acknowledgement before replay.",
 		"learning":                              "Deterministic structural suggestions from operator samples; ambiguous meanings require operator labels. No external AI calls or automatic parser activation.",
 	})
@@ -343,14 +345,18 @@ func assuranceMappingRuntimePack(id, version, author string, definition map[stri
 	}
 
 	for _, field := range plan.Fields {
+		if field.UsesLargeKV() {
+			minimumClient = largeKVMinimumRelease
+			break
+		}
 		if field.UsesAdvancedKV() {
 			minimumClient = advancedKVMinimumRelease
-			break
 		}
 	}
 	sort.Strings(names)
 	limits := parserpolicy.DefaultResourceLimits()
 	limits.MaxAttempts = 1
+	limits.MaxFields = max(limits.MaxFields, plan.FlattenedKVFieldLimit())
 	// Config is decoded into a map by the strict pack loader. Normalize it
 	// before sealing so typed Go structs and JSON reloads use identical keys.
 	planJSON, err := json.Marshal(plan)

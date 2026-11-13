@@ -1,4 +1,4 @@
--- NLI Ver22 (22.11.0-0) Supabase metadata schema (compatible RPC schema version 1).
+-- NLI Ver22 (22.12.0-0) Supabase metadata schema (compatible RPC schema version 1).
 -- The controller uses protected RPCs for revisioned JSONB parser packs, mappings,
 -- scope policies, bundle descriptors, KV profiles and parser recovery archives.
 -- Assurance evidence is encrypted by the controller before persistence.
@@ -102,7 +102,7 @@ begin
   end if;
   select count(*) into v_count from public.nli_documents;
   return jsonb_build_object('status', 'ok', 'schema_version', 1, 'revisions', v_count,
-    'bootstrap_release', '22.11.0-0',
+    'bootstrap_release', '22.12.0-0',
     'persistence_capabilities', jsonb_build_array('revisioned_jsonb', 'nfi_mapping_plan_metadata', 'scope_policy_metadata', 'nullable_object_array_payloads', 'dynamic_kv_eol_metadata', 'parser_recovery_archive', 'kvie_profile_metadata'),
     'validation_authority', 'nli-controller');
 end;

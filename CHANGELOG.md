@@ -1,5 +1,9 @@
 # Changelog
 
+## 22.12.0-0
+
+- Improve rollout recovery, in-place previews and reusable header and KV templates.
+
 ## 22.11.0-0
 
 - Add strict advanced KV tail mapping, AI privacy monitoring and a longer AI deadline.

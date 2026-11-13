@@ -16,6 +16,9 @@ import (
 // MaxAdvancedKVPairs bounds per-record dynamic pair extraction.
 const MaxAdvancedKVPairs = 1024
 
+// DefaultAdvancedKVPairs covers large records without changing the legacy limit.
+const DefaultAdvancedKVPairs = 512
+
 // ErrIncompleteKV identifies malformed or ambiguous structured input that
 // must remain available for recovery instead of entering a generic fallback.
 var ErrIncompleteKV = errors.New("incomplete_structured_tail")
@@ -96,10 +99,7 @@ func compileKVIEProfile(assignments []string, delimiters string, field Field) (*
 	cfg.BareField = field.KVBareField
 	cfg.EmptyKeyField = field.KVEmptyKeyField
 	cfg.DuplicatePolicy = mixedkv.DuplicateArray
-	cfg.MaxFields = MaxFields
-	if field.KVMaxPairs > 0 {
-		cfg.MaxFields = field.KVMaxPairs
-	}
+	cfg.MaxFields = field.KVPairLimit()
 	parser, err := mixedkv.Compile(cfg)
 	if err != nil {
 		return nil, err

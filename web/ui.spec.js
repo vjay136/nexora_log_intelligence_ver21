@@ -8,6 +8,31 @@ const origin = 'http://127.0.0.1:4176';
 const tabs = ['sample-history', 'header-templates', 'kv-templates', 'operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'ai-privacy', 'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
 const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
+test('login inventory comes from the webapp and controller health', async ({page}) => {
+  await mockController(page);
+  await page.route('**/api/v1/health', route => route.fulfill({
+    headers: {'x-nli-controller':'v21'},
+    json: {service:'nli-controller-agent',api_version:'v1',inventory:{role_count:6,builtin_parser_count:23}},
+  }));
+  await page.goto(origin);
+  await expect(page.locator('#login-workspaces')).toHaveText(/^[1-9][0-9]+$/);
+  await expect(page.locator('#login-roles')).toHaveText('6');
+  await expect(page.locator('#login-parsers')).toHaveText('23');
+});
+
+test('stale approvals remain visible with mutation disabled', async ({page}) => {
+  await mockController(page);
+  await login(page);
+  await page.route('**/api/v1/rollouts',route=>route.fulfill({json:{
+    snapshot_stale:true,snapshot_at:'2026-11-13T00:00:00Z',live:[],
+    proposals:[{id:'retained-proposal',state:'pending',payload:{name:'Retained proposal',type:'config_push'}}],
+  }}));
+  await page.getByTestId('nav-rollouts').click();
+  await expect(page.getByText('Retained proposal',{exact:true})).toBeVisible();
+  await expect(page.getByText(/Showing the last confirmed snapshot/)).toBeVisible();
+  await expect(page.getByRole('button',{name:'Request approval'})).toBeDisabled();
+});
+
 test('AI privacy workspace displays decisions and bounded controller catalog counts', async ({page}) => {
   await mockController(page);
   await login(page);
@@ -26,7 +51,7 @@ test('Log Pattern Templates opens a combined header and advanced KV plan', async
   await page.getByRole('button', {name:'Open combined mapping in FieldSense'}).click();
   await expect(page.locator('#nfi-raw')).toHaveValue(sample);
   const fields = page.locator('#qrw-field-rows tr');
-  await expect(fields).toHaveCount(10);
+  await expect(fields).toHaveCount(11);
   await expect(fields.last().locator('[data-qrw-key=source]')).toHaveValue('9');
   await expect(fields.last().locator('[data-qrw-key=policy]')).toHaveValue('optional');
   await expect(fields.last().locator('[data-qrw-key=kv_literal_boundaries]')).toBeChecked();

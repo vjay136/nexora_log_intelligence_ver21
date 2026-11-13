@@ -95,3 +95,28 @@ func TestAdvancedKVUnnamedSegmentsRequireExplicitOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestAdvancedKVFlattensLargeRecordsWithinBudget(t *testing.T) {
+	field := Field{Name: "tail", Type: "object", Method: "kv_all", Source: "9",
+		KVProfile: "configured", KVLiteralBoundaries: true, KVMaxPairs: 512,
+		OutputPolicy: "flatten", PairDelimiters: ";", KeyOptions: KeyOptions{RequireComplete: true}}
+	plan, err := Compile(Plan{Version: 1, Fields: []Field{{Name: "service", Method: "position", Source: "4"}, field}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pairs := make([]string, 513)
+	for i := range pairs {
+		pairs[i] = fmt.Sprintf("key_%03d=value", i)
+	}
+	raw := kvieMailHeader + strings.Join(pairs[:512], ";")
+	result, err := plan.Execute(context.Background(), raw)
+	if err != nil || len(result.Values) != 513 || result.Values["key_511"] != "value" {
+		t.Fatalf("large flatten has %d fields, err=%v", len(result.Values), err)
+	}
+	if err := plan.ValidateComplete(raw, result); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plan.Execute(context.Background(), kvieMailHeader+strings.Join(pairs, ";")); !errors.Is(err, ErrIncompleteKV) {
+		t.Fatalf("expected limit rejection, got %v", err)
+	}
+}

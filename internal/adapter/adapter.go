@@ -230,11 +230,21 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 		execution := execute(candidate)
 		executions = append(executions, execution)
 	}
+	strictHeaderRejected := false
+	for _, execution := range executions {
+		if reviewedMappingProfile(execution.candidate.profile) && executionMatchesKVHeader(execution, input, true) {
+			strictHeaderRejected = true
+			break
+		}
+	}
 	selectedIndex := -1
 	requiresContinuation := strictMailTail && parserpolicy.RequiresSMTPMailContinuation(trimmed)
 	for index := range executions {
 		execution := executions[index]
 		if requiresContinuation && execution.candidate.profile.Pack.ID != parserpolicy.MailTailPackID && !mappingProfile(execution.candidate.profile) {
+			continue
+		}
+		if strictHeaderRejected && !executionMatchesKVHeader(execution, input, false) {
 			continue
 		}
 		if successfulExecution(execution.result, execution.err) && (selectedIndex < 0 || betterExecution(execution, executions[selectedIndex])) {
@@ -369,6 +379,29 @@ func mappingProfile(profile familyprofile.Profile) bool {
 	for _, rule := range profile.Pack.Rules {
 		for _, stage := range rule.Stages {
 			if stage.Type == parserpolicy.StageTypeMapping {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func executionMatchesKVHeader(execution profileExecution, input string, rejected bool) bool {
+	if execution.result == nil || execution.result.ParseTelemetry == nil {
+		return false
+	}
+	for _, attempt := range execution.result.ParseTelemetry.OrderedAttempts {
+		ruleID := strings.TrimPrefix(attempt.ParserID, execution.candidate.profile.Pack.ID+"/")
+		if rejected && attempt.FailureReason != "incomplete_structured_tail" || !rejected && ruleID != execution.result.RuleID {
+			continue
+		}
+		for _, stage := range attempt.StageResults {
+			if stage.StageType != string(parserpolicy.StageTypeMapping) ||
+				rejected && stage.ErrorCode != "incomplete_structured_tail" ||
+				!rejected && stage.Outcome != telemetry.StageOutcomeSuccess {
+				continue
+			}
+			if execution.candidate.profile.Executor.MatchesKVHeader(ruleID, stage.StageID, input) {
 				return true
 			}
 		}

@@ -115,6 +115,9 @@ func (r *record) keySource(cf compiledField) (string, int, int, bool, error) {
 			return "", 0, 0, false, fmt.Errorf("%w: record does not match the configured header", ErrIncompleteKV)
 		}
 		start := indexes[1]
+		if header := mailTail.FindStringIndex(r.raw); header != nil && start > header[1] {
+			return "", 0, 0, false, fmt.Errorf("%w: configured header overlaps the mail payload at byte %d", ErrIncompleteKV, header[1]+1)
+		}
 		end := len(r.raw)
 		if f.EndOfLine {
 			if i := strings.IndexAny(r.raw[start:], "\r\n"); i >= 0 {
