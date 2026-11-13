@@ -51,10 +51,39 @@ test('Log Pattern Templates opens a combined header and advanced KV plan', async
   await page.getByRole('button', {name:'Open combined mapping in FieldSense'}).click();
   await expect(page.locator('#nfi-raw')).toHaveValue(sample);
   const fields = page.locator('#qrw-field-rows tr');
-  await expect(fields).toHaveCount(11);
+  await expect(fields).toHaveCount(12);
   await expect(fields.last().locator('[data-qrw-key=source]')).toHaveValue('9');
   await expect(fields.last().locator('[data-qrw-key=policy]')).toHaveValue('optional');
   await expect(fields.last().locator('[data-qrw-key=kv_literal_boundaries]')).toBeChecked();
+});
+
+test('template editors generate and verify pasted samples and pass the same sample to Nexora AI', async ({page}) => {
+  await mockController(page);
+  await login(page);
+  const raw = '20250811 080053105+0100 mail009 smtp 3692 0 140026854221568 123456;Note;SieveRuleMsg status=failed;reason=not needed';
+  for (const [workspace,kind,config] of [
+    ['header-templates','template',{pattern:'^(?P<level>Note)$',fields:{level:'level'},engine:'re2'}],
+    ['kv-templates','kv_template',{pair_separators:[';'],assignment_separators:['='],literal_boundaries:true}],
+  ]) {
+    const requests=[];
+    await page.route('**/api/v1/field-mapping/template-draft',async route=>{
+      requests.push(route.request().postDataJSON());
+      await route.fulfill({json:{passed:true,config,examples:[{actual:{status:'failed'}}],failures:[]}});
+    });
+    await page.getByTestId('nav-'+workspace).click();
+    await page.getByLabel('Sample log',{exact:true}).fill(raw);
+    await page.getByRole('button',{name:'Generate draft JSON'}).click();
+    await expect(page.locator('#template-draft-result')).toContainText('failed');
+    await expect(page.locator('#config-form [name=config]')).toHaveValue(JSON.stringify(config,null,2));
+    await page.getByRole('button',{name:'Verify current JSON'}).click();
+    await expect.poll(()=>requests).toEqual([{kind,samples:[raw]},{kind,samples:[raw],config}]);
+    await page.getByRole('button',{name:'Draft with Nexora AI',exact:true}).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.locator('[name=artifact]')).toHaveValue(kind);
+    await expect(dialog.locator('[name=raw]')).toHaveValue(raw);
+    await dialog.getByRole('button',{name:'Close',exact:true}).click();
+    await page.unroute('**/api/v1/field-mapping/template-draft');
+  }
 });
 
 test('contextual Ask Nexora AI and visual blocks start from an empty mapping', async ({page})=>{

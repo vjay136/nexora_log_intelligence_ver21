@@ -368,9 +368,18 @@ func (r *record) extractExtended(cf compiledField, prior map[string]any) (any, E
 		}
 		if f.Method == "regex_groups" {
 			v := map[string]any{}
+			if f.OutputPolicy == "flatten" {
+				e.keySpans = make(map[string][]Span)
+				e.Source = true
+			}
 			for i, name := range cf.pattern.SubexpNames() {
 				if i > 0 && name != "" && matches[0][2*i] >= 0 {
-					v[name] = r.raw[matches[0][2*i]:matches[0][2*i+1]]
+					start, end := matches[0][2*i], matches[0][2*i+1]
+					v[name] = r.raw[start:end]
+					e.Spans = append(e.Spans, Span{start, end})
+					if e.keySpans != nil {
+						e.keySpans[name] = []Span{{start, end}}
+					}
 				}
 			}
 			return v, e, true, nil
@@ -461,6 +470,15 @@ func extractKeys(raw string, f Field, e Evidence) (any, Evidence, bool, error) {
 	if err != nil {
 		return nil, e, false, err
 	}
+	if f.Method == "kv_all" && e.Start > 0 {
+		for name, values := range pairs {
+			for i := range values {
+				values[i].start += e.Start
+				values[i].end += e.Start
+			}
+			pairs[name] = values
+		}
+	}
 	return projectKeys(pairs, f, e)
 }
 
@@ -506,10 +524,14 @@ func projectKeys(pairs map[string][]pair, f Field, e Evidence) (any, Evidence, b
 			return nil, e, false, nil
 		}
 		v, err := selectValues(values)
-		e.Start = values[0].start
-		e.End = values[0].end
+		selected := values[0]
+		if f.DuplicatePolicy == "last" {
+			selected = values[len(values)-1]
+		}
+		e.Start = selected.start
+		e.End = selected.end
 		e.Source = true
-		if f.KVProfile != "" {
+		if f.DuplicatePolicy == "array" {
 			for _, value := range values {
 				e.Spans = append(e.Spans, Span{value.start, value.end})
 			}
@@ -517,6 +539,9 @@ func projectKeys(pairs map[string][]pair, f Field, e Evidence) (any, Evidence, b
 		return v, e, true, err
 	}
 	out := map[string]any{}
+	if f.OutputPolicy == "flatten" {
+		e.keySpans = make(map[string][]Span, len(normalized))
+	}
 	keys := make([]string, 0, len(normalized))
 	for key := range normalized {
 		keys = append(keys, key)
@@ -541,7 +566,22 @@ func projectKeys(pairs map[string][]pair, f Field, e Evidence) (any, Evidence, b
 				return nil, e, false, err
 			}
 		}
-		out[f.KeyPrefix+key+f.KeySuffix] = v
+		outputName := f.KeyPrefix + key + f.KeySuffix
+		out[outputName] = v
+		if e.keySpans != nil {
+			switch {
+			case f.DuplicatePolicy == "array" || key == f.KVBareField || key == f.KVEmptyKeyField:
+				for _, value := range values {
+					e.keySpans[outputName] = append(e.keySpans[outputName], Span{value.start, value.end})
+				}
+			case f.DuplicatePolicy == "last":
+				last := values[len(values)-1]
+				e.keySpans[outputName] = []Span{{last.start, last.end}}
+			default:
+				first := values[0]
+				e.keySpans[outputName] = []Span{{first.start, first.end}}
+			}
+		}
 	}
 	return out, e, true, nil
 }

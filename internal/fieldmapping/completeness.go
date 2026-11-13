@@ -13,6 +13,11 @@ var mailTail = regexp.MustCompile(`^\s*\d{8}\s+\d{9}[+-]\d{4}\s+\S+\s+\S+\s+\d+\
 // ValidateComplete prevents a successful partial mapping from hiding structured
 // source data. Hidden/omitted fields retain evidence and are intentional choices.
 func (c *Compiled) ValidateComplete(raw string, result Result) error {
+	if HasMailHeaderExtension(raw) {
+		if err := c.validateMailHeader(raw, result); err != nil {
+			return err
+		}
+	}
 	spans := []Span{}
 	fields := map[string]Field{}
 	for _, cf := range c.fields {
@@ -64,6 +69,73 @@ func (c *Compiled) ValidateComplete(raw string, result Result) error {
 		}
 	}
 	return validateStructuredCoverage(raw, spans, assignments, result)
+}
+
+func (c *Compiled) validateMailHeader(raw string, result Result) error {
+	evidence := make(map[string]Evidence, len(c.fields))
+	for _, compiled := range c.fields {
+		field := compiled.field
+		source, exists := result.Evidence[field.Name]
+		if !exists || field.OutputPolicy == "intermediate" || field.Method == "kv_all" || field.Method == "key_value" ||
+			field.Method == "derived" || field.Method == "field" || field.Method == "constant" {
+			continue
+		}
+		for _, operation := range field.Operations {
+			if !contains([]string{"split", "select", "substring", "character", "byte", "line", "regex_extract", "first", "last", "range", "before", "after", "between", "token_match", "split_regex", "split_words", "split_tokens"}, operation.Op) {
+				continue
+			}
+			value, ok := result.Values[field.Name].(string)
+			if !ok || value == "" || source.Start < 0 || source.End > len(raw) || source.Start > source.End {
+				source = Evidence{Start: -1, End: -1}
+				break
+			}
+			region := raw[source.Start:source.End]
+			offset := strings.Index(region, value)
+			if offset < 0 || offset != strings.LastIndex(region, value) {
+				source = Evidence{Start: -1, End: -1}
+				break
+			}
+			source.Start += offset
+			source.End = source.Start + len(value)
+			source.Spans = nil
+			break
+		}
+		if field.Method == "regex_groups" && field.OutputPolicy == "flatten" {
+			for _, key := range result.DynamicFields {
+				if compiled.pattern.SubexpIndex(key) > 0 {
+					evidence[key] = result.Evidence[key]
+				}
+			}
+			continue
+		}
+		evidence[field.Name] = source
+	}
+	return ValidateMailHeader(raw, evidence)
+}
+
+// HeaderOmissions returns source evidence for fields whose approved mapping
+// explicitly omits them from production output.
+func (c *Compiled) HeaderOmissions(result Result) map[string]Evidence {
+	var omissions map[string]Evidence
+	for _, compiled := range c.fields {
+		field := compiled.field
+		evidence, exists := result.Evidence[field.Name]
+		if !exists || field.Method == "kv_all" || field.Method == "key_value" ||
+			field.Method == "derived" || field.Method == "field" || field.Method == "constant" {
+			continue
+		}
+		omitted := field.OutputPolicy == "omit"
+		for _, operation := range field.Operations {
+			omitted = omitted || operation.Op == "omit" || operation.Op == "exclude"
+		}
+		if omitted {
+			if omissions == nil {
+				omissions = make(map[string]Evidence)
+			}
+			omissions[field.Name] = evidence
+		}
+	}
+	return omissions
 }
 
 // ValidateStructuredCoverage checks values, rather than labels, so operators may

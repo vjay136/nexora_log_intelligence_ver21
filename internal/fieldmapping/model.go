@@ -223,6 +223,7 @@ type Evidence struct {
 	Description string `json:"description"`
 	Operations  int    `json:"operations"`
 	Spans       []Span `json:"spans,omitempty"`
+	keySpans    map[string][]Span
 }
 
 type Span struct {
@@ -691,7 +692,13 @@ func (c *Compiled) execute(ctx context.Context, raw string, trace bool) (Result,
 						return result, fmt.Errorf("dynamic output exceeds field limit")
 					}
 					result.Values[key], prior[key] = object[key], object[key]
-					result.Evidence[key] = evidence
+					keyEvidence := evidence
+					keyEvidence.keySpans = nil
+					if spans := evidence.keySpans[key]; len(spans) > 0 {
+						keyEvidence.Start, keyEvidence.End = spans[0].Start, spans[0].End
+						keyEvidence.Spans = spans
+					}
+					result.Evidence[key] = keyEvidence
 					result.DynamicFields = append(result.DynamicFields, key)
 				}
 			} else {
@@ -701,6 +708,7 @@ func (c *Compiled) execute(ctx context.Context, raw string, trace bool) (Result,
 				result.Values[f.field.Name] = value
 			}
 		}
+		evidence.keySpans = nil
 		result.Evidence[f.field.Name] = evidence
 	}
 	return result, nil

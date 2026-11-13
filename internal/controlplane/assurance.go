@@ -576,13 +576,11 @@ func evidenceSpans(raw string, actual map[string]any) []map[string]any {
 	out := make([]map[string]any, 0, len(fields))
 	for _, field := range fields {
 		text := fmt.Sprint(actual[field])
-		start := strings.Index(raw, text)
-		entry := map[string]any{"field": field, "source_backed": start >= 0}
-		if start >= 0 {
+		entry := map[string]any{"field": field, "source_backed": false}
+		if start := strings.Index(raw, text); text != "" && start >= 0 && strings.LastIndex(raw, text) == start {
+			entry["inferred"] = true
 			entry["start"] = start
 			entry["end"] = start + len(text)
-		} else {
-			entry["derived_rule"] = "active parser output; source span unavailable"
 		}
 		out = append(out, entry)
 	}

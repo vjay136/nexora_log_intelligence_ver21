@@ -22,6 +22,9 @@ var uncodedSieveHeader = regexp.MustCompile(`^\s*\d{8}\s+\d{9}[+-]\d{4}\s+\S+\s+
 var dottedSieveTail = regexp.MustCompile(`^status=[^\s;,|]+\.reason;[^;,|]+,server:[^;,|]+$`)
 
 func HasCompleteSMTPMailTail(input string) bool {
+	if fieldmapping.HasMailHeaderExtension(input) {
+		return true
+	}
 	header := completeMailHeader.FindStringIndex(input)
 	if header == nil {
 		return false
@@ -173,7 +176,7 @@ func DefaultCompleteSMTPMailPack() *ParserPack {
 		aliases[name] = mailOutputKey(name)
 	}
 	pack := &ParserPack{
-		ID: MailTailPackID, Version: "22.6.0", Revision: 1,
+		ID: MailTailPackID, Version: "22.13.0", Revision: 2,
 		SourceType: "manual", Author: "nexora-parser-review-board", ReviewState: ReviewStateActivated,
 		CreatedAt: activated, ActivatedAt: &activated,
 		ResourceLimits: DefaultResourceLimits(),
@@ -235,8 +238,52 @@ func DefaultCompleteSMTPMailPack() *ParserPack {
 			},
 		}},
 	}
+	rule, examples := numericSMTPHeaderRule()
+	pack.Rules = append(pack.Rules, rule)
+	pack.RegressionCases = append(pack.RegressionCases, examples...)
 	if err := SealParserPack(pack); err != nil {
 		panic(err)
 	}
 	return pack
+}
+
+func numericSMTPHeaderRule() (ParserRule, []RegressionCase) {
+	const pattern = `^[ \t]*(?P<date>[0-9]{8})[ \t]+(?P<time_timezone>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>\S+)[ \t]+(?P<service>smtp)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?P<random_number>[0-9]+);(?P<loglevel>[^;\s]+);(?P<event>[^;()\s]+)(?:\((?P<event_code>[^()\s]+)\))?(?:[ \t]+|[\r\n]*$)`
+	const ruleID = "smtp_numeric_prefix"
+	plan := fieldmapping.Plan{Version: 1}
+	for _, name := range []string{"date", "time_timezone", "hostname", "service", "pid", "minor_pid", "thread_id", "random_number", "loglevel", "event"} {
+		typeName := "string"
+		if name == "pid" || name == "minor_pid" {
+			typeName = "integer"
+		}
+		plan.Fields = append(plan.Fields, fieldmapping.Field{Name: name, Type: typeName, Method: "regex", Source: pattern, Part: name, Policy: "required"})
+	}
+	plan.Fields = append(plan.Fields, fieldmapping.Field{Name: "event_code", Type: "string", Method: "regex", Source: pattern, Part: "event_code", Policy: "optional"})
+	plan.Fields = append(plan.Fields, fieldmapping.Field{
+		Name: "kv_pair", Type: "object", Method: "kv_all", Policy: "optional", OutputPolicy: "flatten",
+		KVHeaderPattern: pattern, KVProfile: "configured", KVLiteralBoundaries: true,
+		KVPairSeparators: []string{";"}, DuplicatePolicy: "reject",
+		KeyOptions: fieldmapping.KeyOptions{AssignmentSeparators: []string{"="}, RequireComplete: true},
+	})
+	rule := ParserRule{
+		ID: ruleID, Name: "Reviewed SMTP numeric event prefix", Priority: 181,
+		ServiceSelectors:  []string{"smtp", "smtp-in", "smtp-out"},
+		IncludePredicates: []Predicate{{Type: "regex", Field: "input", Pattern: pattern}},
+		FailurePolicy:     FailurePolicyRejectRule, ProjectionMode: ProjectionModeAll, CountPolicy: CountPolicyProjection,
+		Stages: []Stage{{ID: "map_numeric_prefix", Name: "Exact SMTP header and semicolon KV tail", Type: StageTypeMapping, Config: plan, FailurePolicy: FailurePolicyRejectRule}},
+	}
+	const header = "20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 123456;Note;SieveRuleMsg"
+	output := func() map[string]interface{} {
+		return map[string]interface{}{
+			"date": "20250811", "time_timezone": "080053105+0100", "hostname": "aaa-gmailrgi009", "service": "smtp",
+			"pid": 3692, "minor_pid": 0, "thread_id": "140026854221568", "random_number": "123456", "loglevel": "Note", "event": "SieveRuleMsg",
+		}
+	}
+	withTail := output()
+	withTail["status"] = "failed"
+	withTail["reason"] = "not needed"
+	return rule, []RegressionCase{
+		{Name: "smtp_numeric_prefix_only", Input: header, Service: "smtp", SourceType: "file", ExpectedParser: MailTailPackID + "/" + ruleID, ExpectedRoute: "normal", ExpectedPayload: output()},
+		{Name: "smtp_numeric_prefix_and_tail", Input: header + " status=failed;reason=not needed", Service: "smtp", SourceType: "file", ExpectedParser: MailTailPackID + "/" + ruleID, ExpectedRoute: "normal", ExpectedPayload: withTail},
+	}
 }

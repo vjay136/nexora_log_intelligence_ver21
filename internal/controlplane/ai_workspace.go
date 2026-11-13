@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"nexora.local/nli-v20/internal/aiprovider"
+	"nexora.local/nli-v20/internal/fieldmapping"
 	"nexora.local/nli-v20/internal/masker"
 	"nexora.local/nli-v20/internal/middleware"
 	"nexora.local/nli-v20/internal/mixedkv"
@@ -350,7 +351,7 @@ func (s *Server) aiWorkspaceReference(ctx context.Context, reference aiWorkspace
 
 var aiObservedKey = regexp.MustCompile(`(?:^|[\s;:|,\[{])([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*[=:;]`)
 
-const aiMailHeaderPattern = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>[^ \t\r\n]+)[ \t]+(?P<service>[^ \t\r\n]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?:(?P<random_number>[0-9]+);)?(?P<event_type>[^; \t\r\n]+);(?P<event>[^; \t\r\n]+)`
+const aiMailHeaderPattern = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>[^ \t\r\n]+)[ \t]+(?P<service>[^ \t\r\n]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?:(?P<random_number>[0-9]+);)?(?P<event_type>[^; \t\r\n]+);(?P<event>[^;() \t\r\n]+)(?:\((?P<event_code>[^()\s]+)\))?`
 
 var aiMailHeader = regexp.MustCompile(aiMailHeaderPattern)
 
@@ -390,54 +391,17 @@ func aiNativeMailAsset(kind, raw string) map[string]any {
 		}
 		config := map[string]any{"engine": "re2", "pattern": pattern, "fields": fields}
 		if kind == "template" {
-			config["optional_fields"] = []any{"random_number"}
+			config["optional_fields"] = []any{"random_number", "event_code"}
 		}
 		return config
 	case "pattern":
 		return map[string]any{"tokens": []any{"date", "timestamp", "hostname", "service", "pid", "minor_pid", "thread_id", "event_token"},
 			"rest_field": "kv_tail", "failure_policy": "reject_rule"}
 	case "kv_template":
-		return aiNativeMailKVAsset(raw)
+		return suggestKVTemplate(context.Background(), []string{raw})
 	default:
 		return nil
 	}
-}
-
-// Narrow fallback for the known mail header. Require a single best exact
-// result across candidate separators, and never guess duplicate handling.
-func aiNativeMailKVAsset(raw string) map[string]any {
-	type candidate struct {
-		config map[string]any
-		values []byte
-	}
-	var best candidate
-	bestCount := 0
-	ambiguous := false
-	for _, separators := range [][]string{{";"}, {":"}, {"|"}, {","}, {";", ":"}, {";", "|"}, {",", ";"}} {
-		config := map[string]any{
-			"pair_separators": separators, "assignment_separators": []string{"="},
-			"duplicate_policy": "error", "literal_boundaries": true, "max_fields": 512,
-		}
-		validated, err := validateAIWorkspaceAsset("kv_template", raw, config)
-		if err != nil {
-			continue
-		}
-		values := validated["actual"].(map[string]any)
-		if len(values) < 2 {
-			continue
-		}
-		encoded, _ := json.Marshal(values)
-		switch {
-		case len(values) > bestCount:
-			best, bestCount, ambiguous = candidate{config: config, values: encoded}, len(values), false
-		case len(values) == bestCount && string(best.values) != string(encoded):
-			ambiguous = true
-		}
-	}
-	if ambiguous {
-		return nil
-	}
-	return best.config
 }
 
 var aiWorkspaceAssetKeys = map[string][]string{
@@ -512,6 +476,7 @@ func validateAIWorkspaceAsset(kind, raw string, config map[string]any) (map[stri
 			}
 		}
 		mapped := map[string]any{}
+		evidence := map[string]fieldmapping.Evidence{}
 		targets := map[string]bool{}
 		for source, value := range fields {
 			target, ok := value.(string)
@@ -525,6 +490,8 @@ func validateAIWorkspaceAsset(kind, raw string, config map[string]any) (map[stri
 			targets[target] = true
 			if found {
 				mapped[target] = captured
+				i := compiled.SubexpIndex(source)
+				evidence[target] = fieldmapping.Evidence{Start: match[2*i], End: match[2*i+1], Source: true}
 			} else if kind == "template" && !optional[target] {
 				return nil, errors.New("A required template capture has no value on the sample. Mark its output optional only if the source field may be absent")
 			}
@@ -533,6 +500,9 @@ func validateAIWorkspaceAsset(kind, raw string, config map[string]any) (map[stri
 			return nil, errors.New("The proposed regex did not capture any configured fields on this sample")
 		}
 		if kind == "template" {
+			if err := fieldmapping.ValidateMailHeader(raw, evidence); err != nil {
+				return nil, err
+			}
 			if !strings.HasPrefix(pattern, "^") {
 				return nil, errors.New("The proposed log template must start with an anchored RE2 prefix")
 			}

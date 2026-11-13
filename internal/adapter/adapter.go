@@ -14,6 +14,7 @@ import (
 
 	"nexora.local/nli-v20/internal/engine"
 	"nexora.local/nli-v20/internal/familyprofile"
+	"nexora.local/nli-v20/internal/fieldmapping"
 	parserpolicy "nexora.local/nli-v20/parser-policy"
 	"nexora.local/nli-v20/telemetry"
 )
@@ -151,6 +152,7 @@ type profileExecution struct {
 	candidate profileCandidate
 	result    *parserpolicy.ExecutionResult
 	err       error
+	composed  bool
 }
 
 func (adapter *ParserPackAdapter) TryParseV5Production(input string, source engine.Source) *V5ParseResult {
@@ -164,7 +166,8 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 	started := time.Now()
 	trimmed := strings.TrimSpace(input)
 	service := runtimeService(source.Service, trimmed)
-	if service == "" && !parserpolicy.HasFramedMailTail(trimmed) {
+	extendedHeader := fieldmapping.HasMailHeaderExtension(trimmed)
+	if service == "" && !extendedHeader && !parserpolicy.HasFramedMailTail(trimmed) {
 		return &V5ParseResult{Success: false}
 	}
 	candidates := adapter.candidates(service)
@@ -185,7 +188,7 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 		}
 		return candidates[i].specificity < candidates[j].specificity
 	})
-	if len(candidates) == 0 && !parserpolicy.HasFramedMailTail(trimmed) {
+	if len(candidates) == 0 && !extendedHeader && !parserpolicy.HasFramedMailTail(trimmed) {
 		return &V5ParseResult{Success: false}
 	}
 
@@ -209,7 +212,7 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 			executionService = "smtp"
 		}
 		executionInput := trimmed
-		if mappingProfile(candidate.profile) {
+		if mappingProfile(candidate.profile) && (candidate.profile.Pack.ID != parserpolicy.MailTailPackID || extendedHeader) {
 			executionInput = input
 		}
 		result, err := candidate.profile.Executor.Execute(&parserpolicy.ExecutionRequest{
@@ -228,6 +231,7 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 			hasEmbeddedCandidate = true
 		}
 		execution := execute(candidate)
+		execution.composed = reviewedMappingProfile(candidate.profile) && successfulExecution(execution.result, execution.err) && executionMatchesKVHeader(execution, input, false)
 		executions = append(executions, execution)
 	}
 	strictHeaderRejected := false
@@ -244,7 +248,7 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 		if requiresContinuation && execution.candidate.profile.Pack.ID != parserpolicy.MailTailPackID && !mappingProfile(execution.candidate.profile) {
 			continue
 		}
-		if strictHeaderRejected && !executionMatchesKVHeader(execution, input, false) {
+		if strictHeaderRejected && !execution.composed {
 			continue
 		}
 		if successfulExecution(execution.result, execution.err) && (selectedIndex < 0 || betterExecution(execution, executions[selectedIndex])) {
@@ -276,7 +280,10 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 			metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "incomplete_structured_tail")
 			incomplete = true
 		}
-		return &V5ParseResult{ParseTelemetry: metadata, Success: false, Quarantined: hasEmbeddedCandidate || incomplete}
+		if extendedHeader && !incomplete {
+			metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "incomplete_structured_header")
+		}
+		return &V5ParseResult{ParseTelemetry: metadata, Success: false, Quarantined: hasEmbeddedCandidate || incomplete || extendedHeader}
 	}
 
 	selected := executions[selectedIndex].result
@@ -329,6 +336,9 @@ func successfulExecution(result *parserpolicy.ExecutionResult, err error) bool {
 }
 
 func betterExecution(candidate, current profileExecution) bool {
+	if candidate.composed != current.composed {
+		return candidate.composed
+	}
 	candidateTelemetry := candidate.result.ParseTelemetry
 	currentTelemetry := current.result.ParseTelemetry
 	// NFI output schemas are an explicit, reviewed operator choice. A managed
@@ -640,10 +650,14 @@ func (adapter *ParserPackAdapter) engineResult(result *V5ParseResult) *engine.V5
 			}
 		}
 		for _, evidence := range telemetryResult.FieldEvidence {
-			fieldEvidence = append(fieldEvidence, map[string]interface{}{
+			row := map[string]interface{}{
 				"field": evidence.Field, "source_backed": evidence.Source,
 				"start": evidence.Start, "end": evidence.End, "derived_rule": evidence.DerivedRule,
-			})
+			}
+			if len(evidence.Spans) > 0 {
+				row["spans"] = evidence.Spans
+			}
+			fieldEvidence = append(fieldEvidence, row)
 		}
 	}
 	payload := map[string]interface{}{}

@@ -62,9 +62,9 @@
     kv: ['/config/kv', 'KV delimiter policy', { pair_separators: [':', ';', ','], assignment_separators: ['=', ':'], quotes: ['single', 'double'], duplicate_policy: 'last', max_fields: 256 }],
     'header-templates': ['/config/templates', 'Log pattern templates', {
       engine:'re2',
-      pattern:'^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[^ \t]+)[ \t]+(?P<hostname>[^ \t]+)[ \t]+(?P<service>[^ \t]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?:(?P<random_number>[0-9]+);)?(?P<event_type>[^; \t]+);(?P<event>[^; \t]+)(?:[ \t]+|$)',
-      fields:{date:'date',timestamp:'timestamp',hostname:'hostname',service:'service',pid:'pid',minor_pid:'minor_pid',thread_id:'thread_id',random_number:'random_number',event_type:'event_type',event:'event'},
-      optional_fields:['random_number'],resource_limits:{max_input_bytes:1048576,timeout_ms:50},
+      pattern:'^(?P<date>[0-9]{8})[ \\t]+(?P<timestamp>[^ \\t]+)[ \\t]+(?P<hostname>[^ \\t]+)[ \\t]+(?P<service>[^ \\t]+)[ \\t]+(?P<pid>[0-9]+)[ \\t]+(?P<minor_pid>[0-9]+)[ \\t]+(?P<thread_id>[0-9]+)[ \\t]+(?:(?P<random_number>[0-9]+);)?(?P<event_type>[^; \\t]+);(?P<event>[^;() \\t]+)(?:\\((?P<event_code>[^()\\s]+)\\))?(?:[ \\t]+|$)',
+      fields:{date:'date',timestamp:'timestamp',hostname:'hostname',service:'service',pid:'pid',minor_pid:'minor_pid',thread_id:'thread_id',random_number:'random_number',event_type:'event_type',event:'event',event_code:'event_code'},
+      optional_fields:['random_number','event_code'],resource_limits:{max_input_bytes:1048576,timeout_ms:50},
     }],
     'kv-templates': ['/config/kv', 'KV pair templates', {
       pair_separators:[':', ';', '|'],assignment_separators:['='],literal_boundaries:true,
@@ -917,6 +917,9 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   }
   const WORKSPACE_ARTIFACTS=[['mapping','Field mapping'],['parser','Full parser pack'],['regex','Regex'],['template','Template'],['pattern','Pattern'],['kv_template','KV pair template'],['key_pack','Key pack'],['keys','Known keys']];
   function workspaceAISample(button) {
+    if(button.hasAttribute?.('data-template-sample')){
+      return el('template-composition-sample')?.value.split(/\r?\n/).find(line=>line.trim())||'';
+    }
     if(button.hasAttribute?.('data-map-sample')){
       const input=button.closest('form')?.querySelector('textarea[name=samples],textarea[name=raw_evidence],textarea[name=raw]');
       if(input)return input.value;
@@ -2055,13 +2058,23 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   function renderAssurance(result) {
     const diffs = result.diff || [], evidence = result.evidence_spans || [], trace = result.trace || [], counts = result.counts || {}, errors = result.errors || [];
     const attempts = trace.filter(item => item.stage === 'parser_attempt');
-    const traceRows = trace.map((item, index) => `<tr><td>${index + 1}/${trace.length}</td><td><b>${esc(item.stage_name || item.stage_id || item.stage)}</b><br><small>${esc(item.stage_type || '')}</small></td><td class="mono">${esc(item.parser || item.strategy || '—')}</td><td>${badge(item.outcome || (item.success ? 'success' : 'failed'))}${item.failure_reason ? `<br><small>${esc(item.failure_reason)}</small>` : ''}</td><td>${item.fields ?? '—'}</td><td>${item.latency_ms == null ? '—' : `${item.latency_ms} ms`}</td></tr>`);
-    const evidenceRows = evidence.map(item => `<tr><td>${esc(item.field)}</td><td><code>${esc(pretty(result.actual?.[item.field]))}</code></td><td>${badge(item.source_backed ? 'source' : 'derived')}</td><td>${item.source_backed ? `${item.start ?? '—'}–${item.end ?? '—'}` : '—'}</td><td>${esc(item.derived_rule || 'source span')}</td></tr>`);
+    const traceRows = trace.map((item, index) => {
+      const reason = item.failure_reason || item.error_code;
+      const detail = reason === 'incomplete_structured_header' ? 'A header component is missing or assigned to the wrong field.' : '';
+      return `<tr><td>${index + 1}/${trace.length}</td><td><b>${esc(item.stage_name || item.stage_id || item.stage)}</b><br><small>${esc(item.stage_type || '')}</small></td><td class="mono">${esc(item.parser || item.strategy || '—')}</td><td>${badge(item.outcome || (item.success ? 'success' : 'failed'))}${reason ? `<br><small>${esc(reason)}</small>` : ''}${detail ? `<br><small>${esc(detail)}</small>` : ''}</td><td>${item.fields ?? '—'}</td><td>${item.latency_ms == null ? '—' : `${item.latency_ms} ms`}</td></tr>`;
+    });
+    const evidenceRows = evidence.map(item => {
+      const isSource = item.source_backed ?? item.source ?? false;
+      const spans = item.spans?.length ? item.spans : [{start:item.start ?? 0,end:item.end}];
+      const ranges = spans.filter(span => span.end != null).map(span => `${span.start ?? 0}–${span.end}`).join(', ');
+      const origin = item.derived_rule ? 'derived' : item.inferred ? 'inferred' : isSource ? 'source' : 'unverified';
+      return `<tr><td>${esc(item.field)}</td><td><code>${esc(pretty(result.actual?.[item.field]))}</code></td><td>${badge(origin)}</td><td>${esc(isSource || item.inferred ? ranges || '—' : '—')}</td><td>${esc(item.derived_rule || (item.inferred ? 'Value lookup' : isSource ? 'Source span' : 'Unavailable'))}</td></tr>`;
+    });
     const comparison = result.comparison_enabled ? `<div><h3>Desired output</h3><pre class="json-output">${esc(pretty(result.desired))}</pre></div>` : '<div class="callout">Parse-only validation: add desired JSON when exact structural comparison is required.</div>';
     const coverage = result.coverage || {};
     const aiRemediation = result.passed ? '' : `<div class="callout warn"><b>Parser remediation is required.</b> The controller can send a masked version of this failed sample to the configured AI provider. The result is saved only as a review draft and cannot change a live parser.<div class="actions"><button class="primary" type="button" data-action="request-ai-proposal">Ask Nexora AI to diagnose and propose a fix</button><button type="button" class="secondary" data-action="workspace-ai-auto" data-tab="Assurance diagnosis">Auto Fix with Nexora AI</button></div></div>`;
     const sourceEvidence = result.raw ? panel('Retained source evidence', 'Exact retained input is permission checked and returned as escaped text; line-ending metadata is supplied by the controller.', `<p>SHA-256: <code>${esc(state.quarantineDiagnosis?.sha256 || result.raw_sha256 || 'not supplied')}</code></p>${result.line_endings?`<p>Line endings: <code>${esc(pretty(result.line_endings))}</code></p>`:''}<pre class="json-output">${esc(result.raw)}</pre>`) : '';
-    return `${panel('Assurance verdict','Production parser execution with field coverage, confidence and candidate generation evidence.',`<div class="grid cols-4">${card('Result', result.passed ? 'PASS' : 'FAIL', result.route)}${card('Parser', result.parser?.name || 'unknown', `v${result.parser?.version || '?'} · ${result.parser?.strategy || '—'}`)}${card('Attempts', counts.attempts || attempts.length, `${counts.fallbacks || 0} fallbacks`)}${card('Coverage', Number(coverage.expected)>0?`${coverage.percent ?? 0}%`:'Not measured', Number(coverage.expected)>0?`${coverage.found ?? 0} / ${coverage.expected} expected fields`:'Add expected fields to measure coverage')}</div>${result.score != null ? `<div class="assurance-score"><span>Assurance score</span><b>${esc(result.score)} / 100</b></div>` : ''}${aiRemediation}${coverage.missing?.length ? `<div class="callout warn">Missing fields: ${esc(coverage.missing.join(', '))}</div>` : ''}${result.candidate_parser ? panel('AI-assisted parser candidate','Candidate is review-only and requires validation and independent approval.',`<pre class="json-output">${esc(pretty(result.candidate_parser))}</pre><button class="secondary" type="button" data-action="create-candidate-parser">Create validated draft</button>`) : ''}${errors.length ? `<div class="callout warn">${esc(errors.join(' · '))}</div>` : ''}<div class="split output-split"><div><h3>Complete actual output</h3><pre class="json-output">${esc(pretty(result.actual))}</pre></div>${comparison}</div>`)}${sourceEvidence}${panel('Parser traversal dashboard','Actual ordered attempts and field-by-field stage execution returned by the production parser.',`<div class="trace-summary"><progress max="${Math.max(trace.length, 1)}" value="${trace.length}"></progress><span>${trace.length} steps complete · ${attempts.length} parser attempts</span></div>${table(['Progress','Stage','Parser','Outcome','Fields','Latency'],traceRows)}`)}${panel('Field mapping and source evidence','Static prefix and KV-tail fields are mapped to their exact input byte spans.',table(['Field','Parsed value','Origin','Input bytes','Rule'],evidenceRows))}${result.comparison_enabled ? panel('Field, type and count diff',`${counts.matches || 0} matching · ${counts.differences || 0} differences`,diffs.length ? diffs.map(item => `<div class="diff-row"><b>${esc(item.field)}</b>${badge(item.status)}<code>${esc(pretty(item.actual))}</code><code>${esc(pretty(item.desired))}</code></div>`).join('') : '<div class="callout">Exact structural match.</div>') : ''}<section class="panel"><form id="assurance-save-form" class="form-grid"><label class="field">Fixture name<input name="name" required></label><label class="field">Existing case ID for new version<input name="id"></label><label class="field wide">Description<input name="description"></label><button class="primary" type="button" data-action="save-assurance">Encrypt and retain in Supabase</button></form></section>`;
+    return `${panel('Assurance verdict','Production parser execution with field coverage, confidence and candidate generation evidence.',`<div class="grid cols-4">${card('Result', result.passed ? 'PASS' : 'FAIL', result.route)}${card('Parser', result.parser?.name || 'unknown', `v${result.parser?.version || '?'} · ${result.parser?.strategy || '—'}`)}${card('Attempts', counts.attempts || attempts.length, `${counts.fallbacks || 0} fallbacks`)}${card('Coverage', Number(coverage.expected)>0?`${coverage.percent ?? 0}%`:'Not measured', Number(coverage.expected)>0?`${coverage.found ?? 0} / ${coverage.expected} expected fields`:'Add expected fields to measure coverage')}</div>${result.score != null ? `<div class="assurance-score"><span>Assurance score</span><b>${esc(result.score)} / 100</b></div>` : ''}${aiRemediation}${coverage.missing?.length ? `<div class="callout warn">Missing fields: ${esc(coverage.missing.join(', '))}</div>` : ''}${result.candidate_parser ? panel('AI-assisted parser candidate','Candidate is review-only and requires validation and independent approval.',`<pre class="json-output">${esc(pretty(result.candidate_parser))}</pre><button class="secondary" type="button" data-action="create-candidate-parser">Create validated draft</button>`) : ''}${errors.length ? `<div class="callout warn">${esc(errors.join(' · '))}</div>` : ''}<div class="split output-split"><div><h3>Complete actual output</h3><pre class="json-output">${esc(pretty(result.actual))}</pre></div>${comparison}</div>`)}${sourceEvidence}${panel('Parser traversal dashboard','Actual ordered attempts and field-by-field stage execution returned by the production parser.',`<div class="trace-summary"><progress max="${Math.max(trace.length, 1)}" value="${trace.length}"></progress><span>${trace.length} steps complete · ${attempts.length} parser attempts</span></div>${table(['Progress','Stage','Parser','Outcome','Fields','Latency'],traceRows)}`)}${panel('Field mapping and source evidence','Byte ranges are zero-based and end-exclusive. Inferred ranges come from a value lookup.',table(['Field','Parsed value','Origin','Input bytes','Rule'],evidenceRows))}${result.comparison_enabled ? panel('Field, type and count diff',`${counts.matches || 0} matching · ${counts.differences || 0} differences`,diffs.length ? diffs.map(item => `<div class="diff-row"><b>${esc(item.field)}</b>${badge(item.status)}<code>${esc(pretty(item.actual))}</code><code>${esc(pretty(item.desired))}</code></div>`).join('') : '<div class="callout">Exact structural match.</div>') : ''}<section class="panel"><form id="assurance-save-form" class="form-grid"><label class="field">Fixture name<input name="name" required></label><label class="field">Existing case ID for new version<input name="id"></label><label class="field wide">Description<input name="description"></label><button class="primary" type="button" data-action="save-assurance">Encrypt and retain in Supabase</button></form></section>`;
   }
 
   function agentMetricsLabel(sync) {
@@ -2222,9 +2235,15 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
           esc((doc.payload?.name || doc.id) + ' · revision ' + doc.revision) + '</option>').join('') + '</select></label>';
       const header = kind === 'header-templates' ? items : other.items || [];
       const kv = kind === 'kv-templates' ? items : other.items || [];
-      templateWorkbench = panel('Preview header and KV together','Choose exact saved revisions and verify one log per line. For the standard mail header, you can open a starter mapping without saved revisions.',
+      const artifact = kind === 'header-templates' ? 'template' : 'kv_template';
+      templateWorkbench = panel('Build a template from samples','Paste one representative record per line, up to 500. Header drafts capture the prefix. KV drafts accept a recognized mail record or a standalone key/value tail.',
+        '<label class="field">Sample log<textarea id="template-composition-sample" rows="6" spellcheck="false"></textarea></label>' +
+        '<div class="actions"><button type="button" class="primary" data-action="template-draft-generate" data-artifact="' + artifact + '">Generate draft JSON</button>' +
+        '<button type="button" class="secondary" data-action="workspace-ai-open" data-template-sample data-mode="fix" data-tab="' + title + '" data-artifact="' + artifact + '">Draft with Nexora AI</button>' +
+        '<button type="button" class="secondary" data-action="template-draft-verify" data-artifact="' + artifact + '">Verify current JSON</button></div>' +
+        '<pre class="json-output" id="template-draft-result" role="status" hidden></pre>') +
+        panel('Preview header and KV together','Choose exact saved revisions and verify both templates against the sample logs above. Open the verified mapping in FieldSense to build a parser pack for review.',
         select('template-header','Header template',header) + select('template-kv','KV pair template',kv) +
-        '<label class="field">Sample log<textarea id="template-composition-sample" rows="6"></textarea></label>' +
         '<div class="actions"><button type="button" class="primary" data-action="template-preview-saved">Verify saved templates</button>' +
         '<button type="button" class="secondary" data-action="template-compose-mapping">Open combined mapping in FieldSense</button></div>' +
         '<pre class="json-output" id="template-composition-result" role="status" hidden></pre>');
@@ -3157,7 +3176,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         if(config){
           const route={regex:'regex',template:state.page==='header-templates'?'header-templates':'studio',pattern:'static',kv_template:state.page==='kv'?'kv':'kv-templates',key_pack:'knownkeys',keys:'knownkeys'}[kind];
           if(!route)throw new Error('Download this draft to review its configuration.');
-          await navigate(route);
+          if(state.page!==route)await navigate(route);
           const editor=el('config-form');
           if(!editor)throw new Error('The configuration editor is unavailable.');
           if(kind==='keys'||kind==='key_pack'){
@@ -3166,6 +3185,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
             editor.elements.config.value=pretty(metadata);
           }else editor.elements.config.value=pretty(config);
           page.dataset.dirty='true';
+          form.closest('dialog')?.close();
           editor.scrollIntoView({block:'start'});
           break;
         }
@@ -3374,6 +3394,38 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       case 'nfi-use-profile': {nfiLoadProfile(Number(button.dataset.index));break;}
       case 'nfi-repair-candidate': {const result=await api('/assurance/parsers/'+encodeURIComponent(id)+'/clone-draft',{method:'POST',body:{reason:'Operator requested editable FieldSense repair revision'}});if(!result.id)throw new Error('Controller did not return a repair draft identifier');await action({dataset:{action:'nfi-edit-candidate',id:result.id}});toast('Repair draft created. The original production revision is preserved; validate and review this draft before any deployment.');break;}
       case 'nfi-edit-candidate': {const doc=await api('/assurance/parsers/'+encodeURIComponent(id)),payload=doc.payload||doc,parser=payload.parser;if(!['draft','rejected'].includes(doc.state))throw new Error('Only draft/rejected candidates can be edited');if(parser?.pattern_type!=='mapping'){await navigate('parser-workspace');await action({dataset:{action:'parser-workspace-load',id}});toast('Canonical repair draft loaded in Parser Creation Workspace; original production revision is preserved.');break;}state.nfiEditId=id;state.nfiName=payload.name||id;state.nfiVersion=payload.version||'0.1.0';state.nfiParser=parser;state.nfiCases=payload.cases||[];state.nfiRaw=state.nfiCases[0]?.raw||'';state.nfiService=Array.isArray(parser.service_scope)?parser.service_scope.join(','):parser.service_scope||'auto';state.nfiMappingPriority=Number(parser.mapping_priority)||0;state.nfiScopePattern=parser.scope_pattern||'';state.nfiGlobalScope=parser.reviewed_global_scope===true;state.qrwFields=(parser.mapping_plan?.fields||[]).map(field=>qrwField({...field,status:'unresolved'}));qrwControllerPreview=null;await navigate('field-mapping');toast('Native plan loaded for an editable revision; service scope and ordered operations preserved');break;}
+      case 'template-draft-generate':
+      case 'template-draft-verify': {
+        const input = el('template-composition-sample');
+        const host = el('template-draft-result');
+        const editor = el('config-form').elements.config;
+        const raw = input.value, original = editor.value;
+        const samples = raw.split(/\r?\n/).filter(line => line.trim());
+        if (!samples.length || samples.length > 500) throw new Error('Paste 1 to 500 sample records.');
+        const generate = button.dataset.action === 'template-draft-generate';
+        const body = {kind:button.dataset.artifact,samples};
+        if (!generate) body.config=parseJSON(original,'Configuration JSON');
+        if (!generate && (!body.config || Array.isArray(body.config) || typeof body.config!=='object')) throw new Error('Enter a configuration JSON object.');
+        host.hidden=false;
+        host.textContent='Checking the supplied samples…';
+        button.disabled=true;
+        try {
+          const result=await api('/field-mapping/template-draft',{method:'POST',body});
+          if (!host.isConnected) break;
+          if (raw!==input.value || original!==editor.value) {
+            host.textContent='The sample or JSON changed. Check the current values again.';
+            break;
+          }
+          if (generate && result.passed && result.config) {
+            editor.value=pretty(result.config);
+            page.dataset.dirty='true';
+          }
+          host.textContent=pretty(result);
+        } catch(error) {
+          if (host.isConnected) host.textContent=error.message;
+        } finally {button.disabled=false;}
+        break;
+      }
       case 'template-preview-saved': {
         const header = el('template-header').value, kv = el('template-kv').value;
         const raw = el('template-composition-sample').value;
@@ -3419,7 +3471,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         break;
       }
       case 'template-compose-mapping': {
-        const raw = el('template-composition-sample')?.value.trim();
+        const raw = el('template-composition-sample')?.value.split(/\r?\n/).find(line=>line.trim());
         if (!raw) throw new Error('Paste one representative log record.');
         state.nfiRaw = raw;
         state.nfiScopePattern = /^[0-9]{8}\s+\S+\s+\S+\s+\S+\s+[0-9]+\s+[0-9]+\s+[0-9]+\s+(?:[0-9]+;)?[^;\s]+;[^;\s]+(\s|$)/.source;
@@ -3430,10 +3482,10 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         state.qrwFields = header.map((name,index) => qrwField({
           name,label:name,method:'position',source:String(index+1),policy:'required',
         }));
-        const eventHeader = '^(?:\\S+\\s+){7}(?:([0-9]+);)?([^;\\s]+);([^;\\s]+)(?:\\s|$)';
-        for (const [part,name] of ['random_number','event_type','event'].entries()) {
-          state.qrwFields.push(qrwField({name,label:name,method:'regex',source:eventHeader,part:String(part+1),
-            policy:part===0?'optional':'required'}));
+        const eventHeader = CONFIG['header-templates'][2].pattern;
+        for (const name of ['random_number','event_type','event','event_code']) {
+          state.qrwFields.push(qrwField({name,label:name,method:'regex',source:eventHeader,part:name,
+            policy:CONFIG['header-templates'][2].optional_fields.includes(name)?'optional':'required'}));
         }
         state.qrwFields.push(qrwField({name:'kv_pair',label:'Dynamic KV tail',method:'kv_eol',end_of_line:true,
           type:'object',policy:'optional',source:'9',unit:'token',output_policy:'flatten',kv_profile:'configured',

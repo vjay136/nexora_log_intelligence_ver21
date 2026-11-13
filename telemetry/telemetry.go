@@ -205,11 +205,18 @@ type ParserAttempt struct {
 // FieldEvidence ties an emitted field to a source byte span or a named
 // declarative derivation without retaining the source text.
 type FieldEvidence struct {
-	Field       string `json:"field"`
-	Source      bool   `json:"source"`
-	Start       int    `json:"start,omitempty"`
-	End         int    `json:"end,omitempty"`
-	DerivedRule string `json:"derived_rule,omitempty"`
+	Field       string       `json:"field"`
+	Source      bool         `json:"source"`
+	Start       int          `json:"start,omitempty"`
+	End         int          `json:"end,omitempty"`
+	DerivedRule string       `json:"derived_rule,omitempty"`
+	Spans       []SourceSpan `json:"spans,omitempty"`
+}
+
+// SourceSpan is a half-open byte range within the original input.
+type SourceSpan struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
 }
 
 // StageResult captures individual stage execution

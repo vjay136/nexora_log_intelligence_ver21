@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"nexora.local/nli-v20/internal/fieldmapping"
 	"nexora.local/nli-v20/internal/grok"
 	"nexora.local/nli-v20/internal/mixedkv"
 	"nexora.local/nli-v20/internal/semanticextract"
@@ -21,7 +22,7 @@ import (
 	"nexora.local/nli-v20/telemetry"
 )
 
-func (e *ParserPackExecutor) executeStage(ctx context.Context, request *ExecutionRequest, rule ParserRule, stage Stage, fields workingSet) (telemetry.StageResult, error) {
+func (e *ParserPackExecutor) executeStage(ctx context.Context, request *ExecutionRequest, rule ParserRule, stage Stage, fields workingSet, headerOmissions map[string]fieldmapping.Evidence) (telemetry.StageResult, error) {
 	started := time.Now()
 	result := telemetry.StageResult{StageID: stage.ID, StageName: stage.Name, StageType: string(stage.Type), Outcome: telemetry.StageOutcomeFailed}
 	stageContext := ctx
@@ -38,9 +39,10 @@ func (e *ParserPackExecutor) executeStage(ctx context.Context, request *Executio
 	}
 	var added, modified int
 	var err error
+	var omissions map[string]fieldmapping.Evidence
 	switch stage.Type {
 	case StageTypeMapping:
-		added, modified, err = e.executeMappingStage(stageContext, request, rule, stage, fields)
+		added, modified, omissions, err = e.executeMappingStage(stageContext, request, rule, stage, fields, headerOmissions != nil)
 	case StageTypeStaticLayout, StageTypeDelimited:
 		added, modified, err = e.executeStaticLayoutStage(request, rule, stage, fields)
 	case StageTypeMixedKV, StageTypeKV, StageTypeLogfmt:
@@ -86,6 +88,9 @@ func (e *ParserPackExecutor) executeStage(ctx context.Context, request *Executio
 	if err != nil {
 		result.ErrorCode = errorCode(err)
 		return result, err
+	}
+	for name, evidence := range omissions {
+		headerOmissions[name] = evidence
 	}
 	result.Outcome = telemetry.StageOutcomeSuccess
 	return result, nil

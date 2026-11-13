@@ -25,7 +25,7 @@ for (const name of ['build-webapp.mjs', 'copy-brand-assets.mjs']) {
 await cp(resolve(root, 'vercel.json'), resolve(target, 'vercel.json'));
 await cp(resolve(root, 'package.json'), resolve(target, 'package.json'));
 await cp(resolve(root, 'package-lock.json'), resolve(target, 'package-lock.json'));
-const manifest = { name: 'nexora-log-intelligence-v22-web-deploy', version: '22.12.0', private: true, type: 'module', engines: { node: '24.x' }, scripts: { build: 'npm --prefix web run build' } };
+const manifest = { name: 'nexora-log-intelligence-v22-web-deploy', version: '22.13.0', private: true, type: 'module', engines: { node: '24.x' }, scripts: { build: 'npm --prefix web run build' } };
 await writeFile(resolve(target, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 await rm(resolve(target, 'package-lock.json'), { force: true });
 await writeFile(resolve(target, '.gitignore'), `.vercel/\nbuild/\nnode_modules/\n.env\n.env.*\n!.env.example\n`);

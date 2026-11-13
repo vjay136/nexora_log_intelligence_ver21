@@ -1,5 +1,9 @@
 # Changelog
 
+## 22.13.0-0
+
+- Verify structural source coverage before selecting a parser and add sample-driven template authoring.
+
 ## 22.12.0-0
 
 - Improve rollout recovery, in-place previews and reusable header and KV templates.

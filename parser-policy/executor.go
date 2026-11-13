@@ -290,6 +290,10 @@ func (e *ParserPackExecutor) executeRule(ctx context.Context, request *Execution
 	}
 	fields := workingSet{}
 	mappingVerified := false
+	var headerEvidence map[string]fieldmapping.Evidence
+	if fieldmapping.HasMailHeaderExtension(request.Input) {
+		headerEvidence = make(map[string]fieldmapping.Evidence)
+	}
 	if len(rule.Stages) > e.pack.ResourceLimits.MaxStageCount {
 		err := fail("stage_limit", "rule exceeds configured stage limit")
 		attempt.FailureReason = errorCode(err)
@@ -306,7 +310,7 @@ func (e *ParserPackExecutor) executeRule(ctx context.Context, request *Execution
 			return nil, attempt, snapshotRuleStats(fields), err
 		default:
 		}
-		stageResult, err := e.executeStage(ctx, request, rule, stage, fields)
+		stageResult, err := e.executeStage(ctx, request, rule, stage, fields, headerEvidence)
 		if err != nil {
 			stageResult.ErrorCode = errorCode(err)
 			if stage.FailurePolicy == FailurePolicyContinue {
@@ -374,6 +378,27 @@ func (e *ParserPackExecutor) executeRule(ctx context.Context, request *Execution
 		attempt.LatencyMs = elapsedMillis(started)
 		return nil, attempt, snapshotRuleStats(fields), typed
 	}
+	if headerEvidence != nil {
+		for name := range projected.Fields {
+			field := fields[name]
+			evidence := fieldmapping.Evidence{Source: field.Source, Start: field.Start, End: field.End}
+			for _, span := range field.SourceSpans {
+				evidence.Spans = append(evidence.Spans, fieldmapping.Span{Start: span.Start, End: span.End})
+			}
+			headerEvidence[name] = evidence
+		}
+		verification := telemetry.StageResult{StageID: "structural_header_integrity", StageName: "Verify header source components", StageType: "structural_integrity", Outcome: telemetry.StageOutcomeSuccess}
+		if err := fieldmapping.ValidateMailHeader(request.Input, headerEvidence); err != nil {
+			typed := fail("incomplete_structured_header", err.Error())
+			attempt.FailureReason = errorCode(typed)
+			verification.Outcome = telemetry.StageOutcomeFailed
+			verification.ErrorCode = attempt.FailureReason
+			attempt.StageResults = append(attempt.StageResults, verification)
+			attempt.LatencyMs = elapsedMillis(started)
+			return nil, attempt, snapshotRuleStats(fields), typed
+		}
+		attempt.StageResults = append(attempt.StageResults, verification)
+	}
 	if !mappingVerified {
 		if err := validateFramedMailTail(request.Input, fields, projected.Fields); err != nil {
 			attempt.FailureReason = errorCode(err)
@@ -431,6 +456,9 @@ func buildRuleStats(output map[string]interface{}, fields workingSet, inputCount
 	for _, name := range names {
 		field := fields[name]
 		record := telemetry.FieldEvidence{Field: name, Source: field.Source, Start: field.Start, End: field.End, DerivedRule: field.DerivedRule}
+		for _, span := range field.SourceSpans {
+			record.Spans = append(record.Spans, telemetry.SourceSpan{Start: span.Start, End: span.End})
+		}
 		stats.Evidence = append(stats.Evidence, record)
 		if field.Source {
 			stats.SourceFields++
