@@ -29,6 +29,7 @@ const (
 	maxRuntimeHeaderTemplates  = 128
 	maxRuntimeKVTemplates      = 64
 	maxRuntimeAssetBundleBytes = 16 << 20
+	runtimeKVTimeout           = 500 * time.Millisecond
 )
 
 type RuntimeTemplateAsset struct {
@@ -340,9 +341,11 @@ func (templates *runtimeTemplates) execute(ctx context.Context, raw, node string
 			continue
 		}
 		output.matched = true
-		child, cancel := context.WithTimeout(ctx, header.timeout)
-		result, failure := header.execute(child, templates.kv, raw, match, node)
-		cancel()
+		var result *parserpolicy.ExecutionResult
+		failure := "template_header_timeout"
+		if time.Since(started) <= header.timeout {
+			result, failure = header.execute(ctx, templates.kv, raw, match, node)
+		}
 		attempt := telemetry.ParserAttempt{
 			ParserID: header.id, Outcome: telemetry.AttemptOutcomeFailed,
 			FailureReason: failure, LatencyMs: elapsedMillis(started),
@@ -391,7 +394,9 @@ func (header runtimeHeaderTemplate) execute(ctx context.Context, profiles []runt
 	}
 	profile := ""
 	if strings.TrimSpace(suffix) != "" {
-		kv, kvProfile, err := extractRuntimeKV(ctx, profiles, suffix)
+		kvContext, cancel := context.WithTimeout(ctx, runtimeKVTimeout)
+		kv, kvProfile, err := extractRuntimeKV(kvContext, profiles, suffix)
+		cancel()
 		if err != nil {
 			return nil, "incomplete_structured_tail"
 		}
