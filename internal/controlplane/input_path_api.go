@@ -155,7 +155,7 @@ func mustJSON(value any) []byte {
 }
 
 func (s *Server) listInputPathRollouts(w http.ResponseWriter, r *http.Request, profileID string, profile metastore.Document) {
-	docs, err := s.metadata.List(r.Context(), "rollout-proposals", metastore.Query{Limit: 1000})
+	docs, err := s.metadata.List(r.Context(), "rollout-proposals", metastore.Query{Limit: 1000, RolloutSummary: true})
 	if err != nil {
 		jsonError(w, "input path rollout history unavailable", http.StatusServiceUnavailable)
 		return

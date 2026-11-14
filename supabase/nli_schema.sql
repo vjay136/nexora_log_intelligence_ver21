@@ -1,4 +1,4 @@
--- NLI Ver22 (22.16.1-0) Supabase metadata schema (compatible RPC schema version 1).
+-- NLI Ver22 (22.17.1-0) Supabase metadata schema (compatible RPC schema version 1).
 -- The controller uses protected RPCs for revisioned JSONB parser packs, mappings,
 -- scope policies, bundle descriptors, KV profiles and parser recovery archives.
 -- Assurance evidence is encrypted by the controller before persistence.
@@ -102,7 +102,7 @@ begin
   end if;
   select count(*) into v_count from public.nli_documents;
   return jsonb_build_object('status', 'ok', 'schema_version', 1, 'revisions', v_count,
-    'bootstrap_release', '22.16.1-0',
+    'bootstrap_release', '22.17.1-0',
     'persistence_capabilities', jsonb_build_array('revisioned_jsonb', 'nfi_mapping_plan_metadata', 'scope_policy_metadata', 'nullable_object_array_payloads', 'dynamic_kv_eol_metadata', 'parser_recovery_archive', 'kvie_profile_metadata'),
     'validation_authority', 'nli-controller');
 end;
@@ -247,6 +247,46 @@ begin
 end;
 $$;
 
+create or replace function public.nli_list_rollout_summaries(
+  p_state text default '',
+  p_limit integer default 100,
+  p_offset integer default 0
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, extensions, pg_temp
+as $$
+declare
+  v_result jsonb;
+begin
+  if not public.nli_controller_authorized() then
+    raise exception using errcode = '42501', message = 'NLI controller authentication failed';
+  end if;
+  p_limit := least(greatest(coalesce(p_limit, 100), 1), 1000);
+  p_offset := greatest(coalesce(p_offset, 0), 0);
+
+  with latest as (
+    select distinct on (document_id) *
+      from public.nli_documents
+     where collection = 'rollout-proposals'
+     order by document_id, revision desc
+  ), selected as (
+    select collection, document_id, revision, state, sha256, created_by, created_at, updated_at, deleted,
+           payload #- '{payload,asset_bundle}' as payload
+      from latest
+     where not deleted and (coalesce(p_state, '') = '' or state = p_state)
+     order by updated_at desc, document_id
+     limit p_limit offset p_offset
+  )
+  select coalesce(
+    jsonb_agg((to_jsonb(selected) - 'document_id') || jsonb_build_object('id', selected.document_id) order by selected.updated_at desc, selected.document_id),
+    '[]'::jsonb
+  ) into v_result from selected;
+  return v_result;
+end;
+$$;
+
 create or replace function public.nli_delete_document(
   p_collection text,
   p_id text,
@@ -300,11 +340,13 @@ revoke all on function public.nli_health() from public, anon, authenticated;
 revoke all on function public.nli_put_document(text,text,text,jsonb,text,text,boolean) from public, anon, authenticated;
 revoke all on function public.nli_get_document(text,text,integer) from public, anon, authenticated;
 revoke all on function public.nli_list_documents(text,text,integer,integer) from public, anon, authenticated;
+revoke all on function public.nli_list_rollout_summaries(text,integer,integer) from public, anon, authenticated;
 revoke all on function public.nli_delete_document(text,text,boolean,text) from public, anon, authenticated;
 grant execute on function public.nli_health() to anon;
 grant execute on function public.nli_put_document(text,text,text,jsonb,text,text,boolean) to anon;
 grant execute on function public.nli_get_document(text,text,integer) to anon;
 grant execute on function public.nli_list_documents(text,text,integer,integer) to anon;
+grant execute on function public.nli_list_rollout_summaries(text,integer,integer) to anon;
 grant execute on function public.nli_delete_document(text,text,boolean,text) to anon;
 
 comment on table public.nli_documents is

@@ -1,5 +1,10 @@
 # Changelog
 
+## v22.17.1-0
+
+- Check header capture coverage during template verification and live parsing.
+- Keep immutable parser bundles out of rollout catalog responses.
+
 ## v22.16.1-0
 
 See [release notes](docs/V22_16_1_RELEASE_NOTES.md) for live template composition and source-ordered JSON.

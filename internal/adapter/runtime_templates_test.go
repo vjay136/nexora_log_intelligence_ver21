@@ -26,7 +26,7 @@ func TestPublishedHeaderTemplateUsesCompleteGlobalKV(t *testing.T) {
 	}
 	header := fieldmapping.HeaderTemplate{
 		Engine:  "re2",
-		Pattern: `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>\S+)[ \t]+(?P<hostname>\S+)[ \t]+(?P<service>\S+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?P<random_number>[0-9]+);(?P<event_type>[^;\s]+);(?P<extra_tag1>[^;\s]+);(?P<extra_tag2>[^;\s]+);(?P<extra_tag3>[^;\s]+);(?P<event>[^;\s]+)(?:[ \t]+|$)`,
+		Pattern: `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>\S+)[ \t]+(?P<hostname>\S+)[ \t]+(?P<service>\S+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)(?:[ \t]*\r?\n[ \t]*|[ \t]+)(?P<random_number>[0-9]+);(?P<event_type>[^;\s]+);(?P<extra_tag1>[^;\s]+);(?P<extra_tag2>[^;\s]+);(?P<extra_tag3>[^;\s]+);(?P<event>[^;\s]+)(?:[ \t]+|$)`,
 		Fields:  captures, ResourceLimits: fieldmapping.HeaderTemplateLimits{MaxInputBytes: 1048576, TimeoutMS: 50},
 	}
 	payload, err := json.Marshal(map[string]any{"config": header})
@@ -47,6 +47,14 @@ func TestPublishedHeaderTemplateUsesCompleteGlobalKV(t *testing.T) {
 	}
 	if !reflect.DeepEqual(result.EventPayload.Fields["kv_pair"], map[string]any{"status": "failed", "reason": "not needed"}) {
 		t.Fatalf("KV tail wrong: %#v", result.EventPayload.Fields["kv_pair"])
+	}
+	for _, lineBreak := range []string{"\n", "\r\n"} {
+		wrapped := strings.Replace(record, "221568 123456", "221568"+lineBreak+"123456", 1)
+		parsed := runtime.TryParseV5Production(wrapped, engine.Source{Service: "auto"})
+		if !parsed.Success || parsed.ParseTelemetry.ParserID != "template/mail-header-v2" ||
+			!reflect.DeepEqual(parsed.EventPayload.Fields, result.EventPayload.Fields) {
+			t.Fatalf("wrapped header did not preserve all fields: %+v", parsed.ParseTelemetry)
+		}
 	}
 	found := false
 	for _, proof := range result.ParseTelemetry.FieldEvidence {

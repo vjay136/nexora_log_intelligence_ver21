@@ -385,7 +385,7 @@ func (header runtimeHeaderTemplate) execute(ctx context.Context, profiles []runt
 		evidence[capture.name] = fieldmapping.Evidence{Source: true, Start: start, End: end}
 		telemetryEvidence = append(telemetryEvidence, telemetry.FieldEvidence{Field: capture.name, Source: true, Start: start, End: end})
 	}
-	if err := fieldmapping.ValidateMailHeader(raw, evidence); err != nil {
+	if err := fieldmapping.ValidateTemplateHeader(raw, match[1], evidence); err != nil {
 		return nil, "incomplete_structured_header"
 	}
 	suffix, offset, err := fieldmapping.TemplateTail(raw, match[1])

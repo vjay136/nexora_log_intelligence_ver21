@@ -45,9 +45,10 @@ type Document struct {
 
 // Query bounds every list operation.
 type Query struct {
-	State  string
-	Limit  int
-	Offset int
+	State          string
+	Limit          int
+	Offset         int
+	RolloutSummary bool
 }
 
 // Store is the controller's durable metadata boundary.
@@ -367,6 +368,8 @@ func (s *supabaseStore) Close() error {
 	return nil
 }
 
+var errMissingRPC = errors.New("Supabase RPC is missing")
+
 func (s *supabaseStore) call(ctx context.Context, function string, args any, out any) error {
 	body, err := json.Marshal(args)
 	if err != nil {
@@ -378,7 +381,7 @@ func (s *supabaseStore) call(ctx context.Context, function string, args any, out
 	// Cloudflare 530) or drops the connection. Revision-creating writes are
 	// never retried because a lost response must not create a second revision.
 	maxAttempts := 1
-	if function == "nli_health" || function == "nli_get_document" || function == "nli_list_documents" {
+	if function == "nli_health" || function == "nli_get_document" || function == "nli_list_documents" || function == "nli_list_rollout_summaries" {
 		maxAttempts = 3
 	}
 	var lastErr error
@@ -431,6 +434,9 @@ func (s *supabaseStore) call(ctx context.Context, function string, args any, out
 			Code    string `json:"code"`
 		}
 		_ = json.Unmarshal(data, &envelope)
+		if envelope.Code == "PGRST202" && function == "nli_list_rollout_summaries" {
+			return errMissingRPC
+		}
 		if envelope.Code == "P0002" {
 			return fmt.Errorf("Supabase %s: %w", function, os.ErrNotExist)
 		}
@@ -528,6 +534,14 @@ func (s *supabaseStore) List(ctx context.Context, collection string, query Query
 		query.Offset = 0
 	}
 	var result []Document
+	if collection == "rollout-proposals" && query.RolloutSummary {
+		err := s.call(ctx, "nli_list_rollout_summaries", map[string]any{
+			"p_state": query.State, "p_limit": query.Limit, "p_offset": query.Offset,
+		}, &result)
+		if !errors.Is(err, errMissingRPC) {
+			return result, err
+		}
+	}
 	err := s.call(ctx, "nli_list_documents", map[string]any{
 		"p_collection": collection,
 		"p_state":      query.State,

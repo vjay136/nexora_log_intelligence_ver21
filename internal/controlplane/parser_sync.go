@@ -237,7 +237,7 @@ func (s *Server) listParserSyncDocuments(ctx context.Context, collection, state 
 		if remaining := maximum - offset; remaining < limit {
 			limit = remaining
 		}
-		page, err := s.metadata.List(ctx, collection, metastore.Query{State: state, Limit: limit, Offset: offset})
+		page, err := s.metadata.List(ctx, collection, metastore.Query{State: state, Limit: limit, Offset: offset, RolloutSummary: collection == "rollout-proposals"})
 		if err != nil {
 			return nil, err
 		}
@@ -246,7 +246,7 @@ func (s *Server) listParserSyncDocuments(ctx context.Context, collection, state 
 			return documents, nil
 		}
 	}
-	extra, err := s.metadata.List(ctx, collection, metastore.Query{State: state, Limit: 1, Offset: maximum})
+	extra, err := s.metadata.List(ctx, collection, metastore.Query{State: state, Limit: 1, Offset: maximum, RolloutSummary: collection == "rollout-proposals"})
 	if err != nil {
 		return nil, err
 	}
@@ -692,7 +692,11 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 	if err != nil {
 		return metastore.Document{}, fmt.Errorf("%w: create proposal: %v", errParserRolloutMetadata, err)
 	}
-	for _, stale := range superseded {
+	for _, summary := range superseded {
+		stale, err := s.metadata.Get(ctx, summary.Collection, summary.ID, 0)
+		if err != nil || stale.Revision != summary.Revision || stale.State != "pending_approval" {
+			continue
+		}
 		var stalePayload map[string]any
 		if json.Unmarshal(stale.Payload, &stalePayload) != nil {
 			continue
@@ -1261,7 +1265,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 	}
 	var proposalView any
 	if pendingProposal != nil {
-		proposalView = documentView(*pendingProposal)
+		proposalView = rolloutProposalView(*pendingProposal)
 	}
 	assetViews := []map[string]any{}
 	for _, asset := range bundle.Assets {

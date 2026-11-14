@@ -17,7 +17,7 @@ type navigationActionCount struct {
 
 func countActionableDocuments(ctx context.Context, store metastore.Store, collection string, actionable map[string]struct{}) (navigationActionCount, error) {
 	result := navigationActionCount{States: map[string]int{}, Available: true}
-	documents, err := store.List(ctx, collection, metastore.Query{Limit: 1000})
+	documents, err := store.List(ctx, collection, metastore.Query{Limit: 1000, RolloutSummary: collection == "rollout-proposals"})
 	if err != nil {
 		return result, err
 	}

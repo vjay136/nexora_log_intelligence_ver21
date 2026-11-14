@@ -45,19 +45,31 @@ func documentView(doc metastore.Document) map[string]any {
 	_ = json.Unmarshal(doc.Payload, &payload)
 	return map[string]any{"id": doc.ID, "revision": doc.Revision, "state": doc.State, "sha256": doc.Hash, "created_by": doc.CreatedBy, "created_at": doc.CreatedAt, "updated_at": doc.UpdatedAt, "payload": payload}
 }
+func rolloutProposalView(doc metastore.Document) map[string]any {
+	view := documentView(doc)
+	proposal, _ := view["payload"].(map[string]any)
+	payload, _ := proposal["payload"].(map[string]any)
+	delete(payload, "asset_bundle")
+	return view
+}
+
 func listDocuments(r *http.Request, store metastore.Store, collection string) ([]map[string]any, error) {
 	state := r.URL.Query().Get("state")
 	limit := 100
 	if parsed, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && parsed > 0 && parsed <= 1000 {
 		limit = parsed
 	}
-	documents, err := store.List(r.Context(), collection, metastore.Query{State: state, Limit: limit})
+	documents, err := store.List(r.Context(), collection, metastore.Query{State: state, Limit: limit, RolloutSummary: collection == "rollout-proposals"})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]map[string]any, 0, len(documents))
 	for _, doc := range documents {
-		out = append(out, documentView(doc))
+		if collection == "rollout-proposals" {
+			out = append(out, rolloutProposalView(doc))
+		} else {
+			out = append(out, documentView(doc))
+		}
 	}
 	return out, nil
 }
@@ -1409,7 +1421,7 @@ func (s *Server) handleRollouts(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		} else {
-			pending, countErr := s.metadata.List(ctx, "rollout-proposals", metastore.Query{State: "pending_approval", Limit: 1000})
+			pending, countErr := s.metadata.List(ctx, "rollout-proposals", metastore.Query{State: "pending_approval", Limit: 1000, RolloutSummary: true})
 			if countErr != nil {
 				replyMetadataUnavailable(w, r, snapshot, "rollout approval count unavailable")
 				return

@@ -78,6 +78,15 @@ if docker exec "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -At -U postgres
   echo 'Supabase anon role bypassed direct-table denial' >&2
   exit 1
 fi
+# Catalog reads omit the full bundle, while exact-revision delivery retains it.
+docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres <<SQL >"$scratch/rollout-summary"
+set role anon;
+set request.headers = '{"x-nli-controller-secret":"$secret"}';
+select public.nli_put_document('rollout-proposals','exact-bundle','pending_approval','{"payload":{"asset_bundle":{"assets":[1,2]},"bundle_hash":"exact"}}'::jsonb,'$payload_digest','contract-test',false)->>'revision';
+select (public.nli_list_rollout_summaries('pending_approval',100,0)->0->'payload'->'payload') = '{"bundle_hash":"exact"}'::jsonb;
+select public.nli_get_document('rollout-proposals','exact-bundle',1)->'payload'->'payload'->'asset_bundle' = '{"assets":[1,2]}'::jsonb;
+SQL
+[[ $(tr '\n' ' ' <"$scratch/rollout-summary") == '1 t t ' ]] || { echo 'Compact rollout catalog lost the exact delivery snapshot' >&2; exit 1; }
 # R9 is a persistence-compatible RPC v1 extension, not a new document schema.
 # Preserve a pre-existing R7-shaped parser document and the exact NFI JSONB
 # plan (including null/array/object values) across a complete bootstrap rerun.

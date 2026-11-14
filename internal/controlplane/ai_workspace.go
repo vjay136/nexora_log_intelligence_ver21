@@ -370,7 +370,7 @@ func (s *Server) aiWorkspaceReference(ctx context.Context, reference aiWorkspace
 
 var aiObservedKey = regexp.MustCompile(`(?:^|[\s;:|,\[{])([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*[=:;]`)
 
-const aiMailHeaderPattern = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>[^ \t\r\n]+)[ \t]+(?P<service>[^ \t\r\n]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?:(?P<random_number>[0-9]+);(?:(?P<extra_tag>[^; \t\r\n]+);)?)?(?P<event_type>[^; \t\r\n]+);(?P<event>[^;() \t\r\n]+)(?:\((?P<event_code>[^()\s]+)\))?`
+const aiMailHeaderPattern = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>[^ \t\r\n]+)[ \t]+(?P<service>[^ \t\r\n]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)(?:[ \t]*\r?\n[ \t]*|[ \t]+)(?:(?P<random_number>[0-9]+);(?:(?P<extra_tag>[^; \t\r\n]+);)?)?(?P<event_type>[^; \t\r\n]+);(?P<event>[^;() \t\r\n]+)(?:\((?P<event_code>[^()\s]+)\))?`
 
 var aiMailHeader = regexp.MustCompile(strings.Replace(aiMailHeaderPattern, `(?:(?P<extra_tag>[^; \t\r\n]+);)?`,
 	fmt.Sprintf(`(?:[^; \t\r\n]+;){0,%d}`, fieldmapping.MaxMailExtraTags), 1))
@@ -449,7 +449,7 @@ func mailTemplatePattern(samples ...string) (string, []any) {
 		minBefore, maxBefore = min(minBefore, before), max(maxBefore, before)
 		minAfter, maxAfter = min(minAfter, after), max(maxAfter, after)
 	}
-	const lead = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>[^ \t\r\n]+)[ \t]+(?P<service>[^ \t\r\n]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+`
+	const lead = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>[^ \t\r\n]+)[ \t]+(?P<service>[^ \t\r\n]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)(?:[ \t]*\r?\n[ \t]*|[ \t]+)`
 	pattern := lead
 	optional := []any{}
 	tags := func(offset, minimum, maximum int) string {
@@ -624,7 +624,11 @@ func validateAIWorkspaceAssetCompiled(kind, raw string, config map[string]any, r
 		if len(mapped) == 0 {
 			return nil, errors.New("The proposed regex did not capture any configured fields on this sample")
 		}
-		if err := fieldmapping.ValidateMailHeader(raw, evidence); err != nil {
+		if kind == "template" {
+			if err := fieldmapping.ValidateTemplateHeader(raw, match[1], evidence); err != nil {
+				return nil, err
+			}
+		} else if err := fieldmapping.ValidateMailHeader(raw, evidence); err != nil {
 			return nil, err
 		}
 		if kind == "template" {

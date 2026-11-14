@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 var ErrIncompleteHeader = errors.New("incomplete_structured_header")
@@ -139,6 +140,34 @@ func validateMailHeader(raw string, matches []int, fields map[string]Evidence) e
 	}
 	if name, missing := required[firstMissing]; missing {
 		return fmt.Errorf("%w: %s has no exact mapped or intentionally omitted source component at byte %d", ErrIncompleteHeader, name, firstMissing.Start+1)
+	}
+	return nil
+}
+
+// ValidateTemplateHeader checks that named captures account for each
+// letter, digit and combining mark in the matched header.
+func ValidateTemplateHeader(raw string, end int, fields map[string]Evidence) error {
+	if err := ValidateMailHeader(raw, fields); err != nil {
+		return err
+	}
+	spans := make([]Span, 0, len(fields))
+	for _, field := range fields {
+		if field.Source && field.Start >= 0 && field.End > field.Start && field.End <= end {
+			spans = append(spans, Span{field.Start, field.End})
+		}
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].Start < spans[j].Start })
+	cursor := 0
+	for _, span := range append(spans, Span{end, end}) {
+		if span.Start < cursor {
+			return fmt.Errorf("%w: overlapping template captures at byte %d", ErrIncompleteHeader, span.Start+1)
+		}
+		for offset, char := range raw[cursor:span.Start] {
+			if unicode.IsLetter(char) || unicode.IsNumber(char) || unicode.IsMark(char) {
+				return fmt.Errorf("%w: unmapped header text at byte %d", ErrIncompleteHeader, cursor+offset+1)
+			}
+		}
+		cursor = span.End
 	}
 	return nil
 }

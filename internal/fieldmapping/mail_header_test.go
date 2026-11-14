@@ -83,3 +83,18 @@ func TestStructuralMailHeaderIntegrity(t *testing.T) {
 		})
 	}
 }
+
+func TestTemplateHeaderRequiresCaptureEvidence(t *testing.T) {
+	raw := "prod/42: event"
+	fields := map[string]Evidence{
+		"site":  {Source: true, Start: 0, End: 4},
+		"event": {Source: true, Start: 9, End: 14},
+	}
+	if err := ValidateTemplateHeader(raw, len(raw), fields); !errors.Is(err, ErrIncompleteHeader) {
+		t.Fatalf("unmapped numeric component accepted: %v", err)
+	}
+	fields["extra_tag1"] = Evidence{Source: true, Start: 5, End: 7}
+	if err := ValidateTemplateHeader(raw, len(raw), fields); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -70,7 +70,11 @@ func (s *Server) handleTemplateDraft(w http.ResponseWriter, r *http.Request) {
 	for i, sample := range input.Samples {
 		var validation map[string]any
 		var err error
-		if strings.TrimSpace(sample) == "" || len(sample) > 1048576 || strings.ContainsAny(sample, "\r\n") {
+		_, tailStart := aiWorkspaceKVSample(sample)
+		wrappedHeader := input.Kind == "template" && tailStart > 0 &&
+			strings.Count(sample[:tailStart], "\n") == 1 &&
+			!strings.ContainsAny(sample[tailStart:], "\r\n")
+		if strings.TrimSpace(sample) == "" || len(sample) > 1048576 || (strings.ContainsAny(sample, "\r\n") && !wrappedHeader) {
 			err = errors.New("each sample must be one nonempty log record up to 1 MiB")
 		} else if configErr != nil {
 			err = configErr
