@@ -5,8 +5,8 @@ import { contrast as designContrast } from './design-engine.js';
 // These browser regressions verify frontend behavior independently of network
 // and database availability. e2e.spec.js separately exercises a real controller.
 const origin = 'http://127.0.0.1:4176';
-const tabs = ['sample-history', 'header-templates', 'kv-templates', 'operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'ai-privacy', 'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
-const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
+const tabs = ['sample-history', 'header-templates', 'kv-templates', 'operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'latency', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'ai-privacy', 'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
+const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v22.jpg', 'nexora-poster-v21.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
 test('login inventory comes from the webapp and controller health', async ({page}) => {
   await mockController(page);
@@ -548,7 +548,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
     const path = new URL(request.url()).pathname;
     if (!path.startsWith('/api/v1/')) {
       const name = path === '/' ? 'index.html' : path.slice(1);
-      return route.fulfill({ status: assets[name] ? 200 : 404, contentType: name.endsWith('.js') ? 'application/javascript' : name.endsWith('.css') ? 'text/css' : name.endsWith('.svg') ? 'image/svg+xml' : name.endsWith('.png') ? 'image/png' : 'text/html', body: assets[name] || 'Not found' });
+      return route.fulfill({ status: assets[name] ? 200 : 404, contentType: name.endsWith('.js') ? 'application/javascript' : name.endsWith('.css') ? 'text/css' : name.endsWith('.svg') ? 'image/svg+xml' : name.endsWith('.png') ? 'image/png' : name.endsWith('.jpg') ? 'image/jpeg' : 'text/html', body: assets[name] || 'Not found' });
     }
     observed.push(`${request.method()} ${path}`);
     const headers = { 'content-type': 'application/json', 'x-nli-controller': healthIdentity, 'x-nli-upstream': 'controller' };
@@ -652,7 +652,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
     if (path.startsWith('/api/v1/config/')) return fulfill({ items: [] });
     if (path === '/api/v1/metadata') return fulfill({ records: [], stats: {}, payload_retained: false });
     if (path === '/api/v1/rollouts' && request.method() === 'POST') { rolloutSaves.push(request.postDataJSON()); return fulfill({ id: 'proposal-test', state: 'pending_approval' }, 201); }
-    if (path.match(/^\/api\/v1\/rollouts\/[^/]+\/(approve|cancel)$/) && request.method() === 'POST') { const [,id,action]=path.match(/^\/api\/v1\/rollouts\/([^/]+)\/(approve|cancel)$/),item=rolloutProposals.find(doc=>doc.id===id),body=request.postDataJSON();if(action==='approve'){rolloutApprovalRequests.push({id,body});if(rolloutApprovalFailure)return fulfill({error:rolloutApprovalFailure},409);}if(item)item.state=action==='approve'?'approved':'cancelled';return fulfill({status:item?.state||action}); }
+    if (path.match(/^\/api\/v1\/rollouts\/[^/]+\/(approve|cancel)$/) && request.method() === 'POST') { const [,id,action]=path.match(/^\/api\/v1\/rollouts\/([^/]+)\/(approve|cancel)$/),item=rolloutProposals.find(doc=>doc.id===id),body=request.postDataJSON();if(action==='approve'){rolloutApprovalRequests.push({id,body});if(rolloutApprovalFailure)return fulfill({error:rolloutApprovalFailure},409);}if(item){item.state=action==='approve'?'active':'cancelled';if(action==='approve')Object.assign(item.payload,{approval_reason:body.reason,approved_by:'test-operator'});}return fulfill({status:item?.state||action}); }
     if (path === '/api/v1/rollouts') return fulfill({ proposals: rolloutProposals, live: [] });
     if (path === '/api/v1/artifacts') return fulfill({ artifacts: [], signing_keys_configured: 0 });
     if (path === '/api/v1/rbac/roles') return fulfill({ roles: { viewer: ['assurance:run'], admin: ['*'] } });
@@ -1687,6 +1687,7 @@ test('Approvals workspace sends reason-bearing independent and exact emergency a
   await emergency.getByRole('button',{name:'Administrator approve exact bundle'}).click();
   await expect.poll(()=>mock.rolloutApprovalRequests).toHaveLength(2);
   expect(mock.rolloutApprovalRequests[1]).toEqual({id:'emergency-proposal',body:{reason:'Production recovery approved by administrator',emergency_self_approval:true,expected_revision:8,expected_bundle_hash:hash}});
+  await expect(emergency.locator('.approval-details')).toContainText('Production recovery approved by administrator');
 });
 
 test('legacy parser proposals reach controller verification and a hash rejection becomes one actionable inline state', async ({ page }) => {
@@ -1713,13 +1714,13 @@ test('premium login presents the complete V21 banner in a responsive landscape s
   const lockup=page.locator('.showcase-header .brand-emblem');
   const banner=page.locator('.login-banner-image');
   await expect(lockup).toHaveAttribute('src','./nexora-poster-v21.png');
-  await expect(banner).toHaveAttribute('src','./login-banner-v21.png');
+  await expect(banner).toHaveAttribute('src','./login-banner-v22.jpg');
   await expect(page.locator('.showcase-header .brand-wordmark b')).toHaveText('Nexora Log Intelligence');
   await expect(page.locator('.showcase-header .brand-wordmark strong')).toHaveText('Nexora');
   await expect.poll(()=>banner.evaluate(image=>image.naturalWidth)).toBeGreaterThan(0);
   await expect(banner).toHaveCSS('object-fit','contain');
   const backdrop=await page.locator('.login-form-banner').evaluate(stage=>getComputedStyle(stage,'::before').backgroundImage);
-  expect(backdrop).toContain('login-banner-v21.png');
+  expect(backdrop).toContain('login-banner-v22.jpg');
   const desktop=await page.locator('.login-form-banner').evaluate(stage=>({width:stage.getBoundingClientRect().width,height:stage.getBoundingClientRect().height,imageWidth:stage.querySelector('img').naturalWidth,imageHeight:stage.querySelector('img').naturalHeight}));
   expect(desktop.width).toBeGreaterThan(500);
   expect(desktop.width/desktop.height).toBeCloseTo(1.6,1);

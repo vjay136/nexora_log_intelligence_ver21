@@ -17,10 +17,29 @@ const extendedMailLead = `^\s*(\d{8})\s+(\d{9}[+-]\d{4})\s+(\S+)\s+(\S+)\s+(\d+)
 
 var (
 	extendedMailPrefix = regexp.MustCompile(extendedMailLead)
-	extendedMailHeader = regexp.MustCompile(extendedMailLead + fmt.Sprintf(`((?:[^;\s]+;){0,%d})([^;\s]+);([^;()\s]+)(?:\(([^()\s]+)\))?(?:\s|$)`, MaxMailExtraTags))
+	extendedMailHeader = regexp.MustCompile(extendedMailLead + fmt.Sprintf(`((?:[^;\s]+;){1,%d})([^;()\s]+)(?:\(([^()\s]+)\))?(?:\s|$)`, MaxMailExtraTags+1))
 )
 
-var mailComponentNames = [...]string{"date", "timestamp", "hostname", "service", "pid", "minor_pid", "thread_id", "random_number", "", "loglevel", "event", "event_code"}
+var mailComponentNames = [...]string{"date", "timestamp", "hostname", "service", "pid", "minor_pid", "thread_id", "random_number", "", "event", "event_code"}
+
+// MailLevelIndex identifies a unique conventional level. For older layouts
+// with custom level names it retains the convention of a level next to the event.
+func MailLevelIndex(parts []string) (int, bool) {
+	level := -1
+	for i, part := range parts {
+		switch strings.ToLower(part) {
+		case "trace", "debug", "info", "note", "notice", "warn", "warning", "err", "error", "fatal", "critical", "alert", "emerg", "panic":
+			if level >= 0 {
+				return -1, false
+			}
+			level = i
+		}
+	}
+	if level < 0 {
+		level = len(parts) - 1
+	}
+	return level, level >= 0
+}
 
 var extendedMailAliases = map[string]string{
 	"date": "date", "timestamp": "timestamp", "time_timezone": "timestamp",
@@ -54,10 +73,19 @@ func validateMailHeader(raw string, matches []int, fields map[string]Evidence) e
 	for i, name := range mailComponentNames {
 		start, end := matches[2*i+2], matches[2*i+3]
 		if name == "" {
-			for index, part := range strings.Split(strings.TrimSuffix(raw[start:end], ";"), ";") {
-				if part != "" {
-					required[Span{start, start + len(part)}] = "extra_tag" + strconv.Itoa(index+1)
+			parts := strings.Split(strings.TrimSuffix(raw[start:end], ";"), ";")
+			level, ok := MailLevelIndex(parts)
+			if !ok {
+				return fmt.Errorf("%w: ambiguous mail level before the event at byte %d", ErrIncompleteHeader, start+1)
+			}
+			extra := 0
+			for index, part := range parts {
+				component := "loglevel"
+				if index != level {
+					extra++
+					component = "extra_tag" + strconv.Itoa(extra)
 				}
+				required[Span{start, start + len(part)}] = component
 				start += len(part) + 1
 			}
 			continue

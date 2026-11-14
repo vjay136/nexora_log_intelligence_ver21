@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const target = resolve(root, 'build/web-only');
-const required = ['web/index.html', 'web/app.js', 'web/styles.css', 'web/design-engine.js', 'web/design-engine.css', 'web/nexora-logo-v21.png', 'web/login-banner-v21.png', 'web/nexora-poster-v21.png', 'web/vite.config.js', 'web/package.json', 'api/v1/[...path].js', 'vercel.json'];
+const required = ['web/index.html', 'web/app.js', 'web/styles.css', 'web/design-engine.js', 'web/design-engine.css', 'web/nexora-logo-v21.png', 'web/login-banner-v22.jpg', 'web/nexora-poster-v21.png', 'web/vite.config.js', 'web/package.json', 'api/v1/[...path].js', 'vercel.json'];
 for (const name of required) {
   try {
     await stat(resolve(root, name));
@@ -14,7 +14,7 @@ for (const name of required) {
 await rm(target, { recursive: true, force: true });
 await mkdir(target, { recursive: true });
 await mkdir(resolve(target, 'web'), { recursive: true });
-for (const name of ['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png', 'nli-mark.svg', '_headers', 'vite.config.js', 'package.json', 'package-lock.json', 'README.txt']) {
+for (const name of ['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nexora-logo-v21.png', 'login-banner-v22.jpg', 'nexora-poster-v21.png', 'nli-mark.svg', '_headers', 'vite.config.js', 'package.json', 'package-lock.json', 'README.txt']) {
   await cp(resolve(root, 'web', name), resolve(target, 'web', name));
 }
 for (const name of ['api', 'functions']) await cp(resolve(root, name), resolve(target, name), { recursive: true });
@@ -25,7 +25,7 @@ for (const name of ['build-webapp.mjs', 'copy-brand-assets.mjs']) {
 await cp(resolve(root, 'vercel.json'), resolve(target, 'vercel.json'));
 await cp(resolve(root, 'package.json'), resolve(target, 'package.json'));
 await cp(resolve(root, 'package-lock.json'), resolve(target, 'package-lock.json'));
-const manifest = { name: 'nexora-log-intelligence-v22-web-deploy', version: '22.14.1', private: true, type: 'module', engines: { node: '24.x' }, scripts: { build: 'npm --prefix web run build' } };
+const manifest = { name: 'nexora-log-intelligence-v22-web-deploy', version: '22.15.1', private: true, type: 'module', engines: { node: '24.x' }, scripts: { build: 'npm --prefix web run build' } };
 await writeFile(resolve(target, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 await rm(resolve(target, 'package-lock.json'), { force: true });
 await writeFile(resolve(target, '.gitignore'), `.vercel/\nbuild/\nnode_modules/\n.env\n.env.*\n!.env.example\n`);

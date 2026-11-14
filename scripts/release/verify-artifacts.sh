@@ -80,10 +80,10 @@ done
 
 unzip -t "$webapp" >/dev/null || fail "invalid Vercel bundle"
 webapp_entries=$(unzip -Z1 "$webapp")
-for entry in vercel.json package.json api/v1/\[...path\].js functions/api/v1/\[\[path\]\].js web/index.html web/nli-mark.svg web/nexora-logo-v21.png web/login-banner-v21.png web/nexora-poster-v21.png web/package.json web/package-lock.json web/vite.config.js web/_headers; do
+for entry in vercel.json package.json api/v1/\[...path\].js functions/api/v1/\[\[path\]\].js web/index.html web/nli-mark.svg web/nexora-logo-v21.png web/login-banner-v22.jpg web/nexora-poster-v21.png web/package.json web/package-lock.json web/vite.config.js web/_headers; do
   grep -Fxq "$entry" <<<"$webapp_entries" || fail "Vercel bundle is missing $entry"
 done
-for image in nexora-logo-v21.png login-banner-v21.png nexora-poster-v21.png; do
+for image in nexora-logo-v21.png login-banner-v22.jpg nexora-poster-v21.png; do
   source_hash=$(sha256sum "$ROOT/web/$image" | awk '{print $1}')
   bundle_hash=$(unzip -p "$webapp" "web/$image" | sha256sum | awk '{print $1}')
   [[ $source_hash == "$bundle_hash" ]] || fail "Vercel bundle changed official binary asset: $image"
@@ -120,7 +120,7 @@ for path in /usr/bin/nli /usr/bin/nli-agent /usr/bin/nli-client-control /usr/bin
 done
 for path in /usr/bin/nli-controller-agent /usr/sbin/nli-controller-setup /usr/sbin/nli-supabase-setup /usr/sbin/nli-admin-reset /usr/share/nli/supabase/nli_schema.sql /etc/nli/controller.json \
   /usr/lib/systemd/system/nli-controller-agent.service /usr/lib/systemd/system/nli-controller-bootstrap.service /usr/share/nli/webview_ver21/index.html \
-  /usr/share/nli/webview_ver21/styles.css /usr/share/nli/webview_ver21/app.js /usr/share/nli/webview_ver21/design-engine.js /usr/share/nli/webview_ver21/design-engine.css /usr/share/nli/webview_ver21/nli-mark.svg /usr/share/nli/webview_ver21/nexora-logo-v21.png /usr/share/nli/webview_ver21/login-banner-v21.png /usr/share/nli/webview_ver21/nexora-poster-v21.png /usr/share/nli/webview_ver21/README.txt \
+  /usr/share/nli/webview_ver21/styles.css /usr/share/nli/webview_ver21/app.js /usr/share/nli/webview_ver21/design-engine.js /usr/share/nli/webview_ver21/design-engine.css /usr/share/nli/webview_ver21/nli-mark.svg /usr/share/nli/webview_ver21/nexora-logo-v21.png /usr/share/nli/webview_ver21/login-banner-v22.jpg /usr/share/nli/webview_ver21/nexora-poster-v21.png /usr/share/nli/webview_ver21/README.txt \
   /usr/share/nli/webview_ver21/Open-NLI-WebView.ps1; do
   grep -Fxq "$path" <<<"$controller_payload" || fail "controller payload missing $path"
 done
@@ -181,7 +181,7 @@ assert_normalized_payload "$controller" /usr/sbin/nli-admin-reset "$ROOT/scripts
 assert_normalized_payload "$controller" /usr/lib/systemd/system/nli-controller-agent.service "$ROOT/packaging/systemd/nli-controller-agent.service"
 assert_normalized_payload "$controller" /usr/lib/systemd/system/nli-controller-bootstrap.service "$ROOT/packaging/systemd/nli-controller-bootstrap.service"
 
-for evidence in SHA256SUMS RELEASE_MANIFEST.json SBOM.spdx.json provenance.intoto.json SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS BENCHMARKS.txt INSTALLATION_AND_CONFIGURATION.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md V22_14_1_RELEASE_NOTES.md All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md SAMPLE_FIELD_ACCOUNTING.json RELEASE_ID; do
+for evidence in SHA256SUMS RELEASE_MANIFEST.json SBOM.spdx.json provenance.intoto.json SOURCE_BINARY_PROVENANCE.txt SOURCE_REVISION WEBVIEW_SHA256SUMS BENCHMARKS.txt INSTALLATION_AND_CONFIGURATION.md WEBAPP_OPERATOR_AND_PARSER_GUIDE.md PARSER_CATALOG.md V22_15_1_RELEASE_NOTES.md All_NLI_features.md V21_R1_RELEASE_NOTES.md V21_R1_TEST_RESULTS.md V21_R2_RELEASE_NOTES.md V21_R2_TEST_RESULTS.md V21_R3_RELEASE_NOTES.md V21_R3_TEST_RESULTS.md V21_R4_RELEASE_NOTES.md V21_R4_TEST_RESULTS.md V21_R4_SURGICAL_DIAGNOSTICS_AND_VERIFICATION.md V21_R5_RELEASE_NOTES.md V21_R5_TEST_RESULTS.md V21_R6_RELEASE_NOTES.md V21_R6_TEST_RESULTS.md V21_R7_RELEASE_NOTES.md V21_R7_TEST_RESULTS.md V21_R7_MAPPING_DESIGN.md V21_R7_FIELD_MAPPING_GUIDE.md V21_R8_RELEASE_NOTES.md V21_R8_TEST_RESULTS.md V21_R8_DESIGN_ENGINE_DESIGN.md V21_R8_DESIGN_ENGINE_GUIDE.md V21_R8_OUTPUT_ACCOUNTING_GUIDE.md V21_R8_AI_PROVIDER_GUIDE.md V21_R9_RELEASE_NOTES.md V21_R9_TEST_RESULTS.md V21_R9_FIELD_MAPPING_GUIDE.md V21_R10_RELEASE_NOTES.md V21_R10_TEST_RESULTS.md V21_R10_MANAGER_DEMO.md nli-output-audit.py VER21_IMPLEMENTATION_PLAN.md SAMPLE_FIELD_ACCOUNTING.json RELEASE_ID; do
   [[ -s "$ARTIFACT_DIR/$evidence" ]] || fail "missing $evidence"
 done
 python3 - "$ARTIFACT_DIR/SAMPLE_FIELD_ACCOUNTING.json" <<'PY'

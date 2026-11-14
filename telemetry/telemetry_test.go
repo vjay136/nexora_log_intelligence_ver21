@@ -263,3 +263,22 @@ func TestEventPayloadFailsClosedAndPreservesJSONNumbers(t *testing.T) {
 		t.Fatal("non-JSON value was silently stringified")
 	}
 }
+
+func TestEventPayloadSourceOrder(t *testing.T) {
+	payload := EventPayload{Fields: map[string]interface{}{
+		"status": "failed", "date": "20250811", "event": "SieveRuleMsg", "derived": true,
+	}}
+	ordered := payload.WithSourceOrder([]FieldEvidence{
+		{Field: "status", Source: true, Start: 94, End: 107},
+		{Field: "date", Source: true, Start: 0, End: 8},
+		{Field: "event", Source: true, Start: 80, End: 92},
+	})
+	actual, err := json.Marshal(ordered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const expected = `{"date":"20250811","event":"SieveRuleMsg","status":"failed","derived":true}`
+	if string(actual) != expected {
+		t.Fatalf("source-ordered payload = %s, want %s", actual, expected)
+	}
+}

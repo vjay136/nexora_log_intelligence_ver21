@@ -57,14 +57,24 @@ func (s *Server) handleTemplateDraft(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	examples, failures := []map[string]any{}, []map[string]any{}
-	failed := 0
+	failed, pendingKV := 0, 0
+	var kv *workspaceKVProfile
+	var regex *regexp.Regexp
+	var configErr error
+	if input.Kind == "kv_template" {
+		kv, configErr = compileWorkspaceKV(input.Config)
+	} else {
+		regex, configErr = compileWorkspaceRegex(input.Config)
+	}
 	for i, sample := range input.Samples {
 		var validation map[string]any
 		var err error
 		if strings.TrimSpace(sample) == "" || len(sample) > 1048576 || strings.ContainsAny(sample, "\r\n") {
 			err = errors.New("each sample must be one nonempty log record up to 1 MiB")
+		} else if configErr != nil {
+			err = configErr
 		} else {
-			validation, err = validateAIWorkspaceAsset(input.Kind, sample, input.Config)
+			validation, err = validateAIWorkspaceAssetCompiled(input.Kind, sample, input.Config, regex, kv)
 		}
 		if fieldSenseContextError(w, ctx) {
 			return
@@ -74,12 +84,18 @@ func (s *Server) handleTemplateDraft(w http.ResponseWriter, r *http.Request) {
 			if len(failures) < maxTemplateComposeDetails {
 				failures = append(failures, map[string]any{"line": i + 1, "error": err.Error()})
 			}
-		} else if len(examples) < maxTemplateComposeDetails {
-			examples = append(examples, map[string]any{"line": i + 1, "actual": validation["actual"],
-				"tail_start_byte": validation["tail_start_byte"], "tail_requires_kv_template": validation["tail_requires_kv_template"]})
+		} else {
+			if validation["tail_requires_kv_template"] == true {
+				pendingKV++
+			}
+			if len(examples) < maxTemplateComposeDetails {
+				examples = append(examples, map[string]any{"line": i + 1, "actual": validation["actual"],
+					"tail_start_byte": validation["tail_start_byte"], "tail_requires_kv_template": validation["tail_requires_kv_template"]})
+			}
 		}
 	}
 	jsonOK(w, map[string]any{"passed": failed == 0, "config": input.Config, "total": len(input.Samples), "failed": failed,
+		"complete_records": failed == 0 && pendingKV == 0, "records_requiring_kv_template": pendingKV,
 		"examples": examples, "failures": failures, "persisted": false, "activated": false})
 }
 
@@ -87,10 +103,12 @@ func suggestKVTemplate(ctx context.Context, samples []string) map[string]any {
 	const maxInferenceSamples = 12
 	samples = samples[:min(len(samples), maxInferenceSamples)]
 	tails := make([]string, 0, len(samples))
+	seen := make(map[string]bool, len(samples))
 	for _, sample := range samples {
 		tail, _ := aiWorkspaceKVSample(sample)
-		if strings.TrimSpace(tail) != "" {
+		if !seen[tail] && strings.TrimSpace(tail) != "" {
 			tails = append(tails, tail)
+			seen[tail] = true
 		}
 	}
 	var best mixedkv.Config

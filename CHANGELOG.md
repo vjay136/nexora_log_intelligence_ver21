@@ -1,5 +1,9 @@
 # Changelog
 
+## v22.15.1-0
+
+See [release notes](docs/V22_15_1_RELEASE_NOTES.md) for parser validation, approval history, sync, latency, and Nexora AI changes.
+
 ## 22.14.1-0
 
 - Add numbered template fields, sample reset and shared template authoring controls.

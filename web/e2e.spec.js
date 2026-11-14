@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
 const tabs = [
-  'operations','monitoring','streams','assurance','quarantine-wizard','upes','rollouts','parser-sync','artifacts','parser-workspace','nupire','field-integrity','ai','parsers','field-mapping','studio','regex','knownkeys','drift','notifications','sync-fabric','nhle-monitor','napi-monitor','nal-monitor','input-paths','migration','outputs','metadata','unknowns','performance','kv','static','projection','semantic','engine-network','engine-url','engine-email','engine-subject','fleet','clients','controller','api-monitor','system','communications','security',
+  'operations','monitoring','streams','assurance','quarantine-wizard','upes','rollouts','parser-sync','artifacts','parser-workspace','nupire','field-integrity','ai','parsers','field-mapping','studio','regex','knownkeys','drift','notifications','sync-fabric','nhle-monitor','napi-monitor','nal-monitor','input-paths','migration','outputs','metadata','unknowns','performance','kv','static','projection','semantic','engine-network','engine-url','engine-email','engine-subject','fleet','clients','controller','api-monitor','latency','system','communications','security',
 ];
 const liveWorkspaceContracts = {
   operations: { paths: ['/api/v1/sync/snapshot'], text: 'Command Center' },
@@ -42,6 +42,7 @@ const liveWorkspaceContracts = {
   outputs: { paths: ['/api/v1/config/output-destinations'], text: 'Endpoint Configuration' },
   metadata: { paths: ['/api/v1/metadata'], text: 'Live metadata stream' },
   unknowns: { paths: ['/api/v1/quarantine/summary','/api/v1/quarantine/records','/api/v1/quarantine/history'], text: 'Quarantine and reprocessing' },
+  latency: { paths: [], text: 'Workspace loading' },
   'api-monitor': { paths: ['/api/v1/health','/api/v1/telemetry/stats','/api/v1/parser-sync'], text: 'API monitor' },
   drift: { paths: ['/api/v1/parser-sync','/api/v1/assurance/history'], text: 'Template and parser drift' },
   performance: { paths: [], text: 'Canonical throughput and latency' },

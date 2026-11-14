@@ -78,7 +78,7 @@ func (router *V5Router) routeV5CustomerIdentified(result *V5ParseResult, family,
 			Destination: "customer", Status: "skipped_quarantine", Timestamp: time.Now().UTC(),
 		})
 	} else if result.Success && result.EventPayload != nil && result.EventPayload.FieldCount() > 0 {
-		payload, err := json.Marshal(result.EventPayload)
+		payload, err := json.Marshal(result.EventPayload.WithSourceOrder(metadata.FieldEvidence))
 		if err != nil {
 			return err
 		}

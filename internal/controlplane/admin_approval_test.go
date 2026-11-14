@@ -119,6 +119,16 @@ func TestAdminApprovalAcrossResourcesPreservesNonAdminSeparation(t *testing.T) {
 				if response.StatusCode != scenario.want {
 					t.Fatalf("actor=%s creator=%s: status=%d want=%d: %s", scenario.actor, scenario.creator, response.StatusCode, scenario.want, body)
 				}
+				if scenario.want == http.StatusOK {
+					saved, err := f.server.metadata.Get(context.Background(), resource.collection, id, 0)
+					if err != nil {
+						t.Fatal(err)
+					}
+					payload := decodeMap(t, saved.Payload)
+					if payload["approval_reason"] != "Administrator reviewed this exact change." || payload["approved_by"] != scenario.actor {
+						t.Fatalf("approval comment or approver did not persist: %s", saved.Payload)
+					}
+				}
 			}
 		})
 	}

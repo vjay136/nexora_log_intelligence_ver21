@@ -269,11 +269,34 @@ func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle
 	bundle := parserAssetBundle{SchemaVersion: 1, Assets: []parserBundleAsset{}}
 	seenRuntimeParserID := map[string]string{}
 	seenRuntimePayload := map[string]string{}
-	for _, collection := range parserAssetCollections {
-		page, err := s.listParserSyncDocuments(ctx, collection, "", parserSyncTargetLimit)
-		if err != nil {
-			return bundle, err
+	// Read independent collections concurrently under the shared request budget.
+	// Reconcile the results in collection order so identity conflicts stay deterministic.
+	type collectionRead struct {
+		documents []metastore.Document
+		err       error
+	}
+	readContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	reads := make([]chan collectionRead, len(parserAssetCollections))
+	for index, collection := range parserAssetCollections {
+		results := make(chan collectionRead, 1)
+		reads[index] = results
+		go func(collection string, results chan<- collectionRead) {
+			documents, err := s.listParserSyncDocuments(readContext, collection, "", parserSyncTargetLimit)
+			results <- collectionRead{documents: documents, err: err}
+		}(collection, results)
+	}
+	for index, collection := range parserAssetCollections {
+		var result collectionRead
+		select {
+		case result = <-reads[index]:
+		case <-ctx.Done():
+			return bundle, ctx.Err()
 		}
+		if result.err != nil {
+			return bundle, result.err
+		}
+		page := result.documents
 		// Storage backends are not required to return the same order. Sort before
 		// compatibility reconciliation so collision diagnostics are deterministic.
 		sort.Slice(page, func(i, j int) bool { return page[i].ID < page[j].ID })
@@ -624,7 +647,7 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 			if existingMode == targetMode && equalStringSlices(existingTargets, targetIDs) {
 				return existing, nil
 			}
-			// A targeted repair must not withdraw another client’s current approval.
+			// A targeted repair must not withdraw another clientâ€™s current approval.
 			continue
 		}
 		superseded = append(superseded, existing)
@@ -1030,9 +1053,13 @@ func (s *Server) handleParserAssetTransition(w http.ResponseWriter, r *http.Requ
 			jsonError(w, "creator cannot approve own parser asset", http.StatusConflict)
 			return
 		}
+		approval, mode, err := optionalApprovalComment(r, doc, principal)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		state = "approved"
-		payload["approved_by"] = principal.Username
-		payload["approved_at"] = time.Now().UTC()
+		recordEmergencyApproval(payload, principal, approval, mode)
 	case "publish":
 		if state != "approved" {
 			jsonError(w, "only approved assets can be published", http.StatusConflict)

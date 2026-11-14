@@ -77,17 +77,22 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 	ctx, cancel := context.WithTimeout(r.Context(), aiRequestDeadline)
 	defer cancel()
 	var cfg aiProviderConfig
+	var providerBlocked string
 	if !production {
 		cfg, _, err = s.loadAIProvider(ctx)
 		if err != nil || !cfg.Enabled {
-			jsonError(w, "Configured, enabled AI assistance is unavailable; native and manual mapping remain available", 503)
-			return
+			providerBlocked = "Configured AI assistance is unavailable."
 		}
-		select {
-		case aiReviewSlots <- struct{}{}:
-			defer func() { <-aiReviewSlots }()
-		default:
-			jsonError(w, "AI review is busy; native and manual mapping remain available", 429)
+		if providerBlocked == "" {
+			select {
+			case aiReviewSlots <- struct{}{}:
+				defer func() { <-aiReviewSlots }()
+			default:
+				providerBlocked = "AI review is busy."
+			}
+		}
+		if providerBlocked != "" && !input.NativeFallback {
+			writeAIMappingUnavailable(w, providerBlocked)
 			return
 		}
 	}
@@ -98,7 +103,7 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 		return
 	}
 	var prompt string
-	if !production {
+	if !production && providerBlocked == "" {
 		prompt = s.aiReviewPromptWithContext(ctx, request, native)
 		prompt = "Suggest an NLI FieldSense mapping for this new or quarantined sample, even if an existing parser already succeeds. Keep operator-defined labels where supported. " + prompt
 		prompt += "\nManual mapping STRUCTURE ONLY (untrusted data; literal values withheld): " + s.maskAIWorkspaceContext(mappingAIManualStructure(manual), 4<<10)
@@ -115,7 +120,7 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 			seed = fieldmapping.Plan{Version: 1, Fields: fields}
 			if check, checkErr := validateAIMappingExtraction(ctx, seed, input.Raw); checkErr == nil {
 				seedResult = check
-				if !production {
+				if !production && providerBlocked == "" {
 					prompt += "\nNative FieldSense seed: verified on the exact source. Its extraction structure is below (values withheld). Prefer retaining the selectors and field types. " + s.maskAIWorkspaceContext(mappingAIManualStructure(seed), 8<<10)
 				}
 			} else {
@@ -123,12 +128,16 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 			}
 		}
 	}
+	if providerBlocked != "" && len(seed.Fields) == 0 {
+		writeAIMappingUnavailable(w, providerBlocked)
+		return
+	}
 	started := time.Now()
 	success := false
 	status := "rejected"
 	defer func() {
 		elapsed := time.Since(started)
-		if !production {
+		if !production && providerBlocked == "" {
 			s.aiMetrics.record(success, elapsed)
 		}
 		slog.Info("NLI AI mapping outcome", "outcome", status, "duration_ms", elapsed.Milliseconds())
@@ -149,7 +158,7 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 	origin, fallbackReason := "ai", ""
 	var plan fieldmapping.Plan
 	var result fieldmapping.Result
-	if !production {
+	if !production && providerBlocked == "" {
 		s.recordAIAuthoring("mapping", input.Raw)
 		_, provider, attempts, err = s.callConfiguredAIWithSystem(ctx, cfg, prompt, system, func(attemptCtx context.Context, text string) error {
 			var err error
@@ -170,6 +179,8 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 			return
 		}
 		fallbackReason = "Production evidence stayed on this controller."
+	} else if providerBlocked != "" {
+		fallbackReason = providerBlocked
 	} else if err != nil {
 		var invalid *aiInvalidDraftError
 		invalidDraft := errors.As(err, &invalid)
@@ -257,6 +268,14 @@ func (s *Server) suggestAIMapping(w http.ResponseWriter, r *http.Request, input 
 	})
 }
 
+func writeAIMappingUnavailable(w http.ResponseWriter, reason string) {
+	status := http.StatusServiceUnavailable
+	if reason == "AI review is busy." {
+		status = http.StatusTooManyRequests
+	}
+	jsonError(w, reason+" Native and manual mapping remain available.", status)
+}
+
 // Names can change without changing the observed values, but replacing an
 // observed value with a different one is not a default mapping suggestion.
 func retainsNativeMappingValues(native, proposed map[string]any) bool {
@@ -332,6 +351,8 @@ func mappingAIInvalid(w http.ResponseWriter, message string, syntax, extraction 
 	detail := "Check the field selectors and extraction methods in the native mapping editor."
 	if errors.Is(err, fieldmapping.ErrIncompleteKV) {
 		detail = "The plan does not account for every structured field in the sample."
+	} else if errors.Is(err, fieldmapping.ErrIncompleteHeader) {
+		detail = "Map every component of the mail header separately, including the numeric prefix, level, event, and any extra tags."
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(422)

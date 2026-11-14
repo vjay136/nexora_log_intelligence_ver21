@@ -5,7 +5,7 @@ const root = resolve(import.meta.dirname, '..');
 const output = resolve(root, 'build/web-public');
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
-const assets = ['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'README.txt', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v21.png', 'nexora-poster-v21.png', '_headers'];
+const assets = ['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'README.txt', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v22.jpg', 'nexora-poster-v21.png', '_headers'];
 // Only browser assets are published. Go sources, SQL, samples and config files
 // remain outside the public output directory.
 for (const name of assets) await copyFile(resolve(root, 'web', name), resolve(output, name));

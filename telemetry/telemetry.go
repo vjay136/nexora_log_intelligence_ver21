@@ -2,9 +2,11 @@
 package telemetry
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -71,7 +73,46 @@ type StreamFileTelemetry struct {
 
 // EventPayload contains only configured customer fields with guaranteed valid JSON
 type EventPayload struct {
-	Fields map[string]interface{} `json:"-"` // Raw fields map for internal use
+	Fields     map[string]interface{} `json:"-"` // Raw fields map for internal use
+	fieldOrder []string
+}
+
+// WithSourceOrder returns a serialization view of the payload. Fields with
+// source evidence precede fields whose positions are unknown.
+func (ep EventPayload) WithSourceOrder(evidence []FieldEvidence) EventPayload {
+	ep.fieldOrder = SourceFieldOrder(evidence)
+	return ep
+}
+
+func SourceFieldOrder(evidence []FieldEvidence) []string {
+	positions := make(map[string]int, len(evidence))
+	for _, field := range evidence {
+		if !field.Source {
+			continue
+		}
+		start := field.Start
+		for _, span := range field.Spans {
+			if field.End <= field.Start || span.Start < start {
+				start = span.Start
+				field.Start, field.End = span.Start, span.End
+			}
+		}
+		if previous, ok := positions[field.Field]; !ok || start < previous {
+			positions[field.Field] = start
+		}
+	}
+	names := make([]string, 0, len(positions))
+	for name := range positions {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		left, right := positions[names[i]], positions[names[j]]
+		if left == right {
+			return names[i] < names[j]
+		}
+		return left < right
+	})
+	return names
 }
 
 // MarshalJSON preserves declared JSON types and fails closed for unsupported
@@ -80,7 +121,7 @@ func (ep EventPayload) MarshalJSON() ([]byte, error) {
 	if ep.Fields == nil {
 		return []byte("{}"), nil
 	}
-	safeFields := make(map[string]interface{}, len(ep.Fields))
+	safeFields := make(map[string]json.RawMessage, len(ep.Fields))
 	for key, value := range ep.Fields {
 		if key == "" {
 			return nil, fmt.Errorf("event payload field name is empty")
@@ -91,12 +132,42 @@ func (ep EventPayload) MarshalJSON() ([]byte, error) {
 		if err := validateEventValue(value); err != nil {
 			return nil, fmt.Errorf("event payload field %q: %w", key, err)
 		}
-		if _, err := json.Marshal(value); err != nil {
+		encoded, err := json.Marshal(value)
+		if err != nil {
 			return nil, fmt.Errorf("event payload field %q is not JSON-safe: %w", key, err)
 		}
-		safeFields[key] = value
+		safeFields[key] = encoded
 	}
-	return json.Marshal(safeFields)
+	if len(ep.fieldOrder) == 0 {
+		return json.Marshal(safeFields)
+	}
+	var output bytes.Buffer
+	output.WriteByte('{')
+	appendField := func(key string, encoded json.RawMessage) {
+		if output.Len() > 1 {
+			output.WriteByte(',')
+		}
+		name, _ := json.Marshal(key)
+		output.Write(name)
+		output.WriteByte(':')
+		output.Write(encoded)
+	}
+	for _, key := range ep.fieldOrder {
+		if encoded, ok := safeFields[key]; ok {
+			appendField(key, encoded)
+			delete(safeFields, key)
+		}
+	}
+	remaining := make([]string, 0, len(safeFields))
+	for key := range safeFields {
+		remaining = append(remaining, key)
+	}
+	sort.Strings(remaining)
+	for _, key := range remaining {
+		appendField(key, safeFields[key])
+	}
+	output.WriteByte('}')
+	return output.Bytes(), nil
 }
 
 func validateEventValue(value interface{}) error {

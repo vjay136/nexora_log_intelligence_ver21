@@ -145,3 +145,7 @@ Ver22.6 adds these workspaces:
 - KV Pair Templates (`kv-templates`): draft reusable delimiter and assignment rules, such as pipe between pairs and equals between key and value. These definitions share the KV policy catalog and approval workflow.
 
 Use **Reference based help & Fix > Ask NLI AI** for a central prompt. Choose the workspace, optionally name the tab or step, and describe the result you expected and the exact error you saw. Paste the current record if the question depends on its fields. The controller masks evidence before sending it to the configured provider. The answer explains the next supported action; use **Build or fix an artifact** for an editable draft and verify its output in FieldSense or Assurance before approval.
+
+### Latency
+
+Open **Controller Management → Latency** (`latency`) to compare recent workspace load times and the slowest requests observed in your browser session. Use **API Monitor** to run fresh endpoint probes.

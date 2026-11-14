@@ -213,7 +213,7 @@ func (s *Server) handleDeletedParsers(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	for _, key := range []string{"runtime_pack", "approved_by", "approved_at", "approved_revision", "approved_checksum", "published_by", "published_at", "approval_mode", "validation", "sha256", "catalog_id", "runtime_id", "submitted_checksum", "approved_bundle_hash", "reviewed_by"} {
+	for _, key := range []string{"runtime_pack", "approved_by", "approved_at", "approved_revision", "approved_checksum", "published_by", "published_at", "approval_mode", "approval_reason", "emergency_approval_reason", "emergency_self_approval", "emergency_approved_at", "emergency_approved_by", "emergency_approved_revision", "validation", "sha256", "catalog_id", "runtime_id", "submitted_checksum", "approved_bundle_hash", "reviewed_by"} {
 		delete(body, key)
 	}
 	body["id"] = input.ID

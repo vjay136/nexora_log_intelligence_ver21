@@ -1,10 +1,74 @@
 package controlplane
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
+
+	"nexora.local/nli-v20/internal/fieldmapping"
+	"nexora.local/nli-v20/internal/mixedkv"
 )
+
+func TestTemplateDraftPreservesTagsOnBothSidesOfLevel(t *testing.T) {
+	f := newAPIFixture(t)
+	const head = "20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 "
+	const record = head + "123456;edge;Note;efgh;12345;SieveRuleMsg status=failed;reason=not needed"
+	status, payload := f.request(http.MethodPost, "/api/v1/field-mapping/template-draft", map[string]any{
+		"kind": "template", "samples": []string{record},
+	})
+	if status.StatusCode != http.StatusOK {
+		t.Fatalf("template draft returned %d: %s", status.StatusCode, payload)
+	}
+	body := decodeMap(t, payload)
+	if body["passed"] != true || body["complete_records"] != false || body["records_requiring_kv_template"] != float64(1) {
+		t.Fatalf("incorrect header and KV status: %s", payload)
+	}
+	config := body["config"].(map[string]any)
+	if len(config["optional_fields"].([]any)) != 0 {
+		t.Fatalf("present fields must be required: %v", config["optional_fields"])
+	}
+	preview := body["examples"].([]any)[0].(map[string]any)["actual"].(map[string]any)
+	for key, want := range map[string]string{
+		"extra_tag1": "edge", "event_type": "Note", "extra_tag2": "efgh", "extra_tag3": "12345", "event": "SieveRuleMsg",
+	} {
+		if preview[key] != want {
+			t.Errorf("%s = %v, want %s", key, preview[key], want)
+		}
+	}
+	if _, err := validateAIWorkspaceAsset("template", head+"123456;edge;Note;efgh;SieveRuleMsg", config); err == nil {
+		t.Fatal("template passed with a required tag missing")
+	}
+	headerFields := make(map[string]string)
+	for name, value := range config["fields"].(map[string]any) {
+		headerFields[name] = value.(string)
+	}
+	plan, err := composeTemplateMapping(templateComposeHeader{
+		Engine: "re2", Pattern: config["pattern"].(string), Fields: headerFields,
+	}, mixedkv.Config{PairSeparators: []string{";"}, AssignmentSeparators: []string{"="}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := fieldmapping.Compile(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := compiled.Execute(context.Background(), record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compiled.ValidateComplete(record, parsed); err != nil {
+		t.Fatal(err)
+	}
+	tail, ok := parsed.Values["kv_pair"].(map[string]any)
+	if !ok || tail["reason"] != "not needed" || tail["status"] != "failed" || parsed.Values["extra_tag3"] != "12345" {
+		t.Fatalf("wrong combined preview: %v", parsed.Values)
+	}
+	config["fields"].(map[string]any)["event_type"], config["fields"].(map[string]any)["extra_tag2"] = "extra_tag2", "event_type"
+	if _, err := validateAIWorkspaceAsset("template", record, config); err == nil {
+		t.Fatal("template passed with level and tag reversed")
+	}
+}
 
 func TestTemplateDraftFromSamples(t *testing.T) {
 	f := newAPIFixture(t)

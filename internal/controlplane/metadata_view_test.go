@@ -12,6 +12,7 @@ func TestRolloutsAndParserSyncRecoverFromMetadataFailure(t *testing.T) {
 		name, path, failingCollection string
 	}{
 		{"rollout catalog", "/api/v1/rollouts", "rollout-proposals"},
+		{"managed parser catalog", "/api/v1/parser-packs", "parser-packs"},
 		{"parser catalog", "/api/v1/parser-sync", "parser-packs"},
 		{"client acknowledgements", "/api/v1/parser-sync", "fleet-sync"},
 		{"parser rollout approvals", "/api/v1/parser-sync", "rollout-proposals"},
@@ -48,6 +49,9 @@ func TestRolloutsAndParserSyncRecoverFromMetadataFailure(t *testing.T) {
 				if response.StatusCode != http.StatusServiceUnavailable {
 					t.Fatalf("filtered query used the unfiltered snapshot: %d", response.StatusCode)
 				}
+			}
+			if tc.path == "/api/v1/parser-packs" {
+				view = &f.server.parserCatalogView
 			}
 			view.mu.Lock()
 			view.at = time.Now().Add(-metadataViewMaxAge - time.Second)

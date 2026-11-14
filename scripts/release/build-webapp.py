@@ -14,7 +14,7 @@ root = args.root.resolve()
 files = [
     "package.json", "package-lock.json", "vercel.json", "wrangler.jsonc", ".env.local.example",
     "web/index.html", "web/app.js", "web/styles.css", "web/design-engine.js", "web/design-engine.css", "web/nli-mark.svg",
-    "web/nexora-logo-v21.png", "web/login-banner-v21.png", "web/nexora-poster-v21.png",
+    "web/nexora-logo-v21.png", "web/login-banner-v22.jpg", "web/nexora-poster-v21.png",
     "web/_headers", "web/README.txt", "web/package.json", "web/package-lock.json", "web/vite.config.js",
     "web/Open-NLI-WebView.ps1", "api/v1/[...path].js",
     "functions/api/v1/[[path]].js", "web/e2e.spec.js", "tests/vercel-proxy.test.js",

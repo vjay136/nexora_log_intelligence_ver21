@@ -44,7 +44,7 @@ var aiWorkspaceCollections = map[string]string{
 
 var aiWorkspaceArtifactInstructions = map[string]string{
 	"regex":       `Use {"pattern":"^...$","fields":{"capture":"output_name"},"engine":"re2"} and named Go RE2 captures.`,
-	"template":    `Use {"pattern":"^...","fields":{"capture":"output_name"},"engine":"re2","resource_limits":{"max_input_bytes":1048576,"timeout_ms":50}} and named Go RE2 captures. List mapped output names that may be absent in optional_fields. Capture every component from the supplied sample. In a numeric-prefix mail header, preserve extra components between the numeric prefix and the level as separate extra_tag1, extra_tag2 captures. End the header after the event or event code and leave the KV tail for its separate template.`,
+	"template":    `Use {"pattern":"^...","fields":{"capture":"output_name"},"engine":"re2","resource_limits":{"max_input_bytes":1048576,"timeout_ms":50}} and named Go RE2 captures. List mapped output names in optional_fields only where representative samples show the field can be absent. Capture every header component. Preserve tags around a recognized mail level as separate numbered extra_tag1, extra_tag2 captures in source order. End the header after the event or event code and leave the KV tail for its separate template.`,
 	"pattern":     `Use {"tokens":["field_1","field_2"],"rest_field":"message","failure_policy":"reject_rule"}. Tokens are ordered output field names.`,
 	"key_pack":    `Use {"keys":["observed_key"],"aliases":{},"delimiters":["="]}. List identifiers actually observed in the source.`,
 	"keys":        `Use {"keys":["observed_key"],"aliases":{},"delimiters":["="]}. List identifiers actually observed in the source.`,
@@ -205,6 +205,9 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, _, err := s.loadAIProvider(ctx)
 	if err != nil || !cfg.Enabled {
+		if isDraft && input.NativeFallback && writeNativeWorkspaceDraft(w, input, "Configured AI assistance is unavailable.", cfg.ID, 0) {
+			return
+		}
 		jsonError(w, "Enable and test an AI provider in AI Resolution & Providers first", http.StatusServiceUnavailable)
 		return
 	}
@@ -212,6 +215,9 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 	case aiReviewSlots <- struct{}{}:
 		defer func() { <-aiReviewSlots }()
 	default:
+		if isDraft && input.NativeFallback && writeNativeWorkspaceDraft(w, input, "AI review is busy.", cfg.ID, 0) {
+			return
+		}
 		jsonError(w, "AI is busy. Retry after the current requests finish", http.StatusTooManyRequests)
 		return
 	}
@@ -248,21 +254,12 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	origin := "ai"
 	if err != nil {
-		if isDraft && input.NativeFallback {
-			candidate := aiNativeMailAsset(input.Artifact, input.Raw)
-			if validated, fallbackErr := validateAIWorkspaceAsset(input.Artifact, input.Raw, candidate); candidate != nil && fallbackErr == nil {
-				draft.Config, validation = candidate, validated
-				draft.Answer = "NLI built and verified this native draft after the provider could not supply a usable draft."
-				provider, origin = "", "native_fallback"
-				err = nil
-			}
-		}
-		if err != nil {
-			writeAIWorkspaceFailure(w, err, attempts)
+		if isDraft && input.NativeFallback && writeNativeWorkspaceDraft(w, input, "The provider could not supply a usable draft.", cfg.ID, attempts) {
 			return
 		}
+		writeAIWorkspaceFailure(w, err, attempts)
+		return
 	}
 	response := map[string]any{"provider_id": provider, "provider_attempts": attempts,
 		"review_only": true, "activated": false, "persisted": false, "provider_routing": aiRoutingOutcome(cfg.ID, provider, attempts)}
@@ -270,13 +267,33 @@ func (s *Server) handleAIWorkspace(w http.ResponseWriter, r *http.Request) {
 		response["answer"] = masker.MaskSecrets(draft.Answer)
 		response["proposal"] = map[string]any{"kind": input.Artifact, "config": draft.Config}
 		response["validation"] = validation
-		response["proposal_origin"] = origin
+		response["proposal_origin"] = "ai"
 		response["next_action"] = aiWorkspaceNextAction[input.Artifact]
 	} else {
 		response["answer"] = masker.MaskSecrets(reply)
 	}
 	success = true
 	jsonOK(w, response)
+}
+
+func writeNativeWorkspaceDraft(w http.ResponseWriter, input aiWorkspaceRequest, reason, primary string, attempts int) bool {
+	config := aiNativeMailAsset(input.Artifact, input.Raw)
+	if config == nil {
+		return false
+	}
+	validation, err := validateAIWorkspaceAsset(input.Artifact, input.Raw, config)
+	if err != nil {
+		return false
+	}
+	jsonOK(w, map[string]any{
+		"answer":     reason + " NLI built and verified a native draft on the supplied sample.",
+		"proposal":   map[string]any{"kind": input.Artifact, "config": config},
+		"validation": validation, "proposal_origin": "native_fallback", "fallback_reason": reason,
+		"provider_id": "", "provider_attempts": attempts, "provider_routing": aiRoutingOutcome(primary, "", attempts),
+		"next_action": aiWorkspaceNextAction[input.Artifact],
+		"review_only": true, "activated": false, "persisted": false,
+	})
+	return true
 }
 
 func (s *Server) maskAIWorkspaceContext(value any, limit int) string {
@@ -383,16 +400,12 @@ func aiNativeMailAsset(kind, raw string) map[string]any {
 	switch kind {
 	case "regex", "template":
 		fields := map[string]any{}
-		pattern := aiMailHeaderPattern
-		optional := []any{"random_number", "event_code"}
-		if kind == "template" {
-			pattern, optional = mailTemplatePattern(raw)
-		}
+		pattern, optional := mailTemplatePattern(raw)
 		for _, name := range regexp.MustCompile(pattern).SubexpNames()[1:] {
 			fields[name] = name
 		}
 		if kind == "regex" {
-			pattern += `(?:[ \t]+(?P<kv_tail>[^\r\n]*))?$`
+			pattern += `(?P<kv_tail>[^\r\n]+)?$`
 			fields["kv_tail"] = "kv_tail"
 		}
 		config := map[string]any{"engine": "re2", "pattern": pattern, "fields": fields}
@@ -411,25 +424,70 @@ func aiNativeMailAsset(kind, raw string) map[string]any {
 }
 
 func mailTemplatePattern(samples ...string) (string, []any) {
-	maxTags := 0
+	minBefore, maxBefore, minAfter, maxAfter := fieldmapping.MaxMailExtraTags, 0, fieldmapping.MaxMailExtraTags, 0
+	numbered, coded, valid := 0, 0, 0
 	for _, raw := range samples {
 		tokens := strings.Fields(raw)
-		if len(tokens) < 8 {
+		if len(tokens) < 8 || !aiMailHeader.MatchString(raw) {
 			continue
 		}
 		components := strings.Split(tokens[7], ";")
-		if len(components) > 3 && regexp.MustCompile(`^[0-9]+$`).MatchString(components[0]) {
-			maxTags = max(maxTags, len(components)-3)
+		before, after := 0, 0
+		if fieldmapping.HasMailHeaderExtension(raw) && len(components) >= 3 {
+			numbered++
+			prefix := components[1 : len(components)-1]
+			level, ok := fieldmapping.MailLevelIndex(prefix)
+			if ok {
+				before, after = level, len(prefix)-1-level
+			}
 		}
+		if strings.HasSuffix(components[len(components)-1], ")") {
+			coded++
+		}
+		valid++
+		minBefore, maxBefore = min(minBefore, before), max(maxBefore, before)
+		minAfter, maxAfter = min(minAfter, after), max(maxAfter, after)
 	}
-	var captures strings.Builder
-	optional := []any{"random_number", "event_code"}
-	for i := 1; i <= min(maxTags, fieldmapping.MaxMailExtraTags); i++ {
-		name := fmt.Sprintf("extra_tag%d", i)
-		fmt.Fprintf(&captures, `(?:(?P<%s>[^; \t\r\n]+);)?`, name)
-		optional = append(optional, name)
+	const lead = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \t]+(?P<hostname>[^ \t\r\n]+)[ \t]+(?P<service>[^ \t\r\n]+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+`
+	pattern := lead
+	optional := []any{}
+	tags := func(offset, minimum, maximum int) string {
+		var captures strings.Builder
+		for i := 1; i <= maximum; i++ {
+			name := fmt.Sprintf("extra_tag%d", offset+i)
+			capture := fmt.Sprintf(`(?P<%s>[^; \t\r\n]+);`, name)
+			if i > minimum {
+				capture = "(?:" + capture + ")?"
+				optional = append(optional, name)
+			}
+			captures.WriteString(capture)
+		}
+		return captures.String()
 	}
-	return strings.Replace(aiMailHeaderPattern, `(?:(?P<extra_tag>[^; \t\r\n]+);)?`, captures.String(), 1), optional
+	if numbered > 0 {
+		prefix := `(?P<random_number>[0-9]+);` + tags(0, minBefore, maxBefore)
+		if numbered < valid {
+			optional = append(optional, "random_number")
+			prefix = "(?:" + prefix + ")?"
+		}
+		pattern += prefix
+	}
+	levelPattern := `[^; \t\r\n]+`
+	if maxAfter > 0 {
+		levelPattern = `(?i:trace|debug|info|note|notice|warn|warning|err|error|fatal|critical|alert|emerg|panic)`
+	}
+	pattern += `(?P<event_type>` + levelPattern + `);` + tags(maxBefore, minAfter, maxAfter)
+	pattern += `(?P<event>[^;() \t\r\n]+)`
+	if coded > 0 {
+		codeCapture := `\((?P<event_code>[^()\s]+)\)`
+		if coded < valid {
+			optional = append(optional, "event_code")
+			codeCapture = "(?:" + codeCapture + ")?"
+		}
+		pattern += codeCapture
+	}
+	pattern += `(?:[ \t]+|$)`
+	return pattern, optional
 }
 
 var aiWorkspaceAssetKeys = map[string][]string{
@@ -442,6 +500,43 @@ var aiWorkspaceAssetKeys = map[string][]string{
 }
 
 func validateAIWorkspaceAsset(kind, raw string, config map[string]any) (map[string]any, error) {
+	return validateAIWorkspaceAssetCompiled(kind, raw, config, nil, nil)
+}
+
+type workspaceKVProfile struct {
+	parser *mixedkv.Parser
+	pipes  bool
+}
+
+func compileWorkspaceKV(config map[string]any) (*workspaceKVProfile, error) {
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return nil, errors.New("The proposed key/value profile is invalid")
+	}
+	var profile mixedkv.Config
+	if strictJSON(encoded, &profile) != nil || len(profile.PairSeparators) == 0 || len(profile.AssignmentSeparators) == 0 {
+		return nil, errors.New("The proposed key/value profile needs explicit pair and assignment separators")
+	}
+	parser, err := mixedkv.Compile(profile)
+	if err != nil {
+		return nil, errors.New("The proposed key/value profile has invalid separators or limits")
+	}
+	return &workspaceKVProfile{parser: parser, pipes: !profile.LiteralBoundaries && containsMappingString(profile.PairSeparators, "|")}, nil
+}
+
+func compileWorkspaceRegex(config map[string]any) (*regexp.Regexp, error) {
+	pattern, ok := config["pattern"].(string)
+	if !ok || strings.TrimSpace(pattern) == "" || len(pattern) > 4096 || unsafeDeclarative(config) != nil {
+		return nil, errors.New("The proposed regex is invalid under NLI's Go RE2 rules")
+	}
+	compiled, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, errors.New("The proposed regex is invalid under NLI's Go RE2 rules")
+	}
+	return compiled, nil
+}
+
+func validateAIWorkspaceAssetCompiled(kind, raw string, config map[string]any, regex *regexp.Regexp, kv *workspaceKVProfile) (map[string]any, error) {
 	for key := range config {
 		if !containsMappingString(aiWorkspaceAssetKeys[kind], key) {
 			return nil, errors.New("The proposed draft contains an unsupported NLI setting")
@@ -450,14 +545,15 @@ func validateAIWorkspaceAsset(kind, raw string, config map[string]any) (map[stri
 	validation := map[string]any{"syntax_valid": true, "publication_validated": false, "ready_for_publish": false}
 	switch kind {
 	case "regex", "template":
-		if err := validateCatalogConfig("regex-patterns", config); err != nil {
-			return nil, errors.New("The proposed regex is invalid under NLI's Go RE2 rules")
+		compiled := regex
+		if compiled == nil {
+			var err error
+			compiled, err = compileWorkspaceRegex(config)
+			if err != nil {
+				return nil, err
+			}
 		}
-		pattern := config["pattern"].(string)
-		compiled, err := regexp.Compile(pattern)
-		if err != nil {
-			return nil, errors.New("The proposed regex is invalid under NLI's Go RE2 rules")
-		}
+		pattern := compiled.String()
 		match := compiled.FindStringSubmatchIndex(raw)
 		_, tailStart := aiWorkspaceKVSample(raw)
 		headerEnd := len(strings.TrimRight(raw[:tailStart], " \t"))
@@ -469,7 +565,7 @@ func validateAIWorkspaceAsset(kind, raw string, config map[string]any) (map[stri
 		if kind == "template" && tailStart > 0 && tailStart < len(raw) && !headerOnlyMatch {
 			return nil, errors.New("The proposed log template consumes the dynamic tail. End the header pattern after the event and verify a separate KV template")
 		}
-		if headerOnlyMatch && match[1] < len(raw) {
+		if headerOnlyMatch && tailStart < len(raw) {
 			validation["tail_requires_kv_template"] = true
 			validation["tail_start_byte"] = tailStart
 		}
@@ -527,10 +623,10 @@ func validateAIWorkspaceAsset(kind, raw string, config map[string]any) (map[stri
 		if len(mapped) == 0 {
 			return nil, errors.New("The proposed regex did not capture any configured fields on this sample")
 		}
+		if err := fieldmapping.ValidateMailHeader(raw, evidence); err != nil {
+			return nil, err
+		}
 		if kind == "template" {
-			if err := fieldmapping.ValidateMailHeader(raw, evidence); err != nil {
-				return nil, err
-			}
 			if !strings.HasPrefix(pattern, "^") {
 				return nil, errors.New("The proposed log template must start with an anchored RE2 prefix")
 			}
@@ -578,25 +674,20 @@ func validateAIWorkspaceAsset(kind, raw string, config map[string]any) (map[stri
 		}
 		validation["observed_keys"] = len(config["keys"].([]any))
 	case "kv_template":
-		encoded, err := json.Marshal(config)
-		if err != nil {
-			return nil, errors.New("The proposed key/value profile is invalid")
-		}
-		var profile mixedkv.Config
-		if strictJSON(encoded, &profile) != nil || len(profile.PairSeparators) == 0 || len(profile.AssignmentSeparators) == 0 {
-			return nil, errors.New("The proposed key/value profile needs explicit pair and assignment separators")
-		}
-		compiled, err := mixedkv.Compile(profile)
-		if err != nil {
-			return nil, errors.New("The proposed key/value profile has invalid separators or limits")
+		var err error
+		if kv == nil {
+			kv, err = compileWorkspaceKV(config)
+			if err != nil {
+				return nil, err
+			}
 		}
 		sample, tailStart := aiWorkspaceKVSample(raw)
 		var result mixedkv.Result
-		if !profile.LiteralBoundaries && containsMappingString(profile.PairSeparators, "|") {
+		if kv.pipes {
 			tail := strings.TrimPrefix(strings.TrimLeft(sample, " \t"), "|")
-			result, err = compiled.ParseWithPipeBoundaries(tail)
+			result, err = kv.parser.ParseWithPipeBoundaries(tail)
 		} else {
-			result, err = compiled.Parse(sample)
+			result, err = kv.parser.Parse(sample)
 		}
 		if err != nil || len(result.Fields) == 0 || result.RemainderSpan != nil || result.LeadingSpan != nil {
 			return nil, errors.New("The proposed key/value profile did not extract the complete key/value sample. Review assignment and pair separators, duplicate keys, and unnamed segments")

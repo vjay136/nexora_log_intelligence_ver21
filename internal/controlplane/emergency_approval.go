@@ -1,7 +1,10 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -92,15 +95,34 @@ func (s *Server) approvalMode(doc metastore.Document, principal *middleware.Secu
 	return "emergency_admin_self", details, nil
 }
 
+// optionalApprovalComment preserves the approval contract for assets and AI proposals
+// that historically accepted an empty request body.
+func optionalApprovalComment(r *http.Request, doc metastore.Document, principal *middleware.SecurityContext) (approvalRequest, string, error) {
+	var request approvalRequest
+	if err := decodeJSON(r, &request, 8<<10); err != nil && !errors.Is(err, io.EOF) {
+		return request, "", errors.New("approval request is invalid")
+	}
+	request.Reason = strings.TrimSpace(request.Reason)
+	if length := len(request.Reason); length != 0 && (length < 3 || length > 512) {
+		return request, "", errors.New("approval comment must contain 3..512 characters")
+	}
+	if principal.Username == doc.CreatedBy {
+		return request, "admin_self", nil
+	}
+	return request, "independent", nil
+}
+
 func recordEmergencyApproval(payload map[string]any, principal *middleware.SecurityContext, request approvalRequest, mode string) {
+	payload["approval_mode"] = mode
+	payload["approved_by"] = principal.Username
+	payload["approved_at"] = time.Now().UTC()
+	delete(payload, "approval_reason")
+	if reason := strings.TrimSpace(request.Reason); reason != "" {
+		payload["approval_reason"] = reason
+	}
 	if mode != "emergency_admin_self" {
-		payload["approval_mode"] = mode
-		if reason := strings.TrimSpace(request.Reason); reason != "" {
-			payload["approval_reason"] = reason
-		}
 		return
 	}
-	payload["approval_mode"] = mode
 	payload["emergency_self_approval"] = true
 	payload["emergency_approved_by"] = principal.Username
 	payload["emergency_approved_at"] = time.Now().UTC()

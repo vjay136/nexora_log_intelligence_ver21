@@ -325,8 +325,31 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 			}
 			fields = append(fields, field)
 		}
-		parts := strings.SplitN(tokens[7], ";", 2)
-		for i, name := range []string{"loglevel", "event"} {
+		parts := strings.Split(tokens[7], ";")
+		names := []string{"loglevel", "event"}
+		if fieldmapping.HasMailHeaderExtension(raw) {
+			if len(parts) < 3 || len(parts) > fieldmapping.MaxMailExtraTags+3 {
+				return "", nil, fmt.Errorf("numeric-prefix mail header has an unsupported number of components")
+			}
+			level, ok := fieldmapping.MailLevelIndex(parts[1 : len(parts)-1])
+			if !ok {
+				return "", nil, fmt.Errorf("numeric-prefix mail header has an ambiguous log level")
+			}
+			names = []string{"random_number"}
+			extra := 0
+			for i := 1; i < len(parts)-1; i++ {
+				if i == level+1 {
+					names = append(names, "loglevel")
+				} else {
+					extra++
+					names = append(names, "extra_tag"+strconv.Itoa(extra))
+				}
+			}
+			names = append(names, "event")
+		} else if len(parts) != 2 {
+			return "", nil, fmt.Errorf("mail header needs explicit mappings for its additional components")
+		}
+		for i, name := range names {
 			field := nfiSuggestedField(name, "delimiter", "8", parts[i])
 			field.Delimiter = ";"
 			field.Part = strconv.Itoa(i + 1)
@@ -335,10 +358,11 @@ func nfiSuggestRecord(ctx context.Context, raw, separator string) (string, []fie
 			field.Evidence = "Observed compound token 8; confirm semicolon interpretation"
 			fields = append(fields, field)
 		}
-		if match := nfiSuggestEventCode.FindStringSubmatch(parts[1]); match != nil {
+		if match := nfiSuggestEventCode.FindStringSubmatch(parts[len(parts)-1]); match != nil {
 			fields[len(fields)-1].Operations = []fieldmapping.Operation{{Op: "regex_extract", Pattern: `^([^()]+)`, Group: "1"}}
 			fields[len(fields)-1].Preview = match[1]
-			code := nfiSuggestedField("event_code", "regex", `^(?:\S+\s+){7}[^;\s]+;[^\s(]+\(([^)\s]+)\)`, match[2])
+			pattern := fmt.Sprintf(`^(?:\S+\s+){7}(?:[^;\s]+;){%d}[^;\s(]+\(([^)\s]+)\)`, len(parts)-1)
+			code := nfiSuggestedField("event_code", "regex", pattern, match[2])
 			code.Part = "1"
 			fields = append(fields, code)
 		}

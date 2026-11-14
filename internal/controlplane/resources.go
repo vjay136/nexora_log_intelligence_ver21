@@ -159,12 +159,19 @@ func (s *Server) handleParserPacks(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		items, err := listParserDocuments(r, s.metadata)
+		started := time.Now().UTC()
+		ctx, cancel := context.WithTimeout(r.Context(), metadataViewReadBudget)
+		defer cancel()
+		var snapshot *recoverableMetadataView
+		if r.URL.Query().Get("state") == "" && r.URL.Query().Get("limit") == "" {
+			snapshot = &s.parserCatalogView
+		}
+		items, err := listParserDocuments(r.WithContext(ctx), s.metadata)
 		if err != nil {
-			jsonError(w, "parser catalog unavailable", http.StatusServiceUnavailable)
+			replyMetadataUnavailable(w, r, snapshot, "parser catalog unavailable")
 			return
 		}
-		jsonOK(w, map[string]any{"parser_packs": items, "count": len(items)})
+		replyMetadataCurrent(w, snapshot, started, map[string]any{"parser_packs": items, "count": len(items)})
 	case http.MethodPost:
 		var input map[string]any
 		if err := decodeJSON(r, &input, 2<<20); err != nil {
@@ -951,8 +958,14 @@ func (s *Server) handleAIProposal(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "stored AI proposal is invalid", http.StatusInternalServerError)
 		return
 	}
+	approval, mode, err := optionalApprovalComment(r, doc, principal)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	payload["review_state"] = "approved"
 	payload["reviewed_by"] = principal.Username
+	recordEmergencyApproval(payload, principal, approval, mode)
 	encoded, _ := json.Marshal(payload)
 	saved, err := s.metadata.Put(r.Context(), metastore.Document{Collection: "ai-proposals", ID: id, State: "approved", Payload: encoded, CreatedBy: doc.CreatedBy})
 	if err != nil {
@@ -1387,12 +1400,23 @@ func (s *Server) handleRollouts(w http.ResponseWriter, r *http.Request) {
 			replyMetadataUnavailable(w, r, snapshot, "rollout catalog unavailable")
 			return
 		}
-		pending, err := s.metadata.List(ctx, "rollout-proposals", metastore.Query{State: "pending_approval", Limit: 1000})
-		if err != nil {
-			replyMetadataUnavailable(w, r, snapshot, "rollout approval count unavailable")
-			return
+		pendingCount := 0
+		if snapshot != nil && len(proposals) < 100 {
+			// The default unfiltered list returned the entire current catalog.
+			for _, proposal := range proposals {
+				if proposal["state"] == "pending_approval" {
+					pendingCount++
+				}
+			}
+		} else {
+			pending, countErr := s.metadata.List(ctx, "rollout-proposals", metastore.Query{State: "pending_approval", Limit: 1000})
+			if countErr != nil {
+				replyMetadataUnavailable(w, r, snapshot, "rollout approval count unavailable")
+				return
+			}
+			pendingCount = len(pending)
 		}
-		replyMetadataCurrent(w, snapshot, started, map[string]any{"proposals": proposals, "pending_approval_count": len(pending), "live": s.rollouts.List()})
+		replyMetadataCurrent(w, snapshot, started, map[string]any{"proposals": proposals, "pending_approval_count": pendingCount, "live": s.rollouts.List()})
 	case http.MethodPost:
 		var proposal map[string]any
 		if err := decodeJSON(r, &proposal, 2<<20); err != nil {

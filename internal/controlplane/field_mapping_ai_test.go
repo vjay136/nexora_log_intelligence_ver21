@@ -338,3 +338,25 @@ func TestFieldMappingAIRecoversFromTransientProviderFailure(t *testing.T) {
 		t.Fatalf("retry outcome was not reported accurately: %s", body)
 	}
 }
+
+func TestAIWorkspaceMappingReturnsExactNativeDraftWhenProviderIsDisabled(t *testing.T) {
+	f := newAPIFixture(t)
+	const raw = "20250811 080053105+0100 mail.example.test smtp 3692 0 140026854221568 123456;Note;abcd;efgh;SieveRuleMsg(2001/4) status=failed;reason=not needed"
+	response, body := f.request(http.MethodPost, "/api/v1/ai/workspace", map[string]any{
+		"mode": "fix", "workspace": "assurance", "artifact": "mapping", "raw": raw, "native_fallback": true,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("native fallback unavailable: %d %s", response.StatusCode, body)
+	}
+	result := decodeMap(t, body)
+	validation := result["validation"].(map[string]any)
+	actual := validation["actual"].(map[string]any)
+	if result["proposal_origin"] != "native_fallback" || result["provider_attempts"] != float64(0) || result["activated"] != false || validation["extraction_valid"] != true {
+		t.Fatalf("invalid fallback result: %s", body)
+	}
+	for name, expected := range map[string]string{"random_number": "123456", "loglevel": "Note", "extra_tag1": "abcd", "extra_tag2": "efgh", "event": "SieveRuleMsg", "event_code": "2001/4", "status": "failed", "reason": "not needed"} {
+		if actual[name] != expected {
+			t.Errorf("%s: got %v, want %s", name, actual[name], expected)
+		}
+	}
+}

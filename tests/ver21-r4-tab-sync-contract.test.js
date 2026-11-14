@@ -17,7 +17,7 @@ const routes = [
   'input-paths', 'migration', 'outputs', 'metadata', 'unknowns', 'performance',
   'kv', 'static', 'projection', 'semantic',
   'engine-network', 'engine-url', 'engine-email', 'engine-subject',
-  'fleet', 'clients', 'controller', 'controller-gateway', 'ai-privacy', 'api-monitor', 'system', 'communications', 'security',
+  'fleet', 'clients', 'controller', 'controller-gateway', 'ai-privacy', 'api-monitor', 'latency', 'system', 'communications', 'security',
 ];
 
 const innerTabs = {
