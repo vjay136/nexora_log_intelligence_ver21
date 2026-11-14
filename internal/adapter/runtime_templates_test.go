@@ -3,7 +3,9 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"nexora.local/nli-v20/internal/engine"
@@ -54,6 +56,26 @@ func TestPublishedHeaderTemplateUsesCompleteGlobalKV(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("missing exact nested evidence: %#v", result.ParseTelemetry.FieldEvidence)
+	}
+	for name, input := range map[string]string{
+		"adjacent bracketed mixed assignments": "[status:failed][reason;not needed][server=cloud]\r\n",
+		"quoted pair boundary":                 "status=failed;reason=\"not needed\"",
+		"pipe framing":                         "|status=failed|reason=not needed|",
+	} {
+		t.Run(name, func(t *testing.T) {
+			parsed := runtime.TryParseV5Production(templateHeaderPrefix+" "+input, engine.Source{Service: "auto"})
+			if !parsed.Success || parsed.ParseTelemetry.ParserID != "template/mail-header-v2" || parsed.EventPayload.Fields["kv_pair"].(map[string]any)["reason"] != "not needed" {
+				t.Fatalf("unexpected parse: %+v", parsed)
+			}
+		})
+	}
+	pairs := make([]string, 500)
+	for i := range pairs {
+		pairs[i] = fmt.Sprintf("key%d=value%d", i, i)
+	}
+	large := runtime.TryParseV5Production(templateHeaderPrefix+" "+strings.Join(pairs, ";"), engine.Source{Service: "auto"})
+	if !large.Success || len(large.EventPayload.Fields["kv_pair"].(map[string]any)) != 500 {
+		t.Fatalf("a 500-pair global tail did not retain all fields: %+v", large)
 	}
 	headerOnly := runtime.TryParseV5Production(templateHeaderPrefix, engine.Source{Service: "auto"})
 	if !headerOnly.Success || headerOnly.EventPayload.Fields["kv_pair"] != nil {

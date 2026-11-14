@@ -131,7 +131,10 @@ func compileKVIEProfile(assignments []string, delimiters string, field Field) (*
 	}, nil
 }
 
-var kvieProfiles = func() []*kvieProfile {
+var kvieProfiles = compileKVIEPresets(Field{})
+var completeKVIEProfiles = compileKVIEPresets(Field{KVMaxPairs: DefaultAdvancedKVPairs})
+
+func compileKVIEPresets(field Field) []*kvieProfile {
 	// Colon assignments deliberately use non-colon pair boundaries. A colon
 	// can belong to a timestamp, URL, IPv6 address or an ordinary value.
 	presets := []KVProfile{
@@ -146,14 +149,14 @@ var kvieProfiles = func() []*kvieProfile {
 	}
 	out := make([]*kvieProfile, 0, len(presets))
 	for _, preset := range presets {
-		profile, err := compileKVIEProfile(preset.AssignmentSeparators, preset.PairDelimiters, Field{})
+		profile, err := compileKVIEProfile(preset.AssignmentSeparators, preset.PairDelimiters, field)
 		if err != nil {
 			panic(err)
 		}
 		out = append(out, profile)
 	}
 	return out
-}()
+}
 
 const mixedDotCommaDelimiters = ".,"
 
@@ -314,8 +317,16 @@ func detectKVIEWithCoverage(ctx context.Context, raw string, offset int, require
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	presets := kvieProfiles
+	if requireComplete {
+		presets = completeKVIEProfiles
+		left := strings.TrimLeft(raw, " \t\r\n")
+		if profile, ok := InspectWrappedKeyValues(strings.TrimRight(left, " \t\r\n"), offset+len(raw)-len(left)); ok {
+			return []KVProfile{profile}, nil
+		}
+	}
 	if strings.HasPrefix(strings.TrimLeft(raw, " \t\r\n"), "|") {
-		preset := kvieProfiles[0]
+		preset := presets[0]
 		observations, err := preset.observe(raw, offset)
 		if err != nil {
 			return nil, err
@@ -330,7 +341,6 @@ func detectKVIEWithCoverage(ctx context.Context, raw string, offset int, require
 	structured := kvieHeader.MatchString(strings.TrimLeft(raw, " \t\r\n"))
 	var out []KVProfile
 	var evidenceError error
-	presets := kvieProfiles
 	if strings.Contains(raw, ".") && strings.Contains(raw, ",") {
 		presets = append(append([]*kvieProfile(nil), presets...), mixedDotCommaProfile)
 	}
