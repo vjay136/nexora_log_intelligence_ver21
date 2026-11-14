@@ -1516,6 +1516,7 @@ test('QRW stages 6–9 give the next action and gate replay on the exact origin 
   await expect(page.locator('.qrw-next-action')).toContainText('Review the candidate independently');
   await page.locator('[data-wizard-step="7"] button').click();
   await expect(lifecycle).toContainText('1/2 clients acknowledged');
+  page.once('dialog', dialog => dialog.accept('Verified against the reviewed sample'));
   await lifecycle.getByRole('button',{name:'Approve',exact:true}).click();
   await page.getByTestId('nav-quarantine-wizard').click();
   await expect(page.locator('.qrw-next-action')).toContainText('Publish the approved candidate');
@@ -1593,6 +1594,7 @@ test('QRW restores saved candidate validation before rendering review after a br
   await expect(page.locator('[data-wizard-step="7"] button')).toBeEnabled();
   await expect(page.locator('[data-qrw-panel="7"]')).toBeVisible();
   const candidate=page.locator('[data-qrw-panel="7"] tr').filter({hasText:'saved-candidate'});
+  page.once('dialog', dialog => dialog.accept('Verified against the reviewed sample'));
   await candidate.getByRole('button',{name:'Approve',exact:true}).click();
   await expect(candidate.getByRole('button',{name:'Publish',exact:true})).toBeVisible();
 });
@@ -2210,26 +2212,28 @@ test('missing EventSource uses shared recovery only and signout aborts it cleanl
 
 test('API monitor starts its independent probes concurrently and displays latency percentiles', async ({ page }) => {
   const starts = [];
+  let releaseProbes;
+  const firstWave = new Promise(resolve => { releaseProbes = resolve; });
+  let probing = false;
   await mockController(page);
   await page.route(`${origin}/api/v1/**`, async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/v1/auth/login' || path === '/api/v1/auth/csrf' || path === '/api/v1/auth/me' || path === '/api/v1/health' || path === '/api/v1/sync/snapshot' || path === '/api/v1/sync/stream') return route.fallback();
-    starts.push(Date.now());
-    await new Promise(resolve => setTimeout(resolve, 80));
+    if (!probing) return route.fallback();
+    starts.push(path);
+    if (starts.length <= 2) await firstWave;
     await route.fallback();
   });
   await login(page);
-  starts.length = 0;
+  probing = true;
   await page.getByTestId('nav-api-monitor').click();
+  try { await expect.poll(() => starts.length).toBeGreaterThanOrEqual(2); }
+  finally { releaseProbes(); }
   await expect(page.getByRole('heading', { name: 'API monitor', exact: true })).toBeVisible();
   await expect(page.getByText('Latency p50')).toBeVisible();
   await expect(page.getByText('Latency p95')).toBeVisible();
   expect(starts.length).toBeGreaterThan(10);
-  // Chromium limits parallel connections per origin. The first transport wave
-  // proves that independent probes are dispatched concurrently. Keep the bound
-  // below the 5 * 80 ms a sequential first wave would require, while allowing
-  // for loaded CI runners to schedule intercepted requests with modest jitter.
-  expect(Math.max(...starts.slice(0, 6)) - Math.min(...starts.slice(0, 6))).toBeLessThan(300);
+
 });
 
 test('Endpoint Configuration tests and saves a safe ClickHouse field-mapped profile', async ({ page }) => {
@@ -2362,7 +2366,7 @@ test('Assurance enables clear and download immediately and preserves results acr
   await expect(page.locator('#assurance-result')).toContainText('service=test user=operator');
   const downloadEvent = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download result JSON' }).click();
-  expect((await downloadEvent).suggestedFilename()).toBe('nli-v21-assurance-result.json');
+  expect((await downloadEvent).suggestedFilename()).toBe('nli-v22-assurance-result.json');
   await page.getByRole('button', { name: 'Clear manually' }).click();
   await expect(page.getByText('Run a case to inspect complete output', { exact: false })).toBeVisible();
   await expect(page.getByTestId('assurance-raw')).toHaveValue('');
@@ -2689,6 +2693,7 @@ test('draft input profiles expose lifecycle actions and JSON without a dead roll
   expect((await download).suggestedFilename()).toBe('draft-inputs-input-profile.json');
   await page.getByRole('button',{name:'Submit for review'}).click();
   await expect(page.getByRole('button',{name:'Approve',exact:true})).toBeVisible();
+  page.once('dialog', dialog => dialog.accept('Verified against the reviewed sample'));
   await page.getByRole('button',{name:'Approve',exact:true}).click();
   await expect(page.getByRole('button',{name:'Publish',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Publish',exact:true}).click();
@@ -2840,6 +2845,7 @@ test('Guided Parser Repair Studio onboards a pasted sample without quarantine re
   await studio.getByRole('button',{name:/7 · Review & publish/}).click();
   const lifecycle=studio.locator('[data-qrw-panel="7"]');
   await lifecycle.getByRole('button',{name:'Submit',exact:true}).click();
+  page.once('dialog', dialog => dialog.accept('Verified against the reviewed sample'));
   await lifecycle.getByRole('button',{name:'Approve',exact:true}).click();
   await lifecycle.getByRole('button',{name:'Publish',exact:true}).click();
   await studio.getByRole('button',{name:/8 · Deploy/}).first().click();
