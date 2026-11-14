@@ -64,7 +64,8 @@ type Config struct {
 	Version             int                        `json:"version"`
 	Inputs              []InputConfig              `json:"inputs"`
 	StateDir            string                     `json:"state_dir"`
-	ParserPackDir       string                     `json:"parser_pack_dir,omitempty"` // approved controller generation; defaults to state_dir/parsers
+	ParserAssetDir      string                     `json:"parser_asset_dir,omitempty"` // approved controller assets; defaults to state_dir/parser-assets
+	ParserPackDir       string                     `json:"parser_pack_dir,omitempty"`  // approved controller generation; defaults to state_dir/parsers
 	Outputs             []output.Config            `json:"outputs"`
 	TelemetryOutputs    []output.Config            `json:"telemetry_outputs,omitempty"`     // v5: separate ParseTelemetry destinations
 	EnableV5Parser      bool                       `json:"enable_v5_parser,omitempty"`      // v5: enable ParserPack execution (deprecated - now default)
@@ -273,6 +274,9 @@ func validate(c Config) error {
 	if !filepath.IsAbs(c.StateDir) {
 		return fmt.Errorf("state_dir must be absolute")
 	}
+	if c.ParserAssetDir != "" && !filepath.IsAbs(c.ParserAssetDir) {
+		return fmt.Errorf("parser_asset_dir must be absolute")
+	}
 	if c.ParserPackDir != "" && !filepath.IsAbs(c.ParserPackDir) {
 		return fmt.Errorf("parser_pack_dir must be absolute")
 	}
@@ -314,6 +318,13 @@ func validate(c Config) error {
 		}
 	}
 	return nil
+}
+
+func ParserAssetDirectory(c Config) string {
+	if c.ParserAssetDir != "" {
+		return c.ParserAssetDir
+	}
+	return filepath.Join(c.StateDir, "parser-assets")
 }
 
 func parserPackDirectory(c Config) string {
@@ -709,7 +720,7 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 	// Initialize v5 parser - now default unless explicitly disabled
 	var v5Adapter *adapter.ParserPackAdapter
 	if !c.DisableV5Parser {
-		v5Adapter, err = adapter.NewParserPackAdapterFromDirectory(parserPackDirectory(c))
+		v5Adapter, err = adapter.NewParserPackAdapterFromSynchronizedDirectories(ctx, runtimeParserDir, ParserAssetDirectory(c))
 		if err != nil {
 			return fmt.Errorf("v5 parser initialization: %w", err)
 		}
@@ -1084,7 +1095,7 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 
 			outputStarted := time.Now()
 			if err := writeOutput(func() error {
-				return v5Router.RouteLegacyIdentified(sanitizedData, telemetryMeta, envelope.Meta.Route, t.input.Service, deliveryID)
+				return v5Router.RouteLegacyWithEvidence(sanitizedData, telemetryMeta, envelope.SourceFieldEvidence(), envelope.Meta.Route, t.input.Service, deliveryID)
 			}); err != nil {
 				t.stream.addOutput(time.Since(outputStarted))
 				journal.outputFailure(t.input.Path, err.Error())

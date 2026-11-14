@@ -459,7 +459,7 @@ func replayQueue(path, configPath, parserPackDir string, selectedIDs []string, o
 			parserPackDir = filepath.Join(cfg.StateDir, "parsers")
 		}
 	}
-	parser, err := adapter.NewParserPackAdapterFromDirectory(parserPackDir)
+	parser, err := adapter.NewParserPackAdapterFromSynchronizedDirectories(context.Background(), parserPackDir, agent.ParserAssetDirectory(cfg))
 	if err != nil {
 		return fmt.Errorf("load approved parser generation: %w", err)
 	}

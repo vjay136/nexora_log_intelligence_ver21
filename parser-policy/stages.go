@@ -3,8 +3,8 @@ package parserpolicy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/mail"
 	"net/url"
@@ -465,21 +465,20 @@ func (e *ParserPackExecutor) executeJSONStage(request *ExecutionRequest, rule Pa
 	if err != nil {
 		return 0, 0, err
 	}
-	var object map[string]interface{}
-	decoder := json.NewDecoder(strings.NewReader(input))
-	decoder.UseNumber()
-	if err := decoder.Decode(&object); err != nil {
+	object, spans, err := telemetry.DecodeJSONObject(input)
+	if err != nil {
+		if errors.Is(err, telemetry.ErrTrailingJSON) {
+			return 0, 0, fail("json_trailing", "JSON stage input contains trailing data")
+		}
 		return 0, 0, fail("json_invalid", "JSON stage input is invalid")
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return 0, 0, fail("json_trailing", "JSON stage input contains trailing data")
 	}
 	if len(object) > e.limitsFor(stage).MaxFields {
 		return 0, 0, fail("field_limit", "JSON object exceeds field limit")
 	}
 	captured := make(map[string]capturedField, len(object))
 	for name, value := range object {
-		captured[name] = capturedField{Value: value, Source: true, Start: base, End: base + len(input)}
+		span := spans[name]
+		captured[name] = capturedField{Value: value, Source: true, Start: base + span.Start, End: base + span.End}
 	}
 	return mergeCaptured(rule, fields, captured, false)
 }

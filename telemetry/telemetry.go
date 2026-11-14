@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -90,12 +91,14 @@ func SourceFieldOrder(evidence []FieldEvidence) []string {
 		if !field.Source {
 			continue
 		}
-		start := field.Start
+		start, valid := field.Start, field.Start >= 0 && field.End >= field.Start
 		for _, span := range field.Spans {
-			if field.End <= field.Start || span.Start < start {
-				start = span.Start
-				field.Start, field.End = span.Start, span.End
+			if span.Start >= 0 && span.End >= span.Start && (!valid || span.Start < start) {
+				start, valid = span.Start, true
 			}
+		}
+		if !valid {
+			continue
 		}
 		if previous, ok := positions[field.Field]; !ok || start < previous {
 			positions[field.Field] = start
@@ -121,7 +124,6 @@ func (ep EventPayload) MarshalJSON() ([]byte, error) {
 	if ep.Fields == nil {
 		return []byte("{}"), nil
 	}
-	safeFields := make(map[string]json.RawMessage, len(ep.Fields))
 	for key, value := range ep.Fields {
 		if key == "" {
 			return nil, fmt.Errorf("event payload field name is empty")
@@ -132,13 +134,50 @@ func (ep EventPayload) MarshalJSON() ([]byte, error) {
 		if err := validateEventValue(value); err != nil {
 			return nil, fmt.Errorf("event payload field %q: %w", key, err)
 		}
+	}
+	return OrderedFields{Fields: ep.Fields, Order: ep.fieldOrder}.MarshalJSON()
+}
+
+// OrderedFields marshals a display object in source order without changing its
+// values. Unknown or derived positions follow the fields with source evidence.
+type OrderedFields struct {
+	Fields map[string]any
+	Order  []string
+}
+
+func (o OrderedFields) MarshalJSON() ([]byte, error) {
+	if len(o.Order) == 0 {
+		return json.Marshal(o.Fields)
+	}
+	order := make([]string, 0, len(o.Order))
+	children := make(map[string][]string)
+	for _, path := range o.Order {
+		if _, exact := o.Fields[path]; exact {
+			order = append(order, path)
+			continue
+		}
+		name, rest, nested := strings.Cut(path, ".")
+		if _, object := o.Fields[name].(map[string]any); nested && object {
+			order = append(order, name)
+			children[name] = append(children[name], rest)
+		}
+	}
+	fields := make(map[string]json.RawMessage, len(o.Fields))
+	for name, value := range o.Fields {
+		if childOrder := children[name]; len(childOrder) > 0 {
+			value = OrderedFields{Fields: value.(map[string]any), Order: childOrder}
+		}
 		encoded, err := json.Marshal(value)
 		if err != nil {
-			return nil, fmt.Errorf("event payload field %q is not JSON-safe: %w", key, err)
+			return nil, fmt.Errorf("field %q: %w", name, err)
 		}
-		safeFields[key] = encoded
+		fields[name] = encoded
 	}
-	if len(ep.fieldOrder) == 0 {
+	return marshalFieldOrder(fields, order)
+}
+
+func marshalFieldOrder(safeFields map[string]json.RawMessage, order []string) ([]byte, error) {
+	if len(order) == 0 {
 		return json.Marshal(safeFields)
 	}
 	var output bytes.Buffer
@@ -152,7 +191,7 @@ func (ep EventPayload) MarshalJSON() ([]byte, error) {
 		output.WriteByte(':')
 		output.Write(encoded)
 	}
-	for _, key := range ep.fieldOrder {
+	for _, key := range order {
 		if encoded, ok := safeFields[key]; ok {
 			appendField(key, encoded)
 			delete(safeFields, key)

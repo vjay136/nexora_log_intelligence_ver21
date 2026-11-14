@@ -241,11 +241,12 @@ type TraceStep struct {
 }
 
 type Result struct {
-	Values        map[string]any         `json:"values"`
-	Evidence      map[string]Evidence    `json:"evidence"`
-	Trace         map[string][]TraceStep `json:"trace,omitempty"`
-	DynamicFields []string               `json:"dynamic_fields,omitempty"`
-	kvieScans     map[kvieCacheKey]kvieScan
+	Values         map[string]any                 `json:"values"`
+	Evidence       map[string]Evidence            `json:"evidence"`
+	Trace          map[string][]TraceStep         `json:"trace,omitempty"`
+	NestedEvidence map[string]map[string]Evidence `json:"nested_evidence,omitempty"`
+	DynamicFields  []string                       `json:"dynamic_fields,omitempty"`
+	kvieScans      map[kvieCacheKey]kvieScan
 }
 
 type compiledField struct {
@@ -706,6 +707,20 @@ func (c *Compiled) execute(ctx context.Context, raw string, trace bool) (Result,
 					return result, fmt.Errorf("mapped field %q collides with a dynamic key", f.field.Name)
 				}
 				result.Values[f.field.Name] = value
+				if object, ok := value.(map[string]any); ok && evidence.Source && len(evidence.keySpans) > 0 {
+					children := make(map[string]Evidence, len(evidence.keySpans))
+					for key, spans := range evidence.keySpans {
+						if _, emitted := object[key]; emitted && len(spans) > 0 {
+							children[key] = Evidence{Start: spans[0].Start, End: spans[0].End, Source: true, Spans: spans}
+						}
+					}
+					if len(children) > 0 {
+						if result.NestedEvidence == nil {
+							result.NestedEvidence = make(map[string]map[string]Evidence)
+						}
+						result.NestedEvidence[f.field.Name] = children
+					}
+				}
 			}
 		}
 		evidence.keySpans = nil

@@ -38,6 +38,7 @@ type ParserPackAdapter struct {
 	smtpCompatibility familyprofile.Profile
 	smtpComplete      familyprofile.Profile
 	policyHash        string
+	templates         *runtimeTemplates
 }
 
 // NewParserPackAdapter creates the default runtime from the embedded,
@@ -167,7 +168,7 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 	trimmed := strings.TrimSpace(input)
 	service := runtimeService(source.Service, trimmed)
 	extendedHeader := fieldmapping.HasMailHeaderExtension(trimmed)
-	if service == "" && !extendedHeader && !parserpolicy.HasFramedMailTail(trimmed) {
+	if service == "" && adapter.templates == nil && !extendedHeader && !parserpolicy.HasFramedMailTail(trimmed) {
 		return &V5ParseResult{Success: false}
 	}
 	candidates := adapter.candidates(service)
@@ -188,12 +189,13 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 		}
 		return candidates[i].specificity < candidates[j].specificity
 	})
-	if len(candidates) == 0 && !extendedHeader && !parserpolicy.HasFramedMailTail(trimmed) {
+	if len(candidates) == 0 && adapter.templates == nil && !extendedHeader && !parserpolicy.HasFramedMailTail(trimmed) {
 		return &V5ParseResult{Success: false}
 	}
 
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
+	templateRun := adapter.templates.execute(ctx, input, source.Hostname)
 	limitExceeded := len(candidates) > maxProfileExecutions
 	if len(candidates) > maxProfileExecutions {
 		candidates = candidates[:maxProfileExecutions]
@@ -257,6 +259,34 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 	}
 
 	metadata := adapter.aggregateTelemetry(trimmed, source.Hostname, executions, selectedIndex, started)
+	if templateRun.matched {
+		metadata.OrderedAttempts = append(templateRun.attempts, metadata.OrderedAttempts...)
+		metadata.AttemptCount += len(templateRun.attempts)
+		if templateRun.result != nil && !templateRun.ambiguous {
+			selected := templateRun.result
+			selected.ParseTelemetry.OrderedAttempts = metadata.OrderedAttempts
+			selected.ParseTelemetry.AttemptCount = metadata.AttemptCount
+			selected.ParseTelemetry.StageCount += metadata.StageCount
+			selected.ParseTelemetry.LatencyMs = metadata.LatencyMs
+			return &V5ParseResult{EventPayload: selected.EventPayload, ParseTelemetry: selected.ParseTelemetry, Success: true, ReviewedMapping: true}
+		}
+		if templateRun.ambiguous || selectedIndex < 0 || !executions[selectedIndex].composed {
+			metadata.Route, metadata.Result, metadata.Confidence = "quarantine", "quarantined", 0
+			metadata.FieldEvidence = nil
+			metadata.ParserID, metadata.PackID = "runtime_family_router", "runtime_family_router"
+			metadata.InputFieldCount, metadata.SourceFieldCount, metadata.OutputFieldCount = 0, 0, 0
+			for _, attempt := range templateRun.attempts {
+				if attempt.FailureReason != "" {
+					metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, attempt.FailureReason)
+				}
+			}
+			if templateRun.ambiguous {
+				metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "ambiguous_published_template")
+			}
+			return &V5ParseResult{ParseTelemetry: metadata, Quarantined: true}
+		}
+		metadata.FallbackDepth += len(templateRun.attempts)
+	}
 	if limitExceeded {
 		metadata.ErrorCodes = appendUnique(metadata.ErrorCodes, "pack_attempt_limit")
 	}

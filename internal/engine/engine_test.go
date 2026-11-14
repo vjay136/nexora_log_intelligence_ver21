@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -223,5 +224,21 @@ func TestSMTPNativeMixedKVIntegration(t *testing.T) {
 	}
 	if envelope.Meta.Assurance.SelectedStrategy != "smtp_native" || envelope.Meta.Assurance.EvidenceCoverage < 0.8 {
 		t.Fatalf("assurance telemetry does not identify the mixed-KV path: %+v", envelope.Meta.Assurance)
+	}
+}
+
+func TestEnvelopeJSONPreservesSourceFieldOrder(t *testing.T) {
+	envelope := engine.Envelope{Raw: "example", Data: map[string]any{"z": 1, "a": 2}, Meta: engine.Meta{
+		FieldEvidence: []map[string]any{
+			{"field": "a", "source_backed": true, "start": 4, "end": 5},
+			{"field": "z", "source_backed": true, "start": 0, "end": 1},
+		},
+	}}
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"data":{"z":1,"a":2}`) || !strings.Contains(string(data), `"raw":"example"`) {
+		t.Fatalf("legacy envelope serialization changed fields or failed source ordering: %s", data)
 	}
 }

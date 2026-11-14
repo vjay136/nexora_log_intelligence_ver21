@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"nexora.local/nli-v20/internal/mixedkv"
+	"nexora.local/nli-v20/telemetry"
 )
 
 func (s *Server) handleTemplateDraft(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +90,9 @@ func (s *Server) handleTemplateDraft(w http.ResponseWriter, r *http.Request) {
 				pendingKV++
 			}
 			if len(examples) < maxTemplateComposeDetails {
-				examples = append(examples, map[string]any{"line": i + 1, "actual": validation["actual"],
+				actual, _ := validation["actual"].(map[string]any)
+				order, _ := validation["field_order"].([]string)
+				examples = append(examples, map[string]any{"line": i + 1, "actual": telemetry.OrderedFields{Fields: actual, Order: order},
 					"tail_start_byte": validation["tail_start_byte"], "tail_requires_kv_template": validation["tail_requires_kv_template"]})
 			}
 		}

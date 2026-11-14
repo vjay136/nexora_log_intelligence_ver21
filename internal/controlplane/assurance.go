@@ -26,6 +26,7 @@ import (
 	"nexora.local/nli-v20/internal/engine"
 	"nexora.local/nli-v20/internal/middleware"
 	metastore "nexora.local/nli-v20/internal/store"
+	"nexora.local/nli-v20/telemetry"
 )
 
 type assuranceVault struct {
@@ -153,6 +154,7 @@ func (s *Server) handleAssuranceRun(w http.ResponseWriter, r *http.Request) {
 		actor = principal.Username
 	}
 	s.recordAssuranceHistory(result, actor)
+	result["actual"] = orderedAssuranceValues(result)
 	jsonOK(w, result)
 }
 
@@ -177,7 +179,7 @@ func (s *Server) handleParserCreationHelper(w http.ResponseWriter, r *http.Reque
 	}
 	result := s.runAssuranceContext(r.Context(), request)
 	helper, _ := result["parser_creation_helper"].(map[string]any)
-	jsonOK(w, map[string]any{"raw": result["raw"], "raw_sha256": result["raw_sha256"], "parsed_json": result["actual"], "family_decision": helper["family_decision"], "parser_creation_helper": helper, "validation": helper["validation_accounting"], "categorized_results": helper["categorized_results"], "requires_human_approval": true})
+	jsonOK(w, map[string]any{"raw": result["raw"], "raw_sha256": result["raw_sha256"], "parsed_json": orderedAssuranceValues(result), "family_decision": helper["family_decision"], "parser_creation_helper": helper, "validation": helper["validation_accounting"], "categorized_results": helper["categorized_results"], "requires_human_approval": true})
 }
 
 func (s *Server) runAssurance(request assuranceRequest) map[string]any {
@@ -567,6 +569,24 @@ func structuralDiff(actual, desired map[string]any) ([]map[string]any, int) {
 	}
 	return diff, matches
 }
+func orderedAssuranceValues(result map[string]any) telemetry.OrderedFields {
+	actual, _ := result["actual"].(map[string]any)
+	rows, _ := result["evidence_spans"].([]map[string]any)
+	evidence := make([]telemetry.FieldEvidence, 0, len(rows))
+	for _, row := range rows {
+		name, _ := row["field"].(string)
+		backed, _ := row["source_backed"].(bool)
+		inferred, _ := row["inferred"].(bool)
+		start, validStart := row["start"].(int)
+		end, validEnd := row["end"].(int)
+		if name != "" && (backed || inferred) && validStart && validEnd {
+			spans, _ := row["spans"].([]telemetry.SourceSpan)
+			evidence = append(evidence, telemetry.FieldEvidence{Field: name, Source: true, Start: start, End: end, Spans: spans})
+		}
+	}
+	return telemetry.OrderedFields{Fields: actual, Order: telemetry.SourceFieldOrder(evidence)}
+}
+
 func evidenceSpans(raw string, actual map[string]any) []map[string]any {
 	fields := make([]string, 0, len(actual))
 	for field := range actual {
@@ -611,6 +631,7 @@ func (s *Server) handleAssuranceCorpus(w http.ResponseWriter, r *http.Request) {
 			passed++
 		}
 		result["raw"] = ""
+		result["actual"] = orderedAssuranceValues(result)
 		results = append(results, result)
 	}
 	jsonOK(w, map[string]any{"total": len(results), "passed": passed, "failed": len(results) - passed, "results": results, "retained": false})

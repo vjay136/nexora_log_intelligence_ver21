@@ -1801,9 +1801,12 @@ func (s *Server) handleFleetSync(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "GET required", http.StatusMethodNotAllowed)
 		return
 	}
-	documents, err := s.listParserSyncDocuments(r.Context(), "fleet-sync", "", parserSyncTargetLimit)
+	started := time.Now().UTC()
+	ctx, cancel := context.WithTimeout(r.Context(), metadataViewReadBudget)
+	defer cancel()
+	documents, err := s.listParserSyncDocuments(ctx, "fleet-sync", "", parserSyncTargetLimit)
 	if err != nil {
-		jsonError(w, "fleet reconciliation status unavailable", http.StatusServiceUnavailable)
+		replyMetadataUnavailable(w, r, &s.fleetSyncView, "fleet reconciliation status unavailable")
 		return
 	}
 	byID := map[string]any{}
@@ -1825,7 +1828,7 @@ func (s *Server) handleFleetSync(w http.ResponseWriter, r *http.Request) {
 		checkInputPathAcknowledgement(state, node)
 		out = append(out, map[string]any{"node": node, "sync": state})
 	}
-	jsonOK(w, map[string]any{"nodes": out, "count": len(out)})
+	replyMetadataCurrent(w, &s.fleetSyncView, started, map[string]any{"nodes": out, "count": len(out)})
 }
 func (s *Server) handleFleetResource(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/fleet/"), "/")

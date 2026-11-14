@@ -282,3 +282,41 @@ func TestEventPayloadSourceOrder(t *testing.T) {
 		t.Fatalf("source-ordered payload = %s, want %s", actual, expected)
 	}
 }
+
+func TestEventPayloadNestedSourceOrder(t *testing.T) {
+	payload := EventPayload{Fields: map[string]any{
+		"z_header": "mail",
+		"kv_pair":  map[string]any{"status": "failed", "reason": "not needed", "literal.dot": false},
+		"derived":  true,
+	}}
+	ordered := payload.WithSourceOrder([]FieldEvidence{
+		{Field: "kv_pair.reason", Source: true, Start: 17, End: 27},
+		{Field: "kv_pair.status", Source: true, Start: 10, End: 16},
+		{Field: "kv_pair.literal.dot", Source: true, Start: 28, End: 33},
+		{Field: "z_header", Source: true, Start: 0, End: 4},
+	})
+	actual, err := json.Marshal(ordered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const expected = `{"z_header":"mail","kv_pair":{"status":"failed","reason":"not needed","literal.dot":false},"derived":true}`
+	if string(actual) != expected {
+		t.Fatalf("source-ordered payload = %s, want %s", actual, expected)
+	}
+}
+
+func TestDecodeJSONObjectReportsExactSourceSpans(t *testing.T) {
+	input := ` {"a" : 1,"z": {"nested":true},"a":9007199254740993} `
+	values, spans, err := DecodeJSONObject(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := spans["a"]
+	if values["a"] != json.Number("9007199254740993") || input[last.Start:last.End] != "9007199254740993" {
+		t.Fatalf("duplicate key did not retain its last exact value: %v, %v", values, spans)
+	}
+	nested := spans["z"]
+	if nested.Start >= last.Start || input[nested.Start:nested.End] != `{"nested":true}` {
+		t.Fatalf("incorrect nested object position: %v", spans)
+	}
+}

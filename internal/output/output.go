@@ -3,6 +3,7 @@ package output
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -208,10 +209,9 @@ func (w *StdoutWriter) Write(envelope []byte, route string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.cfg.Format == "pretty" {
-		var v interface{}
-		if err := json.Unmarshal(envelope, &v); err == nil {
-			pretty, _ := json.MarshalIndent(v, "", "  ")
-			fmt.Println(string(pretty))
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, envelope, "", "  "); err == nil {
+			fmt.Println(pretty.String())
 			return nil
 		}
 	}

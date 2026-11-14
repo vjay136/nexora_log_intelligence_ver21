@@ -15,6 +15,7 @@ import (
 	"nexora.local/nli-v20/internal/fieldmapping"
 	metastore "nexora.local/nli-v20/internal/store"
 	parserpolicy "nexora.local/nli-v20/parser-policy"
+	"nexora.local/nli-v20/telemetry"
 )
 
 // One declarative plan is used by the editor, Assurance, sealed bundles and
@@ -76,11 +77,30 @@ func (s *Server) handleMappingPreview(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]any{"passed": false, "actual": map[string]any{}, "trace": result.Trace, "evidence": result.Evidence, "errors": []string{err.Error()}, "persisted": false, "activated": false, "engine": "nfi-v1"})
 		return
 	}
-	jsonOK(w, map[string]any{"passed": true, "actual": result.Values, "fields": result.Evidence, "evidence": result.Evidence, "trace": result.Trace, "assessment": assessMappingEvidence(result, len(input.Raw)), "errors": []string{}, "persisted": false, "activated": false, "engine": "nfi-v1"})
+	jsonOK(w, map[string]any{"passed": true, "actual": orderedMappingValues(result), "fields": result.Evidence, "evidence": result.Evidence, "trace": result.Trace, "assessment": assessMappingEvidence(result, len(input.Raw)), "errors": []string{}, "persisted": false, "activated": false, "engine": "nfi-v1"})
 }
 
 // Assess only fields emitted for this sample. Defaults and derived values
 // can be valid output without having a direct source span.
+func orderedMappingValues(result fieldmapping.Result) telemetry.OrderedFields {
+	evidence := make([]telemetry.FieldEvidence, 0, len(result.Evidence))
+	add := func(name string, field fieldmapping.Evidence) {
+		if !field.Source {
+			return
+		}
+		evidence = append(evidence, telemetry.FieldEvidence{Field: name, Source: true, Start: field.Start, End: field.End})
+	}
+	for name, field := range result.Evidence {
+		add(name, field)
+	}
+	for name, children := range result.NestedEvidence {
+		for key, field := range children {
+			add(name+"."+key, field)
+		}
+	}
+	return telemetry.OrderedFields{Fields: result.Values, Order: telemetry.SourceFieldOrder(evidence)}
+}
+
 func assessMappingEvidence(result fieldmapping.Result, inputBytes int) map[string]any {
 	observed := 0
 	for name := range result.Values {

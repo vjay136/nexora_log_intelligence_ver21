@@ -1283,7 +1283,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       }
       form.aiResult={result,raw,mappingSignature};
       resultHost.textContent=result.proposal?.plan
-        ?[boardIssue,result.answer,result.next_action, 'Exact sample preview', pretty(result.validation?.actual||{}), ...(result.validation?.errors||[])].filter(Boolean).join('\n\n')
+        ?[boardIssue,result.answer,result.next_action, 'Exact sample preview', pretty(evidenceOrdered(result.validation?.actual || {}, (result.validation?.field_order || []).map(field => ({field})))), ...(result.validation?.errors||[])].filter(Boolean).join('\n\n')
         :result.proposal?[result.proposal_origin==='native_fallback'?'Verified native draft':result.answer,
           result.next_action,pretty(result.validation?.actual??result.proposal.config??result.proposal)].filter(Boolean).join('\n\n')
         :result.answer||pretty(result);
@@ -1396,7 +1396,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     if ((options.method || 'GET') !== 'GET' || options.signal || options.headers || options.body !== undefined) {
       return requestAPI(path, options);
     }
-    const key = JSON.stringify([state.user?.username, path, options.timeoutMs]);
+    const key = JSON.stringify([state.user?.username, path, options.timeoutMs, options.allowStale===true]);
     const existing = inFlightReads.get(key);
     if (existing) return existing;
     const request = requestAPI(path, options).finally(() => {
@@ -1427,7 +1427,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const mappingOutcome=standby||(path==='/assurance/mapping-preview'&&data.passed===false?'Mapping rejected by native validation'
       :data.proposal_origin==='native_fallback'?'Verified native fallback returned':'');
     recordAPI(path, method, response.status, latency, data?.snapshot_stale===true?'Serving last confirmed metadata snapshot':degraded?'Provider storage needs attention':mappingOutcome||(response.ok?'':response.statusText),degraded);
-    if ([405, 501].includes(response.status) || (!contentType.includes('application/json') && !response.ok && ![502,504].includes(response.status))) throw new Error(CONTROLLER_REQUIRED);
+    if ([405, 501].includes(response.status) || (!contentType.includes('application/json') && !response.ok && response.status<500)) throw new Error(CONTROLLER_REQUIRED);
     if (response.status === 401 && path !== '/auth/login') { signOut(false); throw new Error('Session expired'); }
     if (!response.ok) { const error=new Error(data.error || (response.status===502?'The request gateway could not reach the controller. Check the controller connection and retry.':response.status===504?'The request timed out. Check the controller connection and retry.':`Request failed (HTTP ${response.status}).`));error.status=response.status;error.details=data;throw error; }
     if (!contentType.includes('application/json')) throw new Error('The controller returned an invalid API response.');
@@ -2115,13 +2115,37 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     return `<div id="assurance-upload-status" class="upload-report"><div class="upload-report-head"><div><p class="eyebrow">Controller analysis report</p><h4>${esc(name||'Uploaded sample')}</h4></div>${badge(retained?'encrypted and retained':'transient analysis')}</div><div class="grid cols-3">${card('File type',type,'Detected by controller')}${card('Size',size==null?'—':`${number(size)} bytes`,'Uploaded sample size')}${card('Parser revision',parserRevision,'Selected for analysis')}</div><div class="upload-report-meta"><span><b>SHA-256</b><code>${esc(hash)}</code></span><span><b>Storage</b><span>${esc(storage)}</span></span>${fixtureId?`<span><b>Fixture ID</b><code>${esc(fixtureId)}</code></span>`:''}</div>${retained?`<div class="callout">The controller encrypted the fixture before protected Supabase persistence. No direct or public bucket upload was used.</div><button class="secondary" data-action="download-upload-fixture" data-id="${esc(fixtureId)}" data-filename="${esc(name||'nli-retained-fixture.log')}">Download retained sample through controller</button>`:'<div class="callout">This sample was analyzed in memory and was not retained. Enable retention on a future upload to save an encrypted fixture.</div>'}</div>`;
   }
   function evidenceStart(item) {
-    if (!item || !(item.source_backed ?? item.source ?? item.inferred)) return Infinity;
+    if (!item || !(item.source_backed || item.source || item.inferred)) return Infinity;
     return item.spans?.length ? Math.min(...item.spans.map(span => span.start ?? 0)) : item.start ?? 0;
   }
   function evidenceOrdered(fields, evidence) {
     if (!fields || Array.isArray(fields) || typeof fields !== 'object') return fields;
-    return Object.fromEntries([...new Set([...evidence.map(item => item.field), ...Object.keys(fields)])]
-      .filter(name => Object.hasOwn(fields, name)).map(name => [name, fields[name]]));
+    const positions = new Set();
+    const children = new Map();
+    for (const item of evidence) {
+      const path = item.field;
+      if (typeof path !== 'string') continue;
+      if (Object.hasOwn(fields, path)) {
+        positions.add(path);
+        continue;
+      }
+      const split = path.indexOf('.');
+      const name = path.slice(0, split);
+      if (split < 1 || !Object.hasOwn(fields, name) || typeof fields[name] !== 'object') continue;
+      positions.add(name);
+      if (!children.has(name)) children.set(name, []);
+      children.get(name).push({ ...item, field: path.slice(split + 1) });
+    }
+    return Object.fromEntries([...new Set([...positions, ...Object.keys(fields)])].map(name => [
+      name, children.has(name) ? evidenceOrdered(fields[name], children.get(name)) : fields[name],
+    ]));
+  }
+
+  function evidenceFieldValue(fields, path) {
+    if (!fields || typeof fields !== 'object' || typeof path !== 'string') return;
+    if (Object.hasOwn(fields, path)) return fields[path];
+    const split = path.indexOf('.');
+    if (split > 0 && Object.hasOwn(fields, path.slice(0, split))) return evidenceFieldValue(fields[path.slice(0, split)], path.slice(split + 1));
   }
 
   function renderAssurance(result) {
@@ -2137,7 +2161,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       const spans = item.spans?.length ? item.spans : [{start:item.start ?? 0,end:item.end}];
       const ranges = spans.filter(span => span.end != null).map(span => `${span.start ?? 0}–${span.end}`).join(', ');
       const origin = item.derived_rule ? 'derived' : item.inferred ? 'inferred' : isSource ? 'source' : 'unverified';
-      return `<tr><td>${esc(item.field)}</td><td><code>${esc(pretty(result.actual?.[item.field]))}</code></td><td>${badge(origin)}</td><td>${esc(isSource || item.inferred ? ranges || '—' : '—')}</td><td>${esc(item.derived_rule || (item.inferred ? 'Value lookup' : isSource ? 'Source span' : 'Unavailable'))}</td></tr>`;
+      return `<tr><td>${esc(item.field)}</td><td><code>${esc(pretty(evidenceFieldValue(result.actual, item.field)))}</code></td><td>${badge(origin)}</td><td>${esc(isSource || item.inferred ? ranges || '—' : '—')}</td><td>${esc(item.derived_rule || (item.inferred ? 'Value lookup' : isSource ? 'Source span' : 'Unavailable'))}</td></tr>`;
     });
     const comparison = result.comparison_enabled ? `<div><h3>Desired output</h3><pre class="json-output">${esc(pretty(result.desired))}</pre></div>` : '<div class="callout">Parse-only validation: add desired JSON when exact structural comparison is required.</div>';
     const coverage = result.coverage || {};
@@ -2183,7 +2207,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     if(el('fleet-desired-form'))el('fleet-desired-form').closest('.panel').hidden=column!==0&&column!==6;
   }
   async function loadFleet() {
-    const data = await api('/fleet/sync'); const items = data.nodes || [];
+    const data = await api('/fleet/sync',{allowStale:true}); const items = data.nodes || [];
     const onboarding = items.length ? '' : '<div class="callout warn"><b>No client has checked in yet.</b> On the controller run <code>sudo nli-controller-setup --rotate-enrollment</code>, copy the generated bootstrap file to the client, then run <code>sudo nli-client-setup /path/to/nli-client-bootstrap.env</code>.</div>';
     const nodes = items.map(item => item.node || {}), metrics = nodes.map(node => node.metrics || {});
     const online = nodes.filter(node => /online|active|healthy/i.test(node.status || '')).length;
@@ -2192,7 +2216,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const parsed = metrics.reduce((total, item) => total + Number(item.logs_parsed || 0), 0);
     const quarantined = metrics.reduce((total, item) => total + Number(item.logs_quarantined || 0), 0);
     const summary = `<div class="grid cols-4 fleet-summary">${card('Enrolled clients',number(items.length),`${number(online)} online now`)}${card('Records received',number(received),'Live client counters')}${card('Parsed / quarantined',`${number(parsed)} / ${number(quarantined)}`,received?`${(parsed/received*100).toFixed(2)}% parse rate`:'Awaiting input')}${card('Configuration drift',number(drifted),drifted?'Requires operator review':'All reporting clients aligned')}</div><div class="fleet-focus" aria-label="Client monitoring dimensions">${FLEET_FOCUS.map(([label,column])=>`<button type="button" class="secondary small" data-action="fleet-focus" data-value="${column}" aria-pressed="${(state.fleetFocus||0)===column}">${label}</button>`).join('')}</div>`;
-    renderPage('fleet', `${onboarding}${summary}${panel('Fleet desired vs active','Identity, heartbeat, agent health, parse counters and immutable desired/active state from enrolled clients.',`<div id="fleet-focus-table">${table(['Node / IP','Health / heartbeat','Platform','Log sources','In / parsed / quarantine','CPU / RAM / load','Desired vs active','Drift'],items.map(({node={},sync={}})=>{const m=node.metrics||{},tags=node.tags||{},paths=node.log_paths||node.input_paths||tags.log_paths||tags.log_path||tags.inputs;return `<tr><td><b>${esc(node.hostname||node.id)}</b><br><small class="mono">${esc(node.id)} · ${esc(node.ip||'IP unavailable')}</small></td><td>${badge(node.status||'unknown')}<br><small>${time(node.last_seen)}</small></td><td>${esc([node.os,node.arch].filter(Boolean).join(' / ')||'—')}<br><small>v${esc(node.version||'—')}</small></td><td>${sync.input_inventory?renderReportedInputs(sync):esc(Array.isArray(paths)?paths.join(', '):(paths||'Not reported'))}<br><small class="mono">${esc(node.metrics_url||'Metrics endpoint not reported')}</small></td><td>${number(m.logs_received)} / ${number(m.logs_parsed)} / ${number(m.logs_quarantined)}<br><small>parse ${Number(m.parse_rate_pct||0).toFixed(2)}%</small></td><td>${m.cpu_percent==null?'—':`${Number(m.cpu_percent).toFixed(1)}%`} / ${m.memory_percent==null?'—':`${Number(m.memory_percent).toFixed(1)}%`}<br><small>load ${esc(m.load_1m??'—')} / ${esc(m.load_5m??'—')} / ${esc(m.load_15m??'—')}</small></td><td><small>Pack</small><br><code>${esc((sync.desired_pack_hash||'—').slice(0,12))} → ${esc((sync.active_pack_hash||'—').slice(0,12))}</code><br><small>Config</small><br><code>${esc((sync.desired_config_hash||'—').slice(0,12))} → ${esc((sync.active_config_hash||node.config_hash||'—').slice(0,12))}</code></td><td>${badge(sync.drifted?'drifted':'aligned')}<br><small>${esc((node.issues||[]).join(' · ')||'No reported issues')}</small></td></tr>`;}))}</div>`)}${panel('Set desired immutable hashes','Ops-only mutation; clients report active hashes independently when they reconcile.',`<form id="fleet-desired-form" class="form-grid"><label class="field">Node ID<input name="node" required title="Copy the exact enrolled node ID shown in the inventory."></label><label class="field">Parser pack SHA-256<input name="pack_hash" pattern="[a-fA-F0-9]{64}" title="Expected 64-character SHA-256 hash; leave blank to preserve current desired hash."></label><label class="field">Config SHA-256<input name="config_hash" pattern="[a-fA-F0-9]{64}"></label><label class="field">Release SHA-256<input name="release_hash" pattern="[a-fA-F0-9]{64}"></label><button class="primary" type="submit">Set desired state</button></form>`)}`);
+    renderPage('fleet', `${staleSnapshotWarning(data)}${onboarding}${summary}${panel('Fleet desired vs active','Identity, heartbeat, agent health, parse counters and immutable desired/active state from enrolled clients.',`<div id="fleet-focus-table">${table(['Node / IP','Health / heartbeat','Platform','Log sources','In / parsed / quarantine','CPU / RAM / load','Desired vs active','Drift'],items.map(({node={},sync={}})=>{const m=node.metrics||{},tags=node.tags||{},paths=node.log_paths||node.input_paths||tags.log_paths||tags.log_path||tags.inputs;return `<tr><td><b>${esc(node.hostname||node.id)}</b><br><small class="mono">${esc(node.id)} · ${esc(node.ip||'IP unavailable')}</small></td><td>${badge(node.status||'unknown')}<br><small>${time(node.last_seen)}</small></td><td>${esc([node.os,node.arch].filter(Boolean).join(' / ')||'—')}<br><small>v${esc(node.version||'—')}</small></td><td>${sync.input_inventory?renderReportedInputs(sync):esc(Array.isArray(paths)?paths.join(', '):(paths||'Not reported'))}<br><small class="mono">${esc(node.metrics_url||'Metrics endpoint not reported')}</small></td><td>${number(m.logs_received)} / ${number(m.logs_parsed)} / ${number(m.logs_quarantined)}<br><small>parse ${Number(m.parse_rate_pct||0).toFixed(2)}%</small></td><td>${m.cpu_percent==null?'—':`${Number(m.cpu_percent).toFixed(1)}%`} / ${m.memory_percent==null?'—':`${Number(m.memory_percent).toFixed(1)}%`}<br><small>load ${esc(m.load_1m??'—')} / ${esc(m.load_5m??'—')} / ${esc(m.load_15m??'—')}</small></td><td><small>Pack</small><br><code>${esc((sync.desired_pack_hash||'—').slice(0,12))} → ${esc((sync.active_pack_hash||'—').slice(0,12))}</code><br><small>Config</small><br><code>${esc((sync.desired_config_hash||'—').slice(0,12))} → ${esc((sync.active_config_hash||node.config_hash||'—').slice(0,12))}</code></td><td>${badge(sync.drifted?'drifted':'aligned')}<br><small>${esc((node.issues||[]).join(' · ')||'No reported issues')}</small></td></tr>`;}))}</div>`)}${panel('Set desired immutable hashes','Ops-only mutation; clients report active hashes independently when they reconcile.',`<form id="fleet-desired-form" class="form-grid"><label class="field">Node ID<input name="node" required title="Copy the exact enrolled node ID shown in the inventory."></label><label class="field">Parser pack SHA-256<input name="pack_hash" pattern="[a-fA-F0-9]{64}" title="Expected 64-character SHA-256 hash; leave blank to preserve current desired hash."></label><label class="field">Config SHA-256<input name="config_hash" pattern="[a-fA-F0-9]{64}"></label><label class="field">Release SHA-256<input name="release_hash" pattern="[a-fA-F0-9]{64}"></label><button class="primary" type="submit" ${data.snapshot_stale?'disabled':''}>Set desired state</button></form>`)}`);
     if(state.page==='fleet')applyFleetFocus(state.fleetFocus||0);
   }
 
@@ -2299,22 +2323,23 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     if (['header-templates','kv-templates'].includes(kind)) {
       const otherPath = CONFIG[kind === 'header-templates' ? 'kv-templates' : 'header-templates'][0];
       const other = await api(otherPath).catch(() => ({items:[]}));
-      const select = (id,label,docs) => '<label class="field">' + label + '<select id="' + id + '">' +
-        '<option value="">Select a saved revision</option>' + docs.filter(doc => doc.id && Number(doc.revision)>0).map(doc =>
+      const select = (id,label,docs,defaultOption='<option value="">Select a saved revision</option>') => '<label class="field">' + label + '<select id="' + id + '">' +
+        defaultOption + docs.filter(doc => doc.id && Number(doc.revision)>0).map(doc =>
           '<option value="' + esc(JSON.stringify({id:doc.id,revision:Number(doc.revision)})) + '">' +
           esc((doc.payload?.name || doc.id) + ' · revision ' + doc.revision) + '</option>').join('') + '</select></label>';
       const header = kind === 'header-templates' ? items : other.items || [];
       const kv = kind === 'kv-templates' ? items : other.items || [];
       const artifact = kind === 'header-templates' ? 'template' : 'kv_template';
-      templateWorkbench = panel('Build a template from samples','Paste one representative record per line, up to 500. Header drafts capture the prefix. KV drafts accept a recognized mail record or a standalone key/value tail.',
+      const globalProfile = kind === 'kv-templates' ? panel('Global AutoSense','Built-in key/value fallback for published header templates. It inspects the remaining input after a header match and requires a complete, unambiguous parse.', '<p>Published compatible KV templates are evaluated before the fallback. Header-only records can pass when there is no remaining payload.</p>') : '';
+      templateWorkbench = globalProfile + panel('Build a template from samples','Paste one representative record per line, up to 500. Header drafts capture the prefix. KV drafts accept a recognized mail record or a standalone key/value tail.',
         '<label class="field">Sample log<textarea id="template-composition-sample" rows="6" spellcheck="false"></textarea></label>' +
         '<div class="actions"><button type="button" class="primary" data-action="template-draft-generate" data-artifact="' + artifact + '">Generate draft JSON</button>' +
         '<button type="button" class="secondary" data-action="workspace-ai-open" data-template-sample data-mode="fix" data-tab="' + title + '" data-artifact="' + artifact + '">Draft with Nexora AI</button>' +
         '<button type="button" class="secondary" data-action="template-reset-samples">Reset samples</button>' +
         '<button type="button" class="secondary" data-action="template-draft-verify" data-artifact="' + artifact + '">Verify current JSON</button></div>' +
         '<pre class="json-output" id="template-draft-result" role="status" hidden></pre>') +
-        panel('Preview header and KV together','Choose exact saved revisions and verify both templates against the sample logs above. Open the verified mapping in FieldSense to build a parser pack for review.',
-        select('template-header','Header template',header) + select('template-kv','KV pair template',kv) +
+        panel('Preview header and KV together','Select a saved header and preview the full record. Global AutoSense detects key/value syntax after the header. Select an exact saved KV revision to test that grammar explicitly.',
+        select('template-header','Header template',header) + select('template-kv','KV pair template',kv,'<option value="'+esc(JSON.stringify({id:'global-auto',revision:0}))+'">Global AutoSense · built in</option>') +
         '<div class="actions"><button type="button" class="primary" data-action="template-preview-saved">Verify saved templates</button>' +
         '<button type="button" class="secondary" data-action="template-compose-mapping">Open combined mapping in FieldSense</button></div>' +
         '<pre class="json-output" id="template-composition-result" role="status" hidden></pre>');
@@ -2687,7 +2712,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   }
 
   async function loadClientManagement() {
-    const [data,jobs]=await Promise.all([api('/fleet/sync'),api('/rollouts').catch(error=>({error:error.message}))]);
+    const [data,jobs]=await Promise.all([api('/fleet/sync',{allowStale:true}),api('/rollouts',{allowStale:true}).catch(error=>({error:error.message}))]);
     const items=data.nodes||[];
     const inventory=table(['Client','Agent service / heartbeat','Log sources','Throughput','Active parsers'],items.map(({node={},sync={}})=>{
       const m=node.metrics||{};
@@ -2700,7 +2725,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       <label class="field wide">Selected clients<select name="targets" multiple size="6">${options}</select><span class="hint">Select one or more clients. Restarts for offline clients wait for check-in. Parser bundle delivery uses the verified fleet rollout policy.</span></label>
       <button class="primary" type="submit" ${items.length?'':'disabled'}>Request approval</button>
     </form><div class="actions"><button type="button" class="secondary" data-action="fleet-open" data-value="input-paths">Manage input paths</button><button type="button" class="secondary" data-action="fleet-open" data-value="parsers">Manage published parser packs</button><button type="button" class="secondary" data-action="fleet-open" data-value="parser-sync">View parser bundle delivery</button></div>`;
-    renderPage('clients',panel('Client agent inventory','Last reported runtime information from enrolled clients.',inventory)+panel('Request a client action','Operations are approval-gated and scoped to enrolled client IDs.',controls)+renderManagedFileForm(items)+(jobs.error?`<div class="callout warn">Client operation status unavailable: ${esc(jobs.error)}</div>`:renderFleetJobs(jobs)));
+    renderPage('clients',staleSnapshotWarning(data)+panel('Client agent inventory','Last reported runtime information from enrolled clients.',inventory)+panel('Request a client action','Operations are approval-gated and scoped to enrolled client IDs.',data.snapshot_stale?'Refresh the fleet snapshot to select current targets.':controls)+(data.snapshot_stale?'':renderManagedFileForm(items))+staleSnapshotWarning(jobs)+(jobs.error?`<div class="callout warn">Client operation status unavailable: ${esc(jobs.error)}</div>`:renderFleetJobs(jobs)));
   }
   let nfiAnalysisController;
   async function nfiAnalysisRequest(path,body){nfiAnalysisController?.abort();const controller=new AbortController();nfiAnalysisController=controller;try{return await api(path,{method:'POST',body,signal:controller.signal});}finally{if(nfiAnalysisController===controller)nfiAnalysisController=null;}}
@@ -3565,7 +3590,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         const header = el('template-header').value, kv = el('template-kv').value;
         const raw = el('template-composition-sample').value;
         const samples = raw.split(/\r?\n/).filter(line => line.trim());
-        if (!header || !kv || !samples.length) throw new Error('Select both saved revisions and enter sample logs.');
+        if (!header || !samples.length) throw new Error('Select a saved header revision and enter sample logs.');
         if (samples.length>500) throw new Error('Preview up to 500 lines at a time.');
         const resultHost = el('template-composition-result');
         resultHost.hidden=false;
@@ -3573,7 +3598,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         resultHost.parentElement.querySelector('[data-action=template-open-verified]')?.remove();
         resultHost.textContent='Checking exact samples…';
         try {
-          const result = await api('/field-mapping/template-compose',{method:'POST',body:{header:JSON.parse(header),kv:JSON.parse(kv),samples}});
+          const result = await api('/field-mapping/template-compose',{method:'POST',body:{header:JSON.parse(header),kv:kv ? JSON.parse(kv) : undefined,samples}});
           if (!resultHost.isConnected) break;
           if (el('template-header').value!==header || el('template-kv').value!==kv || el('template-composition-sample').value!==raw) {
             resultHost.textContent='The templates or samples changed. Verify the current selection again.';

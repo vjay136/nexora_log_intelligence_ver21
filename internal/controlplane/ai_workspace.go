@@ -17,6 +17,7 @@ import (
 	"nexora.local/nli-v20/internal/masker"
 	"nexora.local/nli-v20/internal/middleware"
 	"nexora.local/nli-v20/internal/mixedkv"
+	"nexora.local/nli-v20/telemetry"
 )
 
 type aiWorkspaceReference struct {
@@ -634,6 +635,11 @@ func validateAIWorkspaceAssetCompiled(kind, raw string, config map[string]any, r
 		}
 		config["engine"] = "re2"
 		validation["actual"] = mapped
+		orderEvidence := make([]telemetry.FieldEvidence, 0, len(evidence))
+		for name, field := range evidence {
+			orderEvidence = append(orderEvidence, telemetry.FieldEvidence{Field: name, Source: true, Start: field.Start, End: field.End})
+		}
+		validation["field_order"] = telemetry.SourceFieldOrder(orderEvidence)
 		validation["sample_matched"] = true
 	case "keys", "key_pack":
 		if err := validateCatalogConfig("known-keys", config); err != nil {
@@ -693,6 +699,13 @@ func validateAIWorkspaceAssetCompiled(kind, raw string, config map[string]any, r
 			return nil, errors.New("The proposed key/value profile did not extract the complete key/value sample. Review assignment and pair separators, duplicate keys, and unnamed segments")
 		}
 		validation["actual"] = result.Fields
+		orderEvidence := make([]telemetry.FieldEvidence, 0, len(result.Entries))
+		for _, entry := range result.Entries {
+			if entry.Emitted {
+				orderEvidence = append(orderEvidence, telemetry.FieldEvidence{Field: entry.Key, Source: true, Start: entry.KeySpan.Start, End: entry.KeySpan.End})
+			}
+		}
+		validation["field_order"] = telemetry.SourceFieldOrder(orderEvidence)
 		validation["tail_start_byte"] = tailStart
 		validation["sample_matched"] = true
 	case "pattern":

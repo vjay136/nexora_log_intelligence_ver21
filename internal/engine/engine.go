@@ -7,8 +7,8 @@ package engine
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"regexp"
 	"sort"
 	"strconv"
@@ -22,10 +22,11 @@ import (
 	"nexora.local/nli-v20/internal/registry"
 	ts "nexora.local/nli-v20/internal/timestamp"
 	"nexora.local/nli-v20/internal/typeinfer"
+	"nexora.local/nli-v20/telemetry"
 )
 
 // Version is the NLI engine version.
-const Version = "22.15.1"
+const Version = "22.16.1"
 
 // MaxLine is the maximum line size processed (1 MiB).
 const MaxLine = 1024 * 1024
@@ -140,6 +141,36 @@ type Envelope struct {
 	Data      map[string]interface{} `json:"data"`
 	Raw       string                 `json:"raw"`
 	Meta      Meta                   `json:"meta"`
+}
+
+// SourceFieldEvidence converts the pipeline's presentation evidence to
+// source spans for output serialization.
+func (e Envelope) SourceFieldEvidence() []telemetry.FieldEvidence {
+	var fields []telemetry.FieldEvidence
+	for _, row := range e.Meta.FieldEvidence {
+		name, _ := row["field"].(string)
+		source, _ := row["source_backed"].(bool)
+		start, validStart := row["start"].(int)
+		end, validEnd := row["end"].(int)
+		if name == "" || !source || !validStart || !validEnd {
+			continue
+		}
+		spans, _ := row["spans"].([]telemetry.SourceSpan)
+		fields = append(fields, telemetry.FieldEvidence{Field: name, Source: true, Start: start, End: end, Spans: spans})
+	}
+	return fields
+}
+
+func (e Envelope) MarshalJSON() ([]byte, error) {
+	type plainEnvelope Envelope
+	order := telemetry.SourceFieldOrder(e.SourceFieldEvidence())
+	if len(order) == 0 {
+		return json.Marshal(plainEnvelope(e))
+	}
+	return json.Marshal(struct {
+		plainEnvelope
+		Data telemetry.OrderedFields `json:"data"`
+	}{plainEnvelope(e), telemetry.OrderedFields{Fields: e.Data, Order: order}})
 }
 
 // --- Pipeline components (injected at startup) ---
@@ -785,22 +816,13 @@ func normalizeLevel(value string) string {
 }
 
 func parseJSON(text string, e *Envelope) {
-	dec := json.NewDecoder(strings.NewReader(text))
-	dec.UseNumber()
-	var values map[string]interface{}
-	if err := dec.Decode(&values); err != nil {
+	values, spans, err := telemetry.DecodeJSONObject(text)
+	if err != nil {
+		if errors.Is(err, telemetry.ErrTrailingJSON) {
+			e.Meta.Errors = append(e.Meta.Errors, err.Error())
+			return
+		}
 		e.Meta.Errors = append(e.Meta.Errors, "invalid JSON: "+err.Error())
-		e.Data["_unknown"] = map[string]interface{}{"raw": text}
-		return
-	}
-	if values == nil {
-		e.Meta.Errors = append(e.Meta.Errors, "JSON log must be an object")
-		e.Data["_unknown"] = map[string]interface{}{"raw": text}
-		return
-	}
-	var extra interface{}
-	if err := dec.Decode(&extra); err != io.EOF {
-		e.Meta.Errors = append(e.Meta.Errors, "trailing JSON content")
 		e.Data["_unknown"] = map[string]interface{}{"raw": text}
 		return
 	}
@@ -810,6 +832,8 @@ func parseJSON(text string, e *Envelope) {
 	for k, v := range values {
 		e.Data[k] = v
 		e.Meta.Extracted++
+		span := spans[k]
+		e.Meta.FieldEvidence = append(e.Meta.FieldEvidence, map[string]any{"field": k, "source_backed": true, "start": span.Start, "end": span.End})
 	}
 	if _, hasLog := values["log"]; hasLog {
 		if _, hasStream := values["stream"]; hasStream {

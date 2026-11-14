@@ -40,7 +40,7 @@ func (e *ParserPackExecutor) executeMappingStage(ctx context.Context, request *E
 		if !evidence.Source {
 			ruleID = "nfi:" + stage.ID
 		}
-		field := capturedField{Value: value, Source: evidence.Source, Start: evidence.Start, End: evidence.End, DerivedRule: ruleID, Dynamic: dynamic[name]}
+		field := capturedField{Value: value, ChildEvidence: result.NestedEvidence[name], Source: evidence.Source, Start: evidence.Start, End: evidence.End, DerivedRule: ruleID, Dynamic: dynamic[name]}
 		for _, span := range evidence.Spans {
 			field.SourceSpans = append(field.SourceSpans, mixedkv.Span{Start: span.Start, End: span.End})
 		}

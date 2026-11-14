@@ -12,6 +12,7 @@ func TestRolloutsAndParserSyncRecoverFromMetadataFailure(t *testing.T) {
 		name, path, failingCollection string
 	}{
 		{"rollout catalog", "/api/v1/rollouts", "rollout-proposals"},
+		{"fleet reconciliation", "/api/v1/fleet/sync", "fleet-sync"},
 		{"managed parser catalog", "/api/v1/parser-packs", "parser-packs"},
 		{"parser catalog", "/api/v1/parser-sync", "parser-packs"},
 		{"client acknowledgements", "/api/v1/parser-sync", "fleet-sync"},
@@ -52,6 +53,9 @@ func TestRolloutsAndParserSyncRecoverFromMetadataFailure(t *testing.T) {
 			}
 			if tc.path == "/api/v1/parser-packs" {
 				view = &f.server.parserCatalogView
+			}
+			if tc.path == "/api/v1/fleet/sync" {
+				view = &f.server.fleetSyncView
 			}
 			view.mu.Lock()
 			view.at = time.Now().Add(-metadataViewMaxAge - time.Second)

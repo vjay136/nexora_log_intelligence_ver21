@@ -244,3 +244,91 @@ func TestAutomaticRuntimeProtectedBuiltinIDCannotBeCreated(t *testing.T) {
 		t.Fatal("rejected built-in override persisted a draft")
 	}
 }
+
+func TestAutomaticPublishedTemplatesActivateAndOffboard(t *testing.T) {
+	f := newAPIFixture(t)
+	ctx := context.Background()
+	raw := "node42 retry status=failed;reason=not needed"
+	config := []byte(`{"config":{"engine":"re2","pattern":"^(?P<host>node[0-9]+) (?P<event>retry) ","fields":{"host":"host","event":"event"}}}`)
+	put := func(id, state string) {
+		t.Helper()
+		_, err := f.server.metadata.Put(ctx, metastore.Document{Collection: "templates", ID: id, State: state, Payload: config, CreatedBy: "admin"})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	active := func() bool {
+		t.Helper()
+		runtime, err := f.server.automaticParserRuntime(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := runtime.parser.TryParseV5Production(raw, engine.Source{Service: "auto"})
+		return result.Success && result.ParseTelemetry.ParserID == "template/mail-live"
+	}
+	put("mail-live", "draft")
+	if active() {
+		t.Fatal("draft template entered runtime")
+	}
+	put("mail-live", "active")
+	if !active() {
+		t.Fatal("published template was absent from controller runtime")
+	}
+	if err := f.server.metadata.Delete(ctx, "templates", "mail-live", false, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if active() {
+		t.Fatal("deleted template remained in the controller runtime cache")
+	}
+}
+
+func TestAssuranceRunPrefersPublishedTemplatesAndRejectsAChangedTail(t *testing.T) {
+	f := newAPIFixture(t)
+	ctx := context.Background()
+	const raw = "20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 123456;Note;efgh;ijkl;mnop;SieveRuleMsg status=failed;reason=not needed\n"
+	const header = `^(?P<date>[0-9]{8})[ \t]+(?P<timestamp>\S+)[ \t]+(?P<hostname>\S+)[ \t]+(?P<service>\S+)[ \t]+(?P<pid>[0-9]+)[ \t]+(?P<minor_pid>[0-9]+)[ \t]+(?P<thread_id>[0-9]+)[ \t]+(?P<random_number>[0-9]+);(?P<event_type>[^;\s]+);(?P<extra_tag1>[^;\s]+);(?P<extra_tag2>[^;\s]+);(?P<extra_tag3>[^;\s]+);(?P<event>[^;\s]+)(?:[ \t]+|$)`
+	captures := map[string]string{}
+	for _, name := range []string{"date", "timestamp", "hostname", "service", "pid", "minor_pid", "thread_id", "random_number", "event_type", "extra_tag1", "extra_tag2", "extra_tag3", "event"} {
+		captures[name] = name
+	}
+	payload, err := json.Marshal(map[string]any{"config": map[string]any{"engine": "re2", "pattern": header, "fields": captures}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "reported-mail-header"
+	_, err = f.server.metadata.Put(ctx, metastore.Document{Collection: "templates", ID: id, State: "active", Payload: payload, CreatedBy: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(sample string) map[string]any {
+		t.Helper()
+		response, data := f.request(http.MethodPost, "/api/v1/assurance/run", map[string]any{"raw": sample, "service": "auto", "preserve_source": true})
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("run: %d %s", response.StatusCode, data)
+		}
+		return decodeMap(t, data)
+	}
+	result := request(raw)
+	if result["passed"] != true || result["parser"].(map[string]any)["name"] != "template/"+id {
+		t.Fatalf("template was not the production selection: route=%v parser=%v", result["route"], result["parser"])
+	}
+	if attempts := result["counts"].(map[string]any)["attempts"].(float64); attempts < 2 {
+		t.Fatalf("other parser attempts missing: %v", result["counts"])
+	}
+	actual := result["actual"].(map[string]any)
+	tail := actual["kv_pair"].(map[string]any)
+	if actual["extra_tag1"] != "efgh" || actual["extra_tag2"] != "ijkl" || actual["extra_tag3"] != "mnop" || tail["reason"] != "not needed" || tail["status"] != "failed" {
+		t.Fatalf("template and dynamic tail were not combined correctly: %v", actual)
+	}
+	result = request(strings.Replace(raw, "reason=not needed", "reason", 1))
+	if result["passed"] != false || result["route"] != "quarantine" {
+		t.Fatalf("incomplete tail escaped quarantine: route=%v parser=%v", result["route"], result["parser"])
+	}
+	if err := f.server.metadata.Delete(ctx, "templates", id, false, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	result = request(raw)
+	if result["parser"].(map[string]any)["name"] == "template/"+id {
+		t.Fatal("offboarded template was still used by Assurance")
+	}
+}

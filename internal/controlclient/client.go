@@ -981,6 +981,10 @@ func (c *Client) applyAssetBundle(ctx context.Context, data []byte) (string, err
 	if err := os.MkdirAll(staging, 0750); err != nil {
 		return "", err
 	}
+	if err := ensureNLIGroupOwnership(staging); err != nil {
+		_ = os.RemoveAll(staging)
+		return "", err
+	}
 	if err := copyParserDirectory(c.cfg.ParserDir, parserStaging); err != nil {
 		_ = os.RemoveAll(staging)
 		return "", err

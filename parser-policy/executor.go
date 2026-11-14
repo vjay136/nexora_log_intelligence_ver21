@@ -45,13 +45,14 @@ type ExecutionResult struct {
 }
 
 type capturedField struct {
-	Dynamic     bool
-	Value       interface{}
-	Source      bool
-	Start       int
-	End         int
-	DerivedRule string
-	SourceSpans []mixedkv.Span
+	ChildEvidence map[string]fieldmapping.Evidence
+	Dynamic       bool
+	Value         interface{}
+	Source        bool
+	Start         int
+	End           int
+	DerivedRule   string
+	SourceSpans   []mixedkv.Span
 }
 
 type workingSet map[string]capturedField
@@ -460,6 +461,18 @@ func buildRuleStats(output map[string]interface{}, fields workingSet, inputCount
 			record.Spans = append(record.Spans, telemetry.SourceSpan{Start: span.Start, End: span.End})
 		}
 		stats.Evidence = append(stats.Evidence, record)
+		if object, ok := output[name].(map[string]any); ok {
+			for key, evidence := range field.ChildEvidence {
+				if _, emitted := object[key]; !emitted {
+					continue
+				}
+				child := telemetry.FieldEvidence{Field: name + "." + key, Source: evidence.Source, Start: evidence.Start, End: evidence.End}
+				for _, span := range evidence.Spans {
+					child.Spans = append(child.Spans, telemetry.SourceSpan{Start: span.Start, End: span.End})
+				}
+				stats.Evidence = append(stats.Evidence, child)
+			}
+		}
 		if field.Source {
 			stats.SourceFields++
 			if field.End > field.Start && field.Start >= 0 {

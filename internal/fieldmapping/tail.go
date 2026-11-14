@@ -107,6 +107,18 @@ func strictUnquotedPairValue(value, delimiters string, escape byte, multiSeparat
 	return nil
 }
 
+// TemplateTail scopes KV to bytes after the reviewed complete header. A known
+// mail record must keep the original side of the header/tail boundary.
+func TemplateTail(raw string, start int) (string, int, error) {
+	if start <= 0 || start > len(raw) {
+		return "", 0, fmt.Errorf("%w: invalid header extent", ErrIncompleteKV)
+	}
+	if header := mailTail.FindStringIndex(raw); header != nil && start > header[1] {
+		return "", 0, fmt.Errorf("%w: configured header overlaps the mail payload at byte %d", ErrIncompleteKV, header[1]+1)
+	}
+	return raw[start:], start, nil
+}
+
 func (r *record) keySource(cf compiledField) (string, int, int, bool, error) {
 	f := cf.field
 	if cf.kvHeader != nil {
@@ -114,20 +126,19 @@ func (r *record) keySource(cf compiledField) (string, int, int, bool, error) {
 		if len(indexes) < 2 || indexes[0] != 0 || indexes[1] <= 0 {
 			return "", 0, 0, false, fmt.Errorf("%w: record does not match the configured header", ErrIncompleteKV)
 		}
-		start := indexes[1]
-		if header := mailTail.FindStringIndex(r.raw); header != nil && start > header[1] {
-			return "", 0, 0, false, fmt.Errorf("%w: configured header overlaps the mail payload at byte %d", ErrIncompleteKV, header[1]+1)
+		tail, start, err := TemplateTail(r.raw, indexes[1])
+		if err != nil {
+			return "", 0, 0, false, err
 		}
-		end := len(r.raw)
 		if f.EndOfLine {
-			if i := strings.IndexAny(r.raw[start:], "\r\n"); i >= 0 {
-				end = start + i
+			if i := strings.IndexAny(tail, "\r\n"); i >= 0 {
+				tail = tail[:i]
 			}
 		}
-		if strings.TrimSpace(r.raw[start:end]) == "" {
+		if strings.TrimSpace(tail) == "" {
 			return "", 0, 0, false, nil
 		}
-		return r.raw[start:end], start, end, true, nil
+		return tail, start, start + len(tail), true, nil
 	}
 	if f.Source == "" || f.Source == "raw" {
 		end := len(r.raw)

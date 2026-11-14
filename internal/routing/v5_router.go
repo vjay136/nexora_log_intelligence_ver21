@@ -108,9 +108,14 @@ func (router *V5Router) RouteLegacyForFamily(eventData map[string]interface{}, t
 	return router.RouteLegacyIdentified(eventData, telemetryMetadata, route, family, "")
 }
 func (router *V5Router) RouteLegacyIdentified(eventData map[string]interface{}, telemetryMetadata map[string]interface{}, route, family, id string) error {
+	return router.RouteLegacyWithEvidence(eventData, telemetryMetadata, nil, route, family, id)
+}
+
+func (router *V5Router) RouteLegacyWithEvidence(eventData map[string]interface{}, telemetryMetadata map[string]interface{}, evidence []telemetry.FieldEvidence, route, family, id string) error {
 	var customerErr error
 	if (route == "normal" || route == "warning") && len(eventData) > 0 {
-		payload, err := json.Marshal(telemetry.EventPayload{Fields: eventData})
+		event := telemetry.EventPayload{Fields: eventData}
+		payload, err := json.Marshal(event.WithSourceOrder(evidence))
 		if err != nil {
 			return err
 		}

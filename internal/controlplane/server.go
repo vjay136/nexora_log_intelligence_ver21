@@ -123,6 +123,7 @@ type Server struct {
 	metricIngestMu           sync.Mutex
 	fleetSyncMu              sync.Mutex
 	rolloutCatalogView       recoverableMetadataView
+	fleetSyncView            recoverableMetadataView
 	parserCatalogView        recoverableMetadataView
 	parserSyncView           recoverableMetadataView
 	quarantine               *quarantineVault

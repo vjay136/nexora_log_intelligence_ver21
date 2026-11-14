@@ -1,5 +1,9 @@
 # Changelog
 
+## v22.16.1-0
+
+See [release notes](docs/V22_16_1_RELEASE_NOTES.md) for live template composition and source-ordered JSON.
+
 ## v22.15.1-0
 
 See [release notes](docs/V22_15_1_RELEASE_NOTES.md) for parser validation, approval history, sync, latency, and Nexora AI changes.

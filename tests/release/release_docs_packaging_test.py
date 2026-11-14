@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 DOCUMENTS = {
-    "V22_15_1_RELEASE_NOTES.md": "docs/V22_15_1_RELEASE_NOTES.md",
+    "V22_16_1_RELEASE_NOTES.md": "docs/V22_16_1_RELEASE_NOTES.md",
     "All_NLI_features.md": "All_NLI_features.md",
     "V21_R1_RELEASE_NOTES.md": "docs/V21_R1_RELEASE_NOTES.md",
     "V21_R1_TEST_RESULTS.md": "docs/V21_R1_TEST_RESULTS.md",
@@ -115,19 +115,19 @@ def validate(root: Path, output: Path, client: Path, controller: Path) -> None:
                 fail(f"{relative} does not reference packaged artifact {name}")
 
     workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    for claim in ("NLI V22 release", "nli-v22-unsigned-release", "docs/V22_15_1_RELEASE_NOTES.md", "v22.14.1-0"):
+    for claim in ("NLI V22 release", "nli-v22-unsigned-release", "docs/V22_16_1_RELEASE_NOTES.md", "v22.15.1-0"):
         if claim not in workflow:
             fail(f"release workflow does not identify the Ver22 workflow and Ver22 baseline: {claim!r}")
 
     release_env = (root / "packaging/release.env").read_text(encoding="utf-8")
-    if "NLI_VERSION=22.15.1" not in release_env or "NLI_RELEASE=0" not in release_env.splitlines():
-        fail("packaging release identity is not 22.15.1-0")
+    if "NLI_VERSION=22.16.1" not in release_env or "NLI_RELEASE=0" not in release_env.splitlines():
+        fail("packaging release identity is not 22.16.1-0")
 
     for relative in (
-        "README.md", "CHANGELOG.md", "docs/V22_15_1_RELEASE_NOTES.md",
+        "README.md", "CHANGELOG.md", "docs/V22_16_1_RELEASE_NOTES.md",
         "packaging/rpm/nli-client.spec", "packaging/rpm/nli-controller-agent.spec",
     ):
-        if "22.15.1-0" not in (root / relative).read_text(encoding="utf-8"):
+        if "22.16.1-0" not in (root / relative).read_text(encoding="utf-8"):
             fail(f"{relative} does not identify the current release")
 
     # Historical source evidence remains available for compatibility and audit.

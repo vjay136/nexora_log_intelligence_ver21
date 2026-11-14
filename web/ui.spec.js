@@ -33,6 +33,24 @@ test('stale approvals remain visible with mutation disabled', async ({page}) => 
   await expect(page.getByRole('button',{name:'Request approval'})).toBeDisabled();
 });
 
+test('stale fleet inventory remains readable without accepting target operations', async ({page}) => {
+  await mockController(page);
+  await login(page);
+  await page.route('**/api/v1/fleet/sync',route=>route.fulfill({json:{
+    snapshot_stale:true,snapshot_at:'2026-11-13T00:00:00Z',
+    nodes:[{node:{id:'retained-node',hostname:'Retained client',status:'online'},sync:{}}],
+  }}));
+  await page.getByTestId('nav-fleet').click();
+  await expect(page.getByText('Retained client',{exact:true})).toBeVisible();
+  await expect(page.getByText(/Showing the last confirmed snapshot/)).toBeVisible();
+  await expect(page.getByRole('button',{name:'Set desired state'})).toBeDisabled();
+
+  await page.getByTestId('nav-clients').click();
+  await expect(page.getByText('Retained client',{exact:true})).toBeVisible();
+  await expect(page.getByText(/Showing the last confirmed snapshot/)).toBeVisible();
+  await expect(page.locator('#client-action-form')).toHaveCount(0);
+});
+
 test('AI privacy workspace displays decisions and bounded controller catalog counts', async ({page}) => {
   await mockController(page);
   await login(page);
@@ -55,6 +73,25 @@ test('Log Pattern Templates opens a combined header and advanced KV plan', async
   await expect(fields.last().locator('[data-qrw-key=source]')).toHaveValue('9');
   await expect(fields.last().locator('[data-qrw-key=policy]')).toHaveValue('optional');
   await expect(fields.last().locator('[data-qrw-key=kv_literal_boundaries]')).toBeChecked();
+});
+
+test('saved header preview defaults to the built-in Global AutoSense profile', async ({page}) => {
+  await mockController(page);
+  await page.route('**/api/v1/config/templates', route=>route.fulfill({json:{items:[{id:'mail-header',revision:4,state:'active',payload:{name:'Mail header'}}]}}));
+  let request;
+  await page.route('**/api/v1/field-mapping/template-compose', route=>{
+    request=route.request().postDataJSON();
+    return route.fulfill({json:{passed:true,total:1,failed:0,examples:[{actual:{event:'SieveRuleMsg',kv_pair:{status:'failed',reason:'not needed'}}}]}});
+  });
+  await login(page);
+  await page.getByTestId('nav-kv-templates').click();
+  await expect(page.getByRole('heading',{name:'Global AutoSense',exact:true})).toBeVisible();
+  await page.getByLabel('Header template',{exact:true}).selectOption({label:'Mail header · revision 4'});
+  const raw='20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 123456;Note;efgh;ijkl;mnop;SieveRuleMsg status=failed;reason=not needed';
+  await page.getByLabel('Sample log',{exact:true}).fill(raw);
+  await page.getByRole('button',{name:'Verify saved templates'}).click();
+  await expect(page.locator('#template-composition-result')).toContainText('not needed');
+  expect(request).toEqual({header:{id:'mail-header',revision:4},kv:{id:'global-auto',revision:0},samples:[raw]});
 });
 
 test('template editors generate and verify pasted samples and pass the same sample to Nexora AI', async ({page}) => {

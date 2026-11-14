@@ -55,6 +55,9 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 	if got := body["failures"].([]any)[0].(map[string]any)["line"]; got != float64(4) {
 		t.Fatalf("wrong failed line: %v", got)
 	}
+	if !strings.Contains(string(data), `"kv_pair":{"status":"failed","reason":"not needed"}`) {
+		t.Fatalf("combined preview flattened or reordered nested KV values: %s", data)
+	}
 	examples := body["examples"].([]any)
 	if header := examples[0].(map[string]any)["actual"].(map[string]any); len(header) != 9 || header["event"] != "SieveRuleMsg" {
 		t.Fatalf("header-only record returned unexpected values: %v", header)
@@ -125,5 +128,41 @@ func TestTemplateComposeCannotHideUncapturedKVBehindGreedyPrefix(t *testing.T) {
 	}
 	if err := plan.ValidateComplete(raw, result); err == nil || !strings.Contains(err.Error(), "no mapped") {
 		t.Fatalf("unmapped tail was accepted: %v", err)
+	}
+}
+
+func TestTemplateComposeGlobalAutoSense(t *testing.T) {
+	f := newAPIFixture(t)
+	const header = "20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 123456;Note;efgh;ijkl;mnop;SieveRuleMsg"
+	const sample = header + " status=failed;reason=not needed"
+	response, data := f.request(http.MethodPost, "/api/v1/field-mapping/template-draft", map[string]any{"kind": "template", "samples": []string{sample}})
+	draft := decodeMap(t, data)
+	if response.StatusCode != http.StatusOK || draft["passed"] != true {
+		t.Fatalf("header draft returned %d: %s", response.StatusCode, data)
+	}
+	payload, err := json.Marshal(map[string]any{"config": draft["config"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := f.server.metadata.Put(context.Background(), metastore.Document{Collection: "templates", ID: "global-preview-header", State: "active", Payload: payload, CreatedBy: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, data = f.request(http.MethodPost, "/api/v1/field-mapping/template-compose", map[string]any{
+		"header":  templateComposeRef{ID: doc.ID, Revision: doc.Revision},
+		"samples": []string{sample, header, header + " status=retry;future_key=present", header + " unrecognized payload"},
+	})
+	result := decodeMap(t, data)
+	if response.StatusCode != http.StatusOK || result["failed"] != float64(1) {
+		t.Fatalf("global preview returned %d: %s", response.StatusCode, data)
+	}
+	examples := result["examples"].([]any)
+	actual := examples[0].(map[string]any)["actual"].(map[string]any)
+	tail := actual["kv_pair"].(map[string]any)
+	if tail["reason"] != "not needed" || tail["status"] != "failed" || actual["extra_tag3"] != "mnop" || actual["event"] != "SieveRuleMsg" {
+		t.Fatalf("unexpected preview: %v", actual)
+	}
+	if _, exists := examples[1].(map[string]any)["actual"].(map[string]any)["kv_pair"]; exists {
+		t.Fatal("header-only sample emitted a KV object")
 	}
 }

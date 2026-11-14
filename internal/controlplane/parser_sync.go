@@ -448,11 +448,25 @@ const (
 	advancedKVMinimumRelease    = "22.11.0-0"
 	largeKVMinimumRelease       = "22.12.0-0"
 	taggedMailMinimumRelease    = "22.14.0-0"
+	liveTemplateMinimumRelease  = "22.16.1-0"
 )
 
 // Inspect native stage content so imported packs cannot bypass the release
 // requirement by omitting their informational minimum_client_release metadata.
 func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
+	for _, asset := range bundle.Assets {
+		if asset.AssetClass != "templates" {
+			continue
+		}
+		var payload struct {
+			Config fieldmapping.HeaderTemplate `json:"config"`
+		}
+		if json.Unmarshal(asset.Payload, &payload) == nil {
+			if _, err := fieldmapping.ComposeTemplates(payload.Config, nil); err == nil {
+				return liveTemplateMinimumRelease
+			}
+		}
+	}
 	minimum := ""
 	for _, asset := range bundle.Assets {
 		if asset.AssetClass != "parser-packs" {
@@ -516,7 +530,7 @@ func parserClientSupportsKVRelease(version, minimumRelease string) bool {
 
 func parserSyncClientBlocker(node *fleet.Node, minimumRelease string, acknowledged bool, state map[string]any) (string, string) {
 	if !parserClientSupportsKVRelease(node.Version, minimumRelease) {
-		return "client_upgrade_required", fmt.Sprintf("Upgrade this client to v%s or newer to apply the bundle's KV edits.", minimumRelease)
+		return "client_upgrade_required", fmt.Sprintf("Upgrade this client to v%s or newer to apply all parsing assets in this bundle.", minimumRelease)
 	}
 	return parserSyncBlocker(acknowledged, node.Status == fleet.StatusOffline, state)
 }
@@ -580,6 +594,16 @@ func (s *Server) startParserBundleRollout(ctx context.Context, actor, name strin
 	return item, nil
 }
 
+var errParserRolloutMetadata = errors.New("parser rollout metadata unavailable")
+
+func replyParserRolloutProposalError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errParserRolloutMetadata) {
+		jsonError(w, "parser rollout metadata unavailable; retry when the controller metadata store recovers", http.StatusServiceUnavailable)
+		return
+	}
+	jsonError(w, err.Error(), http.StatusConflict)
+}
+
 // proposeParserBundleRollout snapshots the exact published controller bundle
 // and target set for independent approval. Clients do not receive the bundle
 // until the separate rollout approval endpoint starts the live rollout.
@@ -610,7 +634,7 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 	for _, id := range targetIDs {
 		if !eligible[id] || seen[id] {
 			if node, ok := s.fleet.Get(id); ok && node != nil && !parserClientSupportsKVRelease(node.Version, minimum) {
-				return metastore.Document{}, fmt.Errorf("parser sync target %q must be upgraded to v%s for the bundle's KV edits", id, minimum)
+				return metastore.Document{}, fmt.Errorf("parser sync target %q must be upgraded to v%s for this bundle's parsing assets", id, minimum)
 			}
 			return metastore.Document{}, fmt.Errorf("parser sync target %q is not an eligible enrolled client", id)
 		}
@@ -624,9 +648,9 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 	// approval can only fail the exact-hash gate and was the source of the R6
 	// "bundle hash is invalid/stale" loop. Preserve it as audit history while
 	// removing it from the approval queue.
-	pending, listErr := s.listParserSyncDocuments(ctx, "rollout-proposals", "", parserSyncTargetLimit)
+	pending, listErr := s.listParserSyncDocuments(ctx, "rollout-proposals", "pending_approval", parserSyncTargetLimit)
 	if listErr != nil {
-		return metastore.Document{}, fmt.Errorf("list parser rollout proposals: %w", listErr)
+		return metastore.Document{}, fmt.Errorf("%w: list pending proposals: %v", errParserRolloutMetadata, listErr)
 	}
 	var superseded []metastore.Document
 	for _, existing := range pending {
@@ -666,7 +690,7 @@ func (s *Server) proposeParserBundleRollout(ctx context.Context, actor, name, re
 	id := fmt.Sprintf("parser-sync-%d", time.Now().UnixNano())
 	created, err := s.metadata.Put(ctx, metastore.Document{Collection: "rollout-proposals", ID: id, State: "pending_approval", Payload: encoded, CreatedBy: actor})
 	if err != nil {
-		return metastore.Document{}, err
+		return metastore.Document{}, fmt.Errorf("%w: create proposal: %v", errParserRolloutMetadata, err)
 	}
 	for _, stale := range superseded {
 		var stalePayload map[string]any
@@ -905,6 +929,10 @@ func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if request.BundleHash != "" && request.BundleHash != bundle.BundleHash {
+		jsonError(w, "requested parser bundle is no longer the current published bundle", http.StatusConflict)
+		return
+	}
 	controllerHash, controllerStatus := "", "not_materialized"
 	if path == "verify" {
 		if applied, readErr := s.readMaterializedParserBundleHash(); readErr == nil {
@@ -926,10 +954,6 @@ func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {
 		controllerStatus = "applied"
 	}
 	if path == "verify" {
-		if request.BundleHash != "" && request.BundleHash != bundle.BundleHash {
-			jsonError(w, "requested parser bundle is no longer the current published bundle", http.StatusConflict)
-			return
-		}
 		if len(request.NodeIDs) > parserSyncTargetLimit {
 			jsonError(w, fmt.Sprintf("verification exceeds the %d-client target limit", parserSyncTargetLimit), http.StatusBadRequest)
 			return
@@ -980,10 +1004,6 @@ func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]any{"desired_hash": bundle.BundleHash, "controller_applied_hash": controllerHash, "controller_status": controllerStatus, "client_acknowledgements": clients, "verified_at": time.Now().UTC(), "assets": bundle.Assets})
 		return
 	}
-	if request.BundleHash != "" && request.BundleHash != bundle.BundleHash {
-		jsonError(w, "requested parser bundle is no longer the current published bundle", http.StatusConflict)
-		return
-	}
 	if path == "rollout" {
 		mode := request.TargetMode
 		if mode == "" {
@@ -999,7 +1019,7 @@ func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {
 		}
 		proposal, err := s.proposeParserBundleRollout(r.Context(), principal.Username, "Roll out published parser bundle", "Published parser bundles require independent rollout approval before client synchronization.", mode, bundle, targets)
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusConflict)
+			replyParserRolloutProposalError(w, err)
 			return
 		}
 		s.auditAction(principal, "parser_sync.rollout.propose", "rollout-proposals/"+proposal.ID, "success", map[string]string{"bundle_hash": bundle.BundleHash, "target_mode": mode})
@@ -1020,7 +1040,7 @@ func (s *Server) handleParserSync(w http.ResponseWriter, r *http.Request) {
 	}
 	saved, err := s.proposeParserBundleRollout(r.Context(), principal.Username, "Retry parser asset synchronization", "Parser sync retries require an independent rollout approval.", "selected", bundle, targets)
 	if err != nil {
-		jsonError(w, "parser sync retry proposal could not be saved", http.StatusInternalServerError)
+		replyParserRolloutProposalError(w, err)
 		return
 	}
 	s.auditAction(principal, "parser_sync.retry.propose", "rollout-proposals/"+saved.ID, "success", map[string]string{"bundle_hash": bundle.BundleHash})

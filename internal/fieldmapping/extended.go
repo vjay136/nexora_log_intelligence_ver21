@@ -138,7 +138,10 @@ func compileExtended(cf *compiledField, seen map[string]bool) error {
 		return fmt.Errorf("kv_profile requires key/value extraction and must be auto or configured")
 	}
 	namedProfile := f.Method == "key_value" && f.KVProfile != ""
-	if f.UsesAdvancedKV() {
+	if f.KVHeaderPattern != "" && (f.Method != "kv_all" || f.KVProfile == "" || !f.RequireComplete) {
+		return fmt.Errorf("a scoped KV header requires a dynamic KV profile with complete coverage")
+	}
+	if f.KVLiteralBoundaries || f.KVBareField != "" || f.KVEmptyKeyField != "" || f.KVMaxPairs != 0 {
 		if f.Method != "kv_all" || f.KVProfile != "configured" || !f.RequireComplete || !f.KVLiteralBoundaries {
 			return fmt.Errorf("advanced KV boundaries require a configured dynamic KV field with complete coverage")
 		}
@@ -539,9 +542,7 @@ func projectKeys(pairs map[string][]pair, f Field, e Evidence) (any, Evidence, b
 		return v, e, true, err
 	}
 	out := map[string]any{}
-	if f.OutputPolicy == "flatten" {
-		e.keySpans = make(map[string][]Span, len(normalized))
-	}
+	e.keySpans = make(map[string][]Span, len(normalized))
 	keys := make([]string, 0, len(normalized))
 	for key := range normalized {
 		keys = append(keys, key)

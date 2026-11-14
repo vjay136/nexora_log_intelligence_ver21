@@ -412,7 +412,11 @@ func TestParserAssetBundleSynchronizesEveryRuntimeAssetClass(t *testing.T) {
 	classes := []string{"kv-config", "static-patterns", "projections", "templates", "regex-patterns", "known-keys", "semantic-extraction"}
 	bundle := synchronizedAssetBundle{SchemaVersion: 1}
 	for index, class := range classes {
-		payload, marshalErr := json.Marshal(map[string]any{"name": class + " fixture", "config": map[string]any{"enabled": true}})
+		config := map[string]any{"enabled": true}
+		if class == "templates" {
+			config = map[string]any{"engine": "re2", "pattern": `^(?P<host>node[0-9]+) (?P<event>retry) `, "fields": map[string]string{"host": "host", "event": "event"}}
+		}
+		payload, marshalErr := json.Marshal(map[string]any{"name": class + " fixture", "config": config})
 		if marshalErr != nil {
 			t.Fatal(marshalErr)
 		}
@@ -493,7 +497,7 @@ func TestParserAssetBundleSynchronizesEveryRuntimeAssetClass(t *testing.T) {
 	if got, ok := result.EventPayload.Get("status"); !ok || got != "ok" {
 		t.Fatalf("installed parser output status=%#v present=%t", got, ok)
 	}
-	runtimeParser, err := runtimeadapter.NewParserPackAdapterFromDirectory(client.cfg.ParserDir)
+	runtimeParser, err := runtimeadapter.NewParserPackAdapterFromSynchronizedDirectories(context.Background(), client.cfg.ParserDir, client.cfg.AssetDir)
 	if err != nil {
 		t.Fatalf("production adapter could not load the applied generation: %v", err)
 	}
@@ -502,6 +506,14 @@ func TestParserAssetBundleSynchronizesEveryRuntimeAssetClass(t *testing.T) {
 	})
 	if !runtimeResult.Success || runtimeResult.Quarantined || runtimeResult.ParseTelemetry == nil || runtimeResult.ParseTelemetry.ParserID != "assurance-runtime/assurance-runtime-rule" {
 		t.Fatalf("applied parser was not globally executable through the production adapter: %+v", runtimeResult)
+	}
+	fleetRecord := "node42 retry status=failed;reason=not needed"
+	parsed := runtimeParser.TryParseV5Production(fleetRecord, engine.Source{Hostname: "test-node", Service: "auto"})
+	if !parsed.Success || parsed.ParseTelemetry.ParserID != "template/fixture-3" {
+		t.Fatalf("applied template was not loaded through the production adapter: %+v", parsed)
+	}
+	if value, _ := parsed.EventPayload.Get("kv_pair"); value.(map[string]any)["reason"] != "not needed" {
+		t.Fatalf("applied template did not combine with the global KV fallback: %+v", value)
 	}
 	inventory := parserInventory(client.cfg.ParserDir)
 	foundInventory := false

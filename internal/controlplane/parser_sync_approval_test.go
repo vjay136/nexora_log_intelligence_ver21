@@ -352,3 +352,53 @@ func TestStaleLegacyParserSyncProposalRequiresRebase(t *testing.T) {
 		t.Fatalf("stale proposal did not return rebase guidance: %d %s", response.StatusCode, body)
 	}
 }
+
+func TestParserSyncRejectsStaleBundleBeforeApplyingControllerFiles(t *testing.T) {
+	f := newAPIFixture(t)
+	f.server.fleet.Register(&fleet.Node{ID: "parser-node", Hostname: "parser-node", Version: "22.16.1"})
+	ctx := context.Background()
+	prior, err := f.server.buildActiveParserBundle(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.materializeParserBundle(prior); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.metadata.Put(ctx, metastore.Document{
+		Collection: "regex-patterns", ID: "changed-pattern", State: "active",
+		Payload: json.RawMessage(`{"name":"changed pattern","config":{"pattern":"^changed$"}}`), CreatedBy: "admin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"retry", "rollout"} {
+		response, body := f.request(http.MethodPost, "/api/v1/parser-sync/"+action, map[string]any{
+			"bundle_hash": prior.BundleHash, "node_ids": []string{"parser-node"},
+		})
+		if response.StatusCode != http.StatusConflict || !strings.Contains(string(body), "no longer the current") {
+			t.Fatalf("%s status %d: %s", action, response.StatusCode, body)
+		}
+		hash, err := f.server.readMaterializedParserBundleHash()
+		if err != nil || hash != prior.BundleHash {
+			t.Fatalf("%s changed the active controller bundle: hash %q, %v", action, hash, err)
+		}
+	}
+}
+
+func TestParserSyncSeparatesEligibilityFromMetadataFailure(t *testing.T) {
+	f := newAPIFixture(t)
+	f.server.fleet.Register(&fleet.Node{ID: "parser-node", Hostname: "parser-node", Version: "22.16.1"})
+	response, body := f.request(http.MethodPost, "/api/v1/parser-sync/retry", map[string]any{"node_ids": []string{"unknown-target"}})
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(body), "eligible enrolled client") {
+		t.Fatalf("eligibility status %d: %s", response.StatusCode, body)
+	}
+
+	f.server.metadata = navigationFailingStore{Store: f.server.metadata, failCollection: "rollout-proposals"}
+	for _, action := range []string{"retry", "rollout"} {
+		response, body := f.request(http.MethodPost, "/api/v1/parser-sync/"+action, map[string]any{
+			"target_mode": "selected", "node_ids": []string{"parser-node"},
+		})
+		if response.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(body), "retry when the controller metadata store recovers") {
+			t.Fatalf("%s storage status %d: %s", action, response.StatusCode, body)
+		}
+	}
+}

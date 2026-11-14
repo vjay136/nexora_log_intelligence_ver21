@@ -45,3 +45,40 @@ func TestRouteV5QuarantineIsTelemetryOnly(t *testing.T) {
 		t.Fatalf("quarantine telemetry incomplete: %+v", stored)
 	}
 }
+
+func TestRouteNormalJSONLKeepsSourceOrder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "normalized.jsonl")
+	router, err := NewV5Router([]output.Config{{Type: "file", Path: path}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer router.Close()
+	fields := map[string]any{"status": "failed", "reason": "not needed", "event": "SieveRuleMsg"}
+	evidence := []telemetry.FieldEvidence{
+		{Field: "reason", Source: true, Start: 34, End: 44},
+		{Field: "status", Source: true, Start: 20, End: 26},
+		{Field: "event", Source: true, Start: 0, End: 12},
+	}
+	parsed := &V5ParseResult{
+		EventPayload:   &telemetry.EventPayload{Fields: fields},
+		ParseTelemetry: &telemetry.ParseTelemetry{FieldEvidence: evidence},
+		Success:        true,
+	}
+	if err := router.RouteV5Customer(parsed); err != nil {
+		t.Fatal(err)
+	}
+	if err := router.RouteLegacyWithEvidence(fields, nil, evidence, "normal", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := router.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const record = `{"event":"SieveRuleMsg","status":"failed","reason":"not needed"}`
+	if string(data) != record+"\n"+record+"\n" {
+		t.Fatalf("modern or legacy JSONL route lost source order: %s", data)
+	}
+}

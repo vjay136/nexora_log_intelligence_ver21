@@ -11,18 +11,21 @@ import (
 	"strings"
 
 	"nexora.local/nli-v20/internal/adapter"
+	"nexora.local/nli-v20/internal/canonicaljson"
 	"nexora.local/nli-v20/internal/engine"
 	"nexora.local/nli-v20/internal/familyprofile"
 	"nexora.local/nli-v20/internal/fieldmapping"
+	metastore "nexora.local/nli-v20/internal/store"
 	parserpolicy "nexora.local/nli-v20/parser-policy"
 )
 
 type automaticRuntimeSnapshot struct {
-	hash        string
-	parser      *adapter.ParserPackAdapter
-	builtinIDs  []string
-	managedIDs  []string
-	diagnostics []string
+	hash            string
+	parser          *adapter.ParserPackAdapter
+	builtinIDs      []string
+	managedIDs      []string
+	diagnostics     []string
+	packDiagnostics []string
 }
 
 type automaticContextParser struct {
@@ -49,9 +52,47 @@ func (s *Server) automaticParserRuntime(ctx context.Context) (*automaticRuntimeS
 	if s.metadata == nil {
 		return nil, fmt.Errorf("runtime metadata is not configured")
 	}
-	docs, err := s.listParserSyncDocuments(ctx, "parser-packs", "", parserSyncTargetLimit)
-	if err != nil {
-		return nil, err
+	var docs []metastore.Document
+	templateAssets := []adapter.RuntimeTemplateAsset{}
+	type documentsResult struct {
+		docs []metastore.Document
+		err  error
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	collections := []string{"parser-packs", "templates", "kv-config"}
+	reads := make([]chan documentsResult, len(collections))
+	for i, collection := range collections {
+		read := make(chan documentsResult, 1)
+		reads[i] = read
+		go func(collection string, read chan<- documentsResult) {
+			page, err := s.listParserSyncDocuments(ctx, collection, "", parserSyncTargetLimit)
+			read <- documentsResult{page, err}
+		}(collection, read)
+	}
+	for i, collection := range collections {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result := <-reads[i]:
+			if result.err != nil {
+				return nil, result.err
+			}
+			if collection == "parser-packs" {
+				docs = result.docs
+				continue
+			}
+			sort.Slice(result.docs, func(i, j int) bool { return result.docs[i].ID < result.docs[j].ID })
+			for _, doc := range result.docs {
+				if doc.State == "active" && !doc.Deleted {
+					payload, err := canonicaljson.Normalize(doc.Payload)
+					if err != nil {
+						continue
+					}
+					templateAssets = append(templateAssets, adapter.RuntimeTemplateAsset{AssetClass: collection, AssetID: doc.ID, Revision: doc.Revision, Payload: payload})
+				}
+			}
+		}
 	}
 	sort.Slice(docs, func(i, j int) bool { return docs[i].ID < docs[j].ID })
 	payloads := map[string][]byte{}
@@ -117,21 +158,35 @@ func (s *Server) automaticParserRuntime(ctx context.Context) (*automaticRuntimeS
 		hash.Write(payloads[name])
 		hash.Write([]byte{0})
 	}
+	for _, asset := range templateAssets {
+		fmt.Fprintf(hash, "%s/%s@%d\x00", asset.AssetClass, asset.AssetID, asset.Revision)
+		hash.Write(asset.Payload)
+		hash.Write([]byte{0})
+	}
 	poolHash := hex.EncodeToString(hash.Sum(nil))
 	s.automaticRuntimeMu.Lock()
 	cached := s.automaticRuntime
 	s.automaticRuntimeMu.Unlock()
 	if cached != nil && cached.hash == poolHash {
-		if strings.Join(cached.diagnostics, "\x00") == strings.Join(diagnostics, "\x00") {
+		if strings.Join(cached.packDiagnostics, "\x00") == strings.Join(diagnostics, "\x00") {
 			return cached, nil
 		}
 		copyOfSnapshot := *cached
-		copyOfSnapshot.diagnostics = diagnostics
+		copyOfSnapshot.packDiagnostics = diagnostics
+		copyOfSnapshot.diagnostics = append(append([]string(nil), diagnostics...), cached.diagnostics[len(cached.packDiagnostics):]...)
 		return &copyOfSnapshot, nil
 	}
 	parser, err := adapter.NewParserPackAdapterWithManagedPayloadsContext(ctx, payloads)
 	if err != nil {
 		return nil, err
+	}
+	parser, templateDiagnostics, err := parser.WithRuntimeTemplates(ctx, templateAssets)
+	if err != nil {
+		return nil, err
+	}
+	packDiagnostics := append([]string(nil), diagnostics...)
+	for _, diagnostic := range templateDiagnostics {
+		diagnose(diagnostic)
 	}
 	builtins, err := familyprofile.Builtins()
 	if err != nil {
@@ -155,7 +210,7 @@ func (s *Server) automaticParserRuntime(ctx context.Context) (*automaticRuntimeS
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	snapshot := &automaticRuntimeSnapshot{hash: poolHash, parser: parser, builtinIDs: builtinIDs, managedIDs: names, diagnostics: diagnostics}
+	snapshot := &automaticRuntimeSnapshot{hash: poolHash, parser: parser, builtinIDs: builtinIDs, managedIDs: names, diagnostics: diagnostics, packDiagnostics: packDiagnostics}
 	s.automaticRuntimeMu.Lock()
 	s.automaticRuntime = snapshot
 	s.automaticRuntimeMu.Unlock()

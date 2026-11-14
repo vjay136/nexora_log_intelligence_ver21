@@ -6,9 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
-	"sort"
-	"strings"
 
 	"nexora.local/nli-v20/internal/fieldmapping"
 	"nexora.local/nli-v20/internal/mixedkv"
@@ -24,12 +21,7 @@ type templateComposeRef struct {
 	Revision int    `json:"revision"`
 }
 
-type templateComposeHeader struct {
-	Engine         string            `json:"engine"`
-	Pattern        string            `json:"pattern"`
-	Fields         map[string]string `json:"fields"`
-	OptionalFields []string          `json:"optional_fields,omitempty"`
-}
+type templateComposeHeader = fieldmapping.HeaderTemplate
 
 func (s *Server) templateComposeConfig(ctx context.Context, collection string, ref templateComposeRef) (json.RawMessage, error) {
 	if ref.Revision < 1 || ref.ID == "" || safeID(ref.ID) != ref.ID {
@@ -49,78 +41,7 @@ func (s *Server) templateComposeConfig(ctx context.Context, collection string, r
 }
 
 func composeTemplateMapping(header templateComposeHeader, kv mixedkv.Config) (fieldmapping.Plan, error) {
-	plan := fieldmapping.Plan{Version: 1}
-	if header.Engine != "" && header.Engine != "re2" || len(header.Pattern) > fieldmapping.MaxRegexBytes ||
-		!strings.HasPrefix(header.Pattern, "^") || len(header.Fields) == 0 || len(header.Fields) >= fieldmapping.MaxFields {
-		return plan, fmt.Errorf("header template needs an anchored RE2 prefix and named output fields")
-	}
-	re, err := regexp.Compile(header.Pattern)
-	if err != nil || re.MatchString("") {
-		return plan, fmt.Errorf("header pattern must be valid RE2 and consume a nonempty prefix")
-	}
-	outputNames := make(map[string]bool, len(header.Fields))
-	for _, name := range header.Fields {
-		outputNames[name] = true
-	}
-	optional := make(map[string]bool, len(header.OptionalFields))
-	for _, name := range header.OptionalFields {
-		if !outputNames[name] || optional[name] {
-			return plan, fmt.Errorf("invalid or duplicate optional output field %q", name)
-		}
-		optional[name] = true
-	}
-	groups := make([]string, 0, len(header.Fields))
-	for group := range header.Fields {
-		if re.SubexpIndex(group) < 1 {
-			return plan, fmt.Errorf("header field refers to unknown named group %q", group)
-		}
-		groups = append(groups, group)
-	}
-	sort.Slice(groups, func(i, j int) bool { return re.SubexpIndex(groups[i]) < re.SubexpIndex(groups[j]) })
-	for _, group := range groups {
-		policy := "required"
-		if optional[header.Fields[group]] {
-			policy = "optional"
-		}
-		plan.Fields = append(plan.Fields, fieldmapping.Field{
-			Name: header.Fields[group], Method: "regex", Source: header.Pattern, Part: group, Type: "string", Policy: policy,
-		})
-	}
-	if len(kv.KeyAllowPatterns) != 0 || len(kv.KeyDenyPatterns) != 0 || len(kv.StopKeys) != 0 || len(kv.ValueTypes) != 0 ||
-		kv.AllowLeadingText || kv.MaxInputBytes != 0 && kv.MaxInputBytes != fieldmapping.MaxInputBytes ||
-		kv.MaxKeyBytes != 0 && kv.MaxKeyBytes != 128 || kv.MaxValueBytes != 0 && kv.MaxValueBytes != fieldmapping.MaxInputBytes {
-		return plan, fmt.Errorf("the combined template requires complete, string-valued KV coverage with standard input and value limits")
-	}
-	// Composition gives every configured separator literal boundary semantics.
-	// An unexplained segment must fail or be explicitly captured by the asset.
-	kv.LiteralBoundaries = true
-	if kv.MaxFields == 0 {
-		kv.MaxFields = fieldmapping.DefaultAdvancedKVPairs
-	}
-	if _, err := mixedkv.Compile(kv); err != nil {
-		return plan, err
-	}
-	if len(kv.PairSeparators) == 0 || len(kv.AssignmentSeparators) == 0 {
-		return plan, fmt.Errorf("the KV template needs explicit pair and assignment separators")
-	}
-	policy := string(kv.DuplicatePolicy)
-	if policy == "" || policy == "error" {
-		policy = "reject"
-	}
-	tail := fieldmapping.Field{
-		Name: "kv_pair", Type: "object", Method: "kv_all", Policy: "optional", KVProfile: "configured",
-		KVHeaderPattern: header.Pattern, KVLiteralBoundaries: true, KVMaxPairs: kv.MaxFields,
-		KVBareField: kv.BareField, KVEmptyKeyField: kv.EmptyKeyField, DuplicatePolicy: policy,
-		KVPairSeparators: kv.PairSeparators, KVQuotes: kv.QuoteCharacters, KVEscape: kv.EscapeCharacter,
-		KVKeyPattern: kv.KeyPattern, KVRejectEmpty: kv.RejectEmptyValues,
-		KeyOptions: fieldmapping.KeyOptions{
-			AssignmentSeparators: kv.AssignmentSeparators, KeyAliases: kv.KeyAliases, RequireComplete: true,
-		},
-	}
-	if kv.BracketPairs != nil {
-		tail.KVBrackets = &kv.BracketPairs
-	}
-	return fieldmapping.Plan{Version: 1, Fields: append(plan.Fields, tail)}, nil
+	return fieldmapping.ComposeTemplates(header, &kv)
 }
 
 func (s *Server) handleTemplateCompose(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +62,7 @@ func (s *Server) handleTemplateCompose(w http.ResponseWriter, r *http.Request) {
 		Samples []string           `json:"samples"`
 	}
 	if err := decodeJSON(r, &input, 2<<20); err != nil || len(input.Samples) == 0 || len(input.Samples) > maxTemplateComposeSamples {
-		jsonError(w, "send 1 to 500 sample records with exact header and KV template revisions, up to 2 MiB total", http.StatusBadRequest)
+		jsonError(w, "send 1 to 500 sample records with an exact header revision and an optional KV template revision, up to 2 MiB total", http.StatusBadRequest)
 		return
 	}
 	headerConfig, err := s.templateComposeConfig(ctx, "templates", input.Header)
@@ -149,20 +70,30 @@ func (s *Server) handleTemplateCompose(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	kvConfig, err := s.templateComposeConfig(ctx, "kv-config", input.KV)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
 	var header templateComposeHeader
-	var kv mixedkv.Config
-	decoder := json.NewDecoder(bytes.NewReader(kvConfig))
-	decoder.DisallowUnknownFields()
-	if json.Unmarshal(headerConfig, &header) != nil || decoder.Decode(&kv) != nil {
-		jsonError(w, "template configuration is invalid or contains unsupported options", http.StatusBadRequest)
+	if json.Unmarshal(headerConfig, &header) != nil {
+		jsonError(w, "invalid header template configuration", http.StatusBadRequest)
 		return
 	}
-	plan, err := composeTemplateMapping(header, kv)
+	var kv *mixedkv.Config
+	if input.KV.ID != "" && input.KV.ID != fieldmapping.GlobalKVTemplateID {
+		kvConfig, err := s.templateComposeConfig(ctx, "kv-config", input.KV)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		decoder := json.NewDecoder(bytes.NewReader(kvConfig))
+		decoder.DisallowUnknownFields()
+		kv = new(mixedkv.Config)
+		if err := decoder.Decode(kv); err != nil {
+			jsonError(w, "KV template configuration is invalid or contains unsupported options", http.StatusBadRequest)
+			return
+		}
+	} else if input.KV.Revision != 0 {
+		jsonError(w, "the built-in Global AutoSense profile has no saved revision", http.StatusBadRequest)
+		return
+	}
+	plan, err := fieldmapping.ComposeTemplates(header, kv)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -188,7 +119,7 @@ func (s *Server) handleTemplateCompose(w http.ResponseWriter, r *http.Request) {
 				failures = append(failures, map[string]any{"line": i + 1, "error": err.Error()})
 			}
 		} else if len(examples) < maxTemplateComposeDetails {
-			examples = append(examples, map[string]any{"line": i + 1, "actual": result.Values})
+			examples = append(examples, map[string]any{"line": i + 1, "actual": orderedMappingValues(result)})
 		}
 	}
 	jsonOK(w, map[string]any{

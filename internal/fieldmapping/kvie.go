@@ -307,6 +307,10 @@ func (p *kvieProfile) validateValue(value string) error {
 }
 
 func detectKVIE(ctx context.Context, raw string, offset int) ([]KVProfile, error) {
+	return detectKVIEWithCoverage(ctx, raw, offset, false)
+}
+
+func detectKVIEWithCoverage(ctx context.Context, raw string, offset int, requireComplete bool) ([]KVProfile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -346,6 +350,15 @@ func detectKVIE(ctx context.Context, raw string, offset int) ([]KVProfile, error
 			var previous, current *mixedkv.Error
 			if evidenceError == nil || errors.As(err, &current) && (!errors.As(evidenceError, &previous) || current.Offset > previous.Offset) {
 				evidenceError = err
+			}
+		}
+		if requireComplete && err == nil {
+			for _, observation := range observations {
+				start, end := observation.Start-offset, observation.End-offset
+				if err = strictPairValue(raw[start:end], ";|\r\n"); err != nil {
+					evidenceError = fmt.Errorf("%w: %v", ErrIncompleteKV, err)
+					break
+				}
 			}
 		}
 		if err != nil || len(observations) < best {
@@ -595,7 +608,7 @@ func (r *record) extractKVIE(cf compiledField, evidence Evidence) (any, Evidence
 			}
 		} else {
 			var candidates []KVProfile
-			candidates, scan.err = detectKVIE(r.ctx, selected, start)
+			candidates, scan.err = detectKVIEWithCoverage(r.ctx, selected, start, f.KeyOptions.RequireComplete)
 			if scan.err == nil {
 				if len(candidates) != 1 {
 					scan.err = fmt.Errorf("%w: multiple KV profiles disagree; select the intended separators explicitly", ErrIncompleteKV)
