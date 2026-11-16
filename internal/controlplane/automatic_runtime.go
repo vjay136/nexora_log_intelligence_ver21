@@ -60,7 +60,7 @@ func (s *Server) automaticParserRuntime(ctx context.Context) (*automaticRuntimeS
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	collections := []string{"parser-packs", "templates", "kv-config"}
+	collections := []string{"parser-packs", "templates", "kv-config", "known-keys"}
 	reads := make([]chan documentsResult, len(collections))
 	for i, collection := range collections {
 		read := make(chan documentsResult, 1)

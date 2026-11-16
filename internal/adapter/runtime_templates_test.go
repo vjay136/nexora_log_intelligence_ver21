@@ -94,3 +94,28 @@ func TestPublishedHeaderTemplateUsesCompleteGlobalKV(t *testing.T) {
 		t.Fatalf("partial suffix escaped quarantine: %+v fields=%+v", malformed.ParseTelemetry, malformed.EventPayload)
 	}
 }
+
+func TestExportedTemplatesUsePublishedKnownKeys(t *testing.T) {
+	baseline, err := NewParserPackAdapter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, diagnostics, err := baseline.WithRuntimeTemplates(context.Background(), []RuntimeTemplateAsset{
+		{AssetClass: "templates", AssetID: "extra_yag_3_ver1_id", Revision: 4, Payload: json.RawMessage(`{"config":{"engine":"re2","fields":{"pid":"pid","date":"date","event":"event","service":"service","hostname":"hostname","minor_pid":"minor_pid","thread_id":"thread_id","timestamp":"timestamp","event_type":"event_type","extra_tag1":"extra_tag1","extra_tag2":"extra_tag2","extra_tag3":"extra_tag3","random_number":"random_number"},"pattern":"^(?P<date>[0-9]{8})[ \\t]+(?P<timestamp>[0-9]{9}[+-][0-9]{4})[ \\t]+(?P<hostname>[^ \\t\\r\\n]+)[ \\t]+(?P<service>[^ \\t\\r\\n]+)[ \\t]+(?P<pid>[0-9]+)[ \\t]+(?P<minor_pid>[0-9]+)[ \\t]+(?P<thread_id>[0-9]+)(?:[ \\t]*\\r?\\n[ \\t]*|[ \\t]+)(?P<random_number>[0-9]+);(?P<event_type>(?i:trace|debug|info|note|notice|warn|warning|err|error|fatal|critical|alert|emerg|panic));(?P<extra_tag1>[^; \\t\\r\\n]+);(?P<extra_tag2>[^; \\t\\r\\n]+);(?P<extra_tag3>[^; \\t\\r\\n]+);(?P<event>[^;() \\t\\r\\n]+)(?:[ \\t]+|$)","optional_fields":[],"resource_limits":{"timeout_ms":50,"max_input_bytes":1048576}}}`)},
+		{AssetClass: "kv-config", AssetID: "extra_tag3_kv_pair_id", Revision: 4, Payload: json.RawMessage(`{"config":{"max_fields":512,"pair_separators":[";"],"duplicate_policy":"error","literal_boundaries":true,"assignment_separators":["="]}}`)},
+		{AssetClass: "kv-config", AssetID: "conflicting-profile", Revision: 1, Payload: json.RawMessage(`{"config":{"pair_separators":[";"],"assignment_separators":["="],"key_aliases":{"status":"state"},"literal_boundaries":true}}`)},
+		{AssetClass: "known-keys", AssetID: "mail-keys", Revision: 4, Payload: json.RawMessage(`{"config":{"keys":["status","reason"]}}`)},
+	})
+	if err != nil || len(diagnostics) != 0 {
+		t.Fatalf("compile exports: %v %v", diagnostics, err)
+	}
+	parsed := runtime.TryParseV5Production(templateHeaderPrefix+" status=failed;reason=not needed;custom=42", engine.Source{Service: "auto"})
+	if !parsed.Success || parsed.EventPayload == nil {
+		t.Fatalf("combined parse: %+v", parsed.ParseTelemetry)
+	}
+	want := map[string]any{"status": "failed", "reason": "not needed", "kv_pair_field_1": "42"}
+	if !reflect.DeepEqual(parsed.EventPayload.Fields["kv_pair"], want) ||
+		parsed.EventPayload.Fields["extra_tag3"] != "mnop" {
+		t.Fatalf("unexpected output: %#v", parsed.EventPayload.Fields)
+	}
+}

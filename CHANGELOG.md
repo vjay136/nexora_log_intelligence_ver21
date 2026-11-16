@@ -1,5 +1,9 @@
 # Changelog
 
+## v22.18.1-0
+
+- Resolve conflicting KV profiles through complete automatic extraction and load published known keys in template runtime.
+
 ## v22.17.1-0
 
 - Check header capture coverage during template verification and live parsing.

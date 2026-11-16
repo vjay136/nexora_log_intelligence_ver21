@@ -70,8 +70,9 @@ type runtimeKVTemplate struct {
 }
 
 type runtimeTemplates struct {
-	headers []runtimeHeaderTemplate
-	kv      []runtimeKVTemplate
+	headers   []runtimeHeaderTemplate
+	kv        []runtimeKVTemplate
+	knownKeys map[string]struct{}
 }
 
 var runtimeTemplateID = regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -113,7 +114,7 @@ func NewParserPackAdapterFromSynchronizedDirectories(ctx context.Context, parser
 }
 
 func parserTemplateClass(class string) bool {
-	return class == "templates" || class == "kv-config"
+	return class == "templates" || class == "kv-config" || class == "known-keys"
 }
 
 // TemplateAssetsFromBundle verifies the exact same digest client control checks
@@ -161,7 +162,7 @@ func TemplateAssetsFromBundle(data []byte) ([]RuntimeTemplateAsset, error) {
 // isolated from execution when they cannot supply a complete parsing plan.
 func (adapter *ParserPackAdapter) WithRuntimeTemplates(ctx context.Context, assets []RuntimeTemplateAsset) (*ParserPackAdapter, []string, error) {
 	result := *adapter
-	compiled := &runtimeTemplates{}
+	compiled := &runtimeTemplates{knownKeys: make(map[string]struct{})}
 	diagnostics := []string{}
 	diagnose := func(class, id string) {
 		if len(diagnostics) < 32 {
@@ -202,6 +203,17 @@ func (adapter *ParserPackAdapter) WithRuntimeTemplates(ctx context.Context, asse
 				continue
 			}
 			compiled.headers = append(compiled.headers, header)
+		case "known-keys":
+			var catalog struct {
+				Keys []string `json:"keys"`
+			}
+			if json.Unmarshal(envelope.Config, &catalog) != nil {
+				diagnose(asset.AssetClass, asset.AssetID)
+				continue
+			}
+			for _, key := range catalog.Keys {
+				compiled.knownKeys[key] = struct{}{}
+			}
 		case "kv-config":
 			if len(compiled.kv) >= maxRuntimeKVTemplates {
 				diagnose(asset.AssetClass, asset.AssetID)
@@ -291,23 +303,30 @@ func compileRuntimeKV(config *mixedkv.Config) (*fieldmapping.Compiled, error) {
 func extractRuntimeKV(ctx context.Context, profiles []runtimeKVTemplate, tail string) (fieldmapping.Result, string, error) {
 	var result fieldmapping.Result
 	used := ""
+	disagreement := false
 	for _, profile := range profiles {
 		if err := ctx.Err(); err != nil {
 			return fieldmapping.Result{}, "", err
 		}
-		if profile.fallback && used != "" {
+		if profile.fallback && used != "" && !disagreement {
 			break
 		}
 		current, err := profile.plan.Execute(ctx, tail)
 		if err != nil || len(current.Values) == 0 {
 			continue
 		}
+		if profile.fallback {
+			return current, profile.id, nil
+		}
 		if used != "" && (!reflect.DeepEqual(result.Values, current.Values) || !reflect.DeepEqual(result.NestedEvidence, current.NestedEvidence)) {
-			return fieldmapping.Result{}, "", fmt.Errorf("approved KV templates disagree on the extracted tail")
+			disagreement = true
 		}
 		if used == "" {
 			result, used = current, profile.id
 		}
+	}
+	if disagreement {
+		return fieldmapping.Result{}, "", fmt.Errorf("approved KV templates disagree and no complete automatic parse matched")
 	}
 	if used == "" {
 		return fieldmapping.Result{}, "", fmt.Errorf("no complete KV template matched the tail")
@@ -344,7 +363,7 @@ func (templates *runtimeTemplates) execute(ctx context.Context, raw, node string
 		var result *parserpolicy.ExecutionResult
 		failure := "template_header_timeout"
 		if time.Since(started) <= header.timeout {
-			result, failure = header.execute(ctx, templates.kv, raw, match, node)
+			result, failure = header.execute(ctx, templates.kv, templates.knownKeys, raw, match, node)
 		}
 		attempt := telemetry.ParserAttempt{
 			ParserID: header.id, Outcome: telemetry.AttemptOutcomeFailed,
@@ -369,7 +388,7 @@ func (templates *runtimeTemplates) execute(ctx context.Context, raw, node string
 	return output
 }
 
-func (header runtimeHeaderTemplate) execute(ctx context.Context, profiles []runtimeKVTemplate, raw string, match []int, node string) (*parserpolicy.ExecutionResult, string) {
+func (header runtimeHeaderTemplate) execute(ctx context.Context, profiles []runtimeKVTemplate, knownKeys map[string]struct{}, raw string, match []int, node string) (*parserpolicy.ExecutionResult, string) {
 	values := make(map[string]any, len(header.fields)+1)
 	evidence := make(map[string]fieldmapping.Evidence, len(header.fields))
 	telemetryEvidence := make([]telemetry.FieldEvidence, 0, len(header.fields)+1)
@@ -408,16 +427,41 @@ func (header runtimeHeaderTemplate) execute(ctx context.Context, profiles []runt
 		for key := range kv.NestedEvidence["kv_pair"] {
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		sort.Slice(keys, func(i, j int) bool {
+			left, right := kv.NestedEvidence["kv_pair"][keys[i]], kv.NestedEvidence["kv_pair"][keys[j]]
+			if left.Start == right.Start {
+				return keys[i] < keys[j]
+			}
+			return left.Start < right.Start
+		})
+		tailValues, _ := kv.Values["kv_pair"].(map[string]any)
+		namedValues := make(map[string]any, len(tailValues))
+		for key, value := range tailValues {
+			namedValues[key] = value
+		}
+		unknown := 0
 		for _, key := range keys {
 			evidence := kv.NestedEvidence["kv_pair"][key]
+			outputKey := key
+			if _, known := knownKeys[key]; len(knownKeys) > 0 && !known {
+				for {
+					unknown++
+					outputKey = fmt.Sprintf("kv_pair_field_%d", unknown)
+					if _, reserved := tailValues[outputKey]; !reserved {
+						break
+					}
+				}
+				delete(namedValues, key)
+				namedValues[outputKey] = tailValues[key]
+			}
 			spans := make([]telemetry.SourceSpan, len(evidence.Spans))
 			for i, span := range evidence.Spans {
 				spans[i] = telemetry.SourceSpan{Start: offset + span.Start, End: offset + span.End}
 			}
-			telemetryEvidence = append(telemetryEvidence, telemetry.FieldEvidence{Field: "kv_pair." + key, Source: true,
+			telemetryEvidence = append(telemetryEvidence, telemetry.FieldEvidence{Field: "kv_pair." + outputKey, Source: true,
 				Start: offset + evidence.Start, End: offset + evidence.End, Spans: spans})
 		}
+		values["kv_pair"] = namedValues
 	}
 	if ctx.Err() != nil || len(values) == 0 {
 		return nil, "parser_execution_failed"

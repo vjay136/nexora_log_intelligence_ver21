@@ -8,6 +8,7 @@ import (
 	"nexora.local/nli-v20/internal/engine"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -319,6 +320,28 @@ func TestAssuranceRunPrefersPublishedTemplatesAndRejectsAChangedTail(t *testing.
 	tail := actual["kv_pair"].(map[string]any)
 	if actual["extra_tag1"] != "efgh" || actual["extra_tag2"] != "ijkl" || actual["extra_tag3"] != "mnop" || tail["reason"] != "not needed" || tail["status"] != "failed" {
 		t.Fatalf("template and dynamic tail were not combined correctly: %v", actual)
+	}
+	withNewKeys := strings.TrimSpace(raw) + ";InternalId=401;custom_key=preserved"
+	baseline := request(withNewKeys)["actual"].(map[string]any)["kv_pair"]
+	const keyID = "reported-known-keys"
+	keyPayload := []byte(`{"config":{"keys":["status","reason","InternalId"]}}`)
+	_, err = f.server.metadata.Put(ctx, metastore.Document{Collection: "known-keys", ID: keyID, State: "active", Payload: keyPayload, CreatedBy: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result = request(withNewKeys)
+	actual = result["actual"].(map[string]any)
+	tail = actual["kv_pair"].(map[string]any)
+	if result["passed"] != true || tail["InternalId"] != "401" || tail["kv_pair_field_1"] != "preserved" {
+		t.Fatalf("published catalog was not applied by Assurance: %v", actual)
+	}
+	if err := f.server.metadata.Delete(ctx, "known-keys", keyID, false, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	result = request(withNewKeys)
+	tail = result["actual"].(map[string]any)["kv_pair"].(map[string]any)
+	if !reflect.DeepEqual(tail, baseline) {
+		t.Fatalf("removed catalog remained active: %v", tail)
 	}
 	result = request(strings.Replace(raw, "reason=not needed", "reason", 1))
 	if result["passed"] != false || result["route"] != "quarantine" {
