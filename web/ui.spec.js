@@ -77,16 +77,20 @@ test('Log Pattern Templates opens a combined header and advanced KV plan', async
 
 test('saved header preview defaults to the built-in Global AutoSense profile', async ({page}) => {
   await mockController(page);
-  await page.route('**/api/v1/config/templates', route=>route.fulfill({json:{items:[{id:'mail-header',revision:4,state:'active',payload:{name:'Mail header'}}]}}));
+  await page.route('**/api/v1/config/templates', route=>route.fulfill({json:{items:[{
+    id:'mail-header',revision:5,state:'draft',payload:{name:'Mail header',previous_active_revision:4},
+  }]}}));
   let request;
   await page.route('**/api/v1/field-mapping/template-compose', route=>{
     request=route.request().postDataJSON();
-    return route.fulfill({json:{passed:true,total:1,failed:0,examples:[{actual:{event:'SieveRuleMsg',kv_pair:{status:'failed',reason:'not needed'}}}]}});
+    return route.fulfill({json:{passed:true,total:1,failed:0,examples:[{actual:{event:'SieveRuleMsg',status:'failed',reason:'not needed'}}]}});
   });
   await login(page);
   await page.getByTestId('nav-kv-templates').click();
   await expect(page.getByRole('heading',{name:'Global AutoSense',exact:true})).toBeVisible();
-  await page.getByLabel('Header template',{exact:true}).selectOption({label:'Mail header · revision 4'});
+  const revisions=page.getByLabel('Header template',{exact:true});
+  await expect(revisions.locator('option')).toHaveText(['Select a saved revision','Mail header · revision 5 · draft','Mail header · revision 4 · active']);
+  await revisions.selectOption(JSON.stringify({id:'mail-header',revision:4}));
   const raw='20250811 080053105+0100 aaa-gmailrgi009 smtp 3692 0 140026854221568 123456;Note;efgh;ijkl;mnop;SieveRuleMsg status=failed;reason=not needed';
   await page.getByLabel('Sample log',{exact:true}).fill(raw);
   await page.getByRole('button',{name:'Verify saved templates'}).click();
@@ -679,6 +683,10 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
     if (path === '/api/v1/migration/reports') return fulfill({ reports: [] });
     if (path === '/api/v1/config/output-destinations' && request.method() === 'POST') { outputSaves.push(request.postDataJSON()); return fulfill({ id: 'customer-output', state: 'draft', revision: 1 }); }
     if (path === '/api/v1/config/output-destinations') return fulfill({ items: outputProfiles, count: outputProfiles.length });
+    if (/^\/api\/v1\/config\/output-destinations\/[^/]+\/rollout$/.test(path) && request.method() === 'POST') {
+      rolloutSaves.push(request.postDataJSON());
+      return fulfill({ id: 'proposal-test', state: 'pending_approval' }, 201);
+    }
     if (path.startsWith('/api/v1/config/output-destinations/')) { const item=outputProfiles.find(profile=>path.endsWith(`/${profile.id}`));return item?fulfill(item):fulfill({error:'not found'},404); }
     if (path.match(/^\/api\/v1\/config\/input-paths\/[^/]+\/(submit|approve|publish)$/) && request.method() === 'POST') { const [,id,action]=path.match(/^\/api\/v1\/config\/input-paths\/([^/]+)\/(submit|approve|publish)$/),doc=inputProfiles.find(item=>item.id===id);if(!doc)return fulfill({error:'not found'},404);doc.state=({submit:'in_review',approve:'approved',publish:'active'})[action];return fulfill({id,state:doc.state,revision:doc.revision}); }
     if (path === '/api/v1/config/input-paths' && request.method() === 'POST') { inputSaves.push(request.postDataJSON()); return fulfill({ id: 'mail-paths', state: 'draft', revision: 1 }); }
@@ -2310,7 +2318,7 @@ test('Endpoint Configuration tests and saves a safe ClickHouse field-mapped prof
   expect(outputs.some(item => item.type === 'file' && item.routes.includes('normal'))).toBe(false);
 });
 
-test('published endpoint profile creates an outputs-only approval rollout', async ({ page }) => {
+test('published endpoint profile requests a revision-bound single-client canary rollback-safe rollout', async ({ page }) => {
   const mock = await mockController(page);
   const profile = { id: 'remote-delivery', revision: 4, state: 'active', updated_at: '2026-10-14T00:00:00Z', payload: { name: 'Remote delivery', config: { outputs: [
     { type: 'loki', url: 'https://loki.example/loki/api/v1/push', routes: ['normal', 'warning'], fallback_path: '/var/lib/nli/spool/loki.jsonl' },
@@ -2321,11 +2329,14 @@ test('published endpoint profile creates an outputs-only approval rollout', asyn
   await page.getByTestId('nav-outputs').click();
   await page.getByRole('tab', { name: 'Live & rollback' }).click();
   const form = page.locator('#output-rollout-form');
-  await form.locator('[name=profile_id]').selectOption('remote-delivery');
-  await form.locator('[name=targets]').fill('node-a, node-b');
+  await expect(page.getByRole('heading', {name:'Remote delivery status'})).toBeVisible();
+  await form.locator('[name=profile_id]').selectOption({label:'Remote delivery · r4'});
+  await expect(form.locator('[name=scope]')).toHaveValue('canary');
+  await form.locator('[name=canary_node]').selectOption('node-1');
   await form.getByRole('button', { name: 'Request independent approval' }).click();
   await expect.poll(() => mock.rolloutSaves.length).toBe(1);
-  expect(mock.rolloutSaves[0]).toMatchObject({ type: 'config_push', target_nodes: ['node-a', 'node-b'], payload: { config_patch: { outputs: profile.payload.config.outputs } } });
+  expect(mock.observed).toContain('POST /api/v1/config/output-destinations/remote-delivery/rollout');
+  expect(mock.rolloutSaves[0]).toEqual({ scope: 'canary', target_nodes: ['node-1'], profile_revision: 4 });
 });
 
 test('Parser Fleet Sync shows live revision, drift, rollout and approval-gated verify/retry actions', async ({ page }) => {
