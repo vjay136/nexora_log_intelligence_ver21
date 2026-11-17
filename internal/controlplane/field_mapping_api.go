@@ -379,6 +379,12 @@ func assuranceMappingRuntimePack(id, version, author string, definition map[stri
 			break
 		}
 	}
+	for _, field := range plan.Fields {
+		if field.KVHeaderPattern != "" && field.OutputPolicy == "flatten" {
+			minimumClient = flatTemplateMinimumRelease
+			break
+		}
+	}
 	sort.Strings(names)
 	limits := parserpolicy.DefaultResourceLimits()
 	limits.MaxAttempts = 1

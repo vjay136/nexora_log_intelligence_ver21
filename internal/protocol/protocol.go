@@ -28,26 +28,36 @@ type RegisterResponse struct {
 	NodeToken string `json:"node_token"`
 }
 
+// DeliveryMetrics reports process-local records confirmed by the destination plus
+// failed batch attempts. A retried record can contribute to both counters.
+type DeliveryMetrics struct {
+	ActiveWriters  uint64 `json:"active_writers"`
+	Delivered      uint64 `json:"delivered"`
+	FailedAttempts uint64 `json:"failed_attempts"`
+}
+
 type Metrics struct {
-	Received                    uint64  `json:"logs_received"`
-	Parsed                      uint64  `json:"logs_parsed"`
-	Quarantined                 uint64  `json:"logs_quarantined"`
-	Errors                      uint64  `json:"errors"`
-	ParseRate                   float64 `json:"parse_rate_pct,omitempty"`
-	ParseLatencyMs              float64 `json:"parse_latency_ms,omitempty"`
-	CPUPercent                  float64 `json:"cpu_percent,omitempty"`
-	MemoryBytes                 uint64  `json:"memory_bytes,omitempty"`
-	MemoryPercent               float64 `json:"memory_percent,omitempty"`
-	Load1                       float64 `json:"load_1m,omitempty"`
-	Load5                       float64 `json:"load_5m,omitempty"`
-	Load15                      float64 `json:"load_15m,omitempty"`
-	HostMetricsAvailable        bool    `json:"host_metrics_available"`
-	UPESMetricsAvailable        bool    `json:"upes_metrics_available"`
-	UPESUniqueFailureSignatures uint64  `json:"upes_unique_failure_signatures,omitempty"`
-	UPESObservedFailures        uint64  `json:"upes_observed_failures,omitempty"`
-	UPESDiscoveryQueued         uint64  `json:"upes_discovery_queued,omitempty"`
-	UPESDiscoveryDropped        uint64  `json:"upes_discovery_dropped,omitempty"`
-	UPESDiscoveryPending        uint64  `json:"upes_discovery_pending,omitempty"`
+	LokiDelivery                *DeliveryMetrics `json:"loki_delivery,omitempty"`
+	ClickHouseDelivery          *DeliveryMetrics `json:"clickhouse_delivery,omitempty"`
+	Received                    uint64           `json:"logs_received"`
+	Parsed                      uint64           `json:"logs_parsed"`
+	Quarantined                 uint64           `json:"logs_quarantined"`
+	Errors                      uint64           `json:"errors"`
+	ParseRate                   float64          `json:"parse_rate_pct,omitempty"`
+	ParseLatencyMs              float64          `json:"parse_latency_ms,omitempty"`
+	CPUPercent                  float64          `json:"cpu_percent,omitempty"`
+	MemoryBytes                 uint64           `json:"memory_bytes,omitempty"`
+	MemoryPercent               float64          `json:"memory_percent,omitempty"`
+	Load1                       float64          `json:"load_1m,omitempty"`
+	Load5                       float64          `json:"load_5m,omitempty"`
+	Load15                      float64          `json:"load_15m,omitempty"`
+	HostMetricsAvailable        bool             `json:"host_metrics_available"`
+	UPESMetricsAvailable        bool             `json:"upes_metrics_available"`
+	UPESUniqueFailureSignatures uint64           `json:"upes_unique_failure_signatures,omitempty"`
+	UPESObservedFailures        uint64           `json:"upes_observed_failures,omitempty"`
+	UPESDiscoveryQueued         uint64           `json:"upes_discovery_queued,omitempty"`
+	UPESDiscoveryDropped        uint64           `json:"upes_discovery_dropped,omitempty"`
+	UPESDiscoveryPending        uint64           `json:"upes_discovery_pending,omitempty"`
 }
 
 // InputRuntimeInventory reports configured inputs and file metadata, never log contents.
@@ -63,6 +73,11 @@ type InputRuntimeFile struct {
 	Service  string `json:"service"`
 	Disabled bool   `json:"disabled"`
 	State    string `json:"state"`
+}
+
+type HeartbeatResponse struct {
+	Status                   string `json:"status"`
+	DeliveryMetricsSupported bool   `json:"delivery_metrics_supported,omitempty"`
 }
 
 type HeartbeatRequest struct {

@@ -60,8 +60,7 @@ func TestTemplateDraftPreservesTagsOnBothSidesOfLevel(t *testing.T) {
 	if err := compiled.ValidateComplete(record, parsed); err != nil {
 		t.Fatal(err)
 	}
-	tail, ok := parsed.Values["kv_pair"].(map[string]any)
-	if !ok || tail["reason"] != "not needed" || tail["status"] != "failed" || parsed.Values["extra_tag3"] != "12345" {
+	if parsed.Values["kv_pair"] != nil || parsed.Values["reason"] != "not needed" || parsed.Values["status"] != "failed" || parsed.Values["extra_tag3"] != "12345" {
 		t.Fatalf("wrong combined preview: %v", parsed.Values)
 	}
 	config["fields"].(map[string]any)["event_type"], config["fields"].(map[string]any)["extra_tag2"] = "extra_tag2", "event_type"

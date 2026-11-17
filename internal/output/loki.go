@@ -155,6 +155,9 @@ func (w *LokiWriter) flush() error {
 		}
 		return req, nil
 	})
+	if w.cfg.RecordBatch != nil {
+		w.cfg.RecordBatch(len(entries), deliveryErr == nil)
+	}
 	if deliveryErr == nil {
 		return nil
 	}

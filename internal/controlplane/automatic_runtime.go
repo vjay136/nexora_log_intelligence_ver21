@@ -66,7 +66,7 @@ func (s *Server) automaticParserRuntime(ctx context.Context) (*automaticRuntimeS
 		read := make(chan documentsResult, 1)
 		reads[i] = read
 		go func(collection string, read chan<- documentsResult) {
-			page, err := s.listParserSyncDocuments(ctx, collection, "", parserSyncTargetLimit)
+			page, err := s.listEffectiveParserAssets(ctx, collection)
 			read <- documentsResult{page, err}
 		}(collection, read)
 	}

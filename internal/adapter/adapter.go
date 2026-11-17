@@ -217,7 +217,7 @@ func (adapter *ParserPackAdapter) TryParseV5ProductionContext(parent context.Con
 		if mappingProfile(candidate.profile) && (candidate.profile.Pack.ID != parserpolicy.MailTailPackID || extendedHeader) {
 			executionInput = input
 		}
-		result, err := candidate.profile.Executor.Execute(&parserpolicy.ExecutionRequest{
+		result, err := candidate.profile.Executor.ExecuteProduction(&parserpolicy.ExecutionRequest{
 			Input: executionInput, NodeID: source.Hostname, Service: executionService, SourceType: "file", Context: ctx,
 			SourceMetadata: map[string]string{
 				"hostname": source.Hostname,

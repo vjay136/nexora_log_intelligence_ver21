@@ -176,6 +176,9 @@ func (w *ClickHouseWriter) flush() error {
 	if err := w.postQuery(query, &body); err != nil {
 		return w.handleFailure(batch, err)
 	}
+	if w.cfg.RecordBatch != nil {
+		w.cfg.RecordBatch(len(batch), true)
+	}
 	return nil
 }
 
@@ -378,6 +381,9 @@ func reservedClickHouseColumn(name string) bool {
 }
 
 func (w *ClickHouseWriter) handleFailure(batch []batchItem, deliveryErr error) error {
+	if w.cfg.RecordBatch != nil {
+		w.cfg.RecordBatch(len(batch), false)
+	}
 	if w.cfg.FallbackPath != "" {
 		// Extract data for spooling (spoolFailedBatch expects [][]byte)
 		bytesBatch := make([][]byte, len(batch))

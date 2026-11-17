@@ -45,8 +45,8 @@ func TestPublishedHeaderTemplateUsesCompleteGlobalKV(t *testing.T) {
 	if result.EventPayload.Fields["extra_tag1"] != "efgh" || result.EventPayload.Fields["extra_tag2"] != "ijkl" || result.EventPayload.Fields["extra_tag3"] != "mnop" {
 		t.Fatalf("header fields wrong: %+v", result.EventPayload.Fields)
 	}
-	if !reflect.DeepEqual(result.EventPayload.Fields["kv_pair"], map[string]any{"status": "failed", "reason": "not needed"}) {
-		t.Fatalf("KV tail wrong: %#v", result.EventPayload.Fields["kv_pair"])
+	if result.EventPayload.Fields["kv_pair"] != nil || result.EventPayload.Fields["status"] != "failed" || result.EventPayload.Fields["reason"] != "not needed" {
+		t.Fatalf("KV tail wrong: %#v", result.EventPayload.Fields)
 	}
 	for _, lineBreak := range []string{"\n", "\r\n"} {
 		wrapped := strings.Replace(record, "221568 123456", "221568"+lineBreak+"123456", 1)
@@ -58,12 +58,12 @@ func TestPublishedHeaderTemplateUsesCompleteGlobalKV(t *testing.T) {
 	}
 	found := false
 	for _, proof := range result.ParseTelemetry.FieldEvidence {
-		if proof.Field == "kv_pair.reason" && record[proof.Start:proof.End] == "not needed" {
+		if proof.Field == "reason" && record[proof.Start:proof.End] == "not needed" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("missing exact nested evidence: %#v", result.ParseTelemetry.FieldEvidence)
+		t.Fatalf("missing exact KV evidence: %#v", result.ParseTelemetry.FieldEvidence)
 	}
 	for name, input := range map[string]string{
 		"adjacent bracketed mixed assignments": "[status:failed][reason;not needed][server=cloud]\r\n",
@@ -72,7 +72,7 @@ func TestPublishedHeaderTemplateUsesCompleteGlobalKV(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			parsed := runtime.TryParseV5Production(templateHeaderPrefix+" "+input, engine.Source{Service: "auto"})
-			if !parsed.Success || parsed.ParseTelemetry.ParserID != "template/mail-header-v2" || parsed.EventPayload.Fields["kv_pair"].(map[string]any)["reason"] != "not needed" {
+			if !parsed.Success || parsed.ParseTelemetry.ParserID != "template/mail-header-v2" || parsed.EventPayload.Fields["reason"] != "not needed" {
 				t.Fatalf("unexpected parse: %+v", parsed)
 			}
 		})
@@ -82,20 +82,24 @@ func TestPublishedHeaderTemplateUsesCompleteGlobalKV(t *testing.T) {
 		pairs[i] = fmt.Sprintf("key%d=value%d", i, i)
 	}
 	large := runtime.TryParseV5Production(templateHeaderPrefix+" "+strings.Join(pairs, ";"), engine.Source{Service: "auto"})
-	if !large.Success || len(large.EventPayload.Fields["kv_pair"].(map[string]any)) != 500 {
+	if !large.Success || len(large.EventPayload.Fields) != 500+len(captures) {
 		t.Fatalf("a 500-pair global tail did not retain all fields: %+v", large)
 	}
 	headerOnly := runtime.TryParseV5Production(templateHeaderPrefix, engine.Source{Service: "auto"})
-	if !headerOnly.Success || headerOnly.EventPayload.Fields["kv_pair"] != nil {
+	if !headerOnly.Success || len(headerOnly.EventPayload.Fields) != len(captures) {
 		t.Fatalf("header only: %+v", headerOnly)
 	}
 	malformed := runtime.TryParseV5Production(templateHeaderPrefix+" status=failed;reason", engine.Source{Service: "auto"})
 	if malformed.Success || !malformed.Quarantined {
 		t.Fatalf("partial suffix escaped quarantine: %+v fields=%+v", malformed.ParseTelemetry, malformed.EventPayload)
 	}
+	collision := runtime.TryParseV5Production(templateHeaderPrefix+" event=other;status=queued", engine.Source{Service: "auto"})
+	if collision.Success || !collision.Quarantined || !strings.Contains(strings.Join(collision.ParseTelemetry.ErrorCodes, ","), "template_output_field_collision") {
+		t.Fatalf("a KV field silently overwrote its header counterpart: %+v", collision)
+	}
 }
 
-func TestExportedTemplatesUsePublishedKnownKeys(t *testing.T) {
+func TestExportedTemplatesPreserveRawKeysWithPublishedCatalog(t *testing.T) {
 	baseline, err := NewParserPackAdapter()
 	if err != nil {
 		t.Fatal(err)
@@ -109,13 +113,21 @@ func TestExportedTemplatesUsePublishedKnownKeys(t *testing.T) {
 	if err != nil || len(diagnostics) != 0 {
 		t.Fatalf("compile exports: %v %v", diagnostics, err)
 	}
-	parsed := runtime.TryParseV5Production(templateHeaderPrefix+" status=failed;reason=not needed;custom=42", engine.Source{Service: "auto"})
+	parsed := runtime.TryParseV5Production(templateHeaderPrefix+" status=failed;reason=not needed;vjay=vjay;service.name=edge;tenant-name=mx", engine.Source{Service: "auto"})
 	if !parsed.Success || parsed.EventPayload == nil {
 		t.Fatalf("combined parse: %+v", parsed.ParseTelemetry)
 	}
-	want := map[string]any{"status": "failed", "reason": "not needed", "kv_pair_field_1": "42"}
-	if !reflect.DeepEqual(parsed.EventPayload.Fields["kv_pair"], want) ||
-		parsed.EventPayload.Fields["extra_tag3"] != "mnop" {
+	want := map[string]any{"status": "failed", "reason": "not needed", "vjay": "vjay", "service.name": "edge", "tenant-name": "mx"}
+	for key, value := range want {
+		if actual := parsed.EventPayload.Fields[key]; actual != value {
+			t.Errorf("%s = %v, want %v", key, actual, value)
+		}
+	}
+	if len(parsed.EventPayload.Fields) != 13+len(want) || parsed.EventPayload.Fields["extra_tag3"] != "mnop" {
 		t.Fatalf("unexpected output: %#v", parsed.EventPayload.Fields)
+	}
+	encoded, err := json.Marshal(parsed.EventPayload.WithSourceOrder(parsed.ParseTelemetry.FieldEvidence))
+	if err != nil || !strings.HasSuffix(string(encoded), `"event":"SieveRuleMsg","status":"failed","reason":"not needed","vjay":"vjay","service.name":"edge","tenant-name":"mx"}`) {
+		t.Fatalf("flat output was not serialized in source order: %s, %v", encoded, err)
 	}
 }

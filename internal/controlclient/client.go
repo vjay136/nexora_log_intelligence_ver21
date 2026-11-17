@@ -264,19 +264,20 @@ func (SystemExecutor) UpgradePackage(ctx context.Context, path string) error {
 }
 
 type Client struct {
-	cfg               Config
-	http              *http.Client
-	executor          Executor
-	pollInterval      time.Duration
-	mu                sync.Mutex
-	nodeID            string
-	token             string
-	journal           map[string]protocol.CommandResult
-	processGeneration string
-	syncSequence      atomic.Uint64
-	streamMu          sync.Mutex
-	lastStreamDigest  [32]byte
-	lastStreamSent    time.Time
+	cfg                      Config
+	http                     *http.Client
+	executor                 Executor
+	pollInterval             time.Duration
+	mu                       sync.Mutex
+	nodeID                   string
+	token                    string
+	journal                  map[string]protocol.CommandResult
+	processGeneration        string
+	syncSequence             atomic.Uint64
+	deliveryMetricsSupported atomic.Bool
+	streamMu                 sync.Mutex
+	lastStreamDigest         [32]byte
+	lastStreamSent           time.Time
 }
 
 func New(cfg Config, executor Executor) (*Client, error) {
@@ -584,7 +585,24 @@ func (c *Client) heartbeat(ctx context.Context) error {
 		NodeID: c.nodeID, Version: engine.Version, ConfigHash: configHash, InputInventory: inputs, AgentStatus: agentStatus,
 		RuntimeInventory: c.runtimeParserInventory(), Metrics: metrics, Health: "online", Parsers: parsers, ActiveAssetBundleHash: bundleHash, ActiveAssetRevisions: assetRevisions,
 	}
-	return c.requestJSON(ctx, http.MethodPost, "/api/v1/node/heartbeat", request, nil, nil)
+	stripDeliveryMetrics := func() {
+		request.Metrics.LokiDelivery = nil
+		request.Metrics.ClickHouseDelivery = nil
+	}
+	if !c.deliveryMetricsSupported.Load() {
+		stripDeliveryMetrics()
+	}
+	var response protocol.HeartbeatResponse
+	status, err := c.requestJSONStatus(ctx, http.MethodPost, "/api/v1/node/heartbeat", request, &response, nil)
+	if status == http.StatusBadRequest && (request.Metrics.LokiDelivery != nil || request.Metrics.ClickHouseDelivery != nil) {
+		// A controller rollback can remove support while the client is running.
+		stripDeliveryMetrics()
+		_, err = c.requestJSONStatus(ctx, http.MethodPost, "/api/v1/node/heartbeat", request, &response, nil)
+	}
+	if err == nil {
+		c.deliveryMetricsSupported.Store(response.DeliveryMetricsSupported)
+	}
+	return err
 }
 
 func inputRuntimeInventory(path string) (string, *protocol.InputRuntimeInventory) {
@@ -1501,6 +1519,29 @@ func readMetrics(endpoint string) protocol.Metrics {
 	return metrics
 }
 
+func readDeliveryMetrics(data []byte, destination string) *protocol.DeliveryMetrics {
+	prefix := "nli_" + destination
+	metrics := &protocol.DeliveryMetrics{}
+	fields := map[string]*uint64{
+		prefix + "_active_writers":                 &metrics.ActiveWriters,
+		prefix + "_delivered_total":                &metrics.Delivered,
+		prefix + "_failed_delivery_attempts_total": &metrics.FailedAttempts,
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		name, _, _ := strings.Cut(line, " ")
+		if target := fields[name]; target != nil {
+			if value, ok := parseMetricUint(line, name); ok {
+				*target = value
+				delete(fields, name)
+			}
+		}
+	}
+	if len(fields) != 0 {
+		return nil
+	}
+	return metrics
+}
+
 func readMetricsStatus(endpoint string) (protocol.Metrics, bool) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(endpoint)
@@ -1565,6 +1606,8 @@ func readMetricsStatus(endpoint string) (protocol.Metrics, bool) {
 		}
 	}
 	metrics.UPESMetricsAvailable = upesMetricsSeen == 31
+	metrics.LokiDelivery = readDeliveryMetrics(data, "loki")
+	metrics.ClickHouseDelivery = readDeliveryMetrics(data, "clickhouse")
 	if metrics.Received > 0 {
 		metrics.ParseRate = float64(metrics.Parsed) / float64(metrics.Received) * 100
 	}

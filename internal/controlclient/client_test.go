@@ -20,9 +20,11 @@ import (
 	"time"
 
 	runtimeadapter "nexora.local/nli-v20/internal/adapter"
+	"nexora.local/nli-v20/internal/agent"
 	"nexora.local/nli-v20/internal/canonicaljson"
 	"nexora.local/nli-v20/internal/engine"
 	"nexora.local/nli-v20/internal/familyprofile"
+	"nexora.local/nli-v20/internal/output"
 	"nexora.local/nli-v20/internal/protocol"
 	"nexora.local/nli-v20/internal/rollout"
 	"nexora.local/nli-v20/parser-policy"
@@ -295,6 +297,54 @@ func TestReadMetricsKeepsUnavailableHostMetricsDistinctFromZero(t *testing.T) {
 	}
 }
 
+func TestDeliveryMetricsHeartbeatNegotiatesAndSurvivesControllerRollback(t *testing.T) {
+	var enabled atomic.Bool
+	enabled.Store(true)
+	var received atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metrics":
+			_, _ = io.WriteString(w, "nli_loki_active_writers 1\nnli_loki_delivered_total 42\nnli_loki_failed_delivery_attempts_total 3\nnli_clickhouse_active_writers 0\n")
+		case "/api/v1/node/heartbeat":
+			var body protocol.HeartbeatRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("heartbeat decode: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if body.Metrics.ClickHouseDelivery != nil {
+				t.Error("partial destination metrics must remain unavailable")
+			}
+			if !enabled.Load() && body.Metrics.LokiDelivery != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if got := body.Metrics.LokiDelivery; got != nil {
+				if *got != (protocol.DeliveryMetrics{ActiveWriters: 1, Delivered: 42, FailedAttempts: 3}) {
+					t.Errorf("unexpected Loki measurement: %+v", got)
+				}
+				received.Add(1)
+			}
+			_ = json.NewEncoder(w).Encode(protocol.HeartbeatResponse{Status: "ok", DeliveryMetricsSupported: enabled.Load()})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	c := &Client{cfg: Config{ControllerURL: server.URL, MetricsURL: server.URL + "/metrics"}, http: server.Client(), nodeID: "endpoint-test"}
+	for i := 0; i < 4; i++ {
+		if i == 2 {
+			enabled.Store(false)
+		}
+		if err := c.heartbeat(context.Background()); err != nil {
+			t.Fatalf("heartbeat %d: %v", i, err)
+		}
+	}
+	if received.Load() != 1 || c.deliveryMetricsSupported.Load() {
+		t.Fatalf("unexpected negotiated state: received=%d supported=%t", received.Load(), c.deliveryMetricsSupported.Load())
+	}
+}
+
 func TestReadMetricsCarriesUPESCountersAndAvailability(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "nli_upes_unique_failure_signatures_total 12\nnli_upes_observed_failures_total 34\nnli_upes_discovery_queued_total 5\nnli_upes_discovery_dropped_total 2\nnli_upes_discovery_pending 3\n")
@@ -413,8 +463,13 @@ func TestParserAssetBundleSynchronizesEveryRuntimeAssetClass(t *testing.T) {
 	bundle := synchronizedAssetBundle{SchemaVersion: 1}
 	for index, class := range classes {
 		config := map[string]any{"enabled": true}
-		if class == "templates" {
+		switch class {
+		case "templates":
 			config = map[string]any{"engine": "re2", "pattern": `^(?P<host>node[0-9]+) (?P<event>retry) `, "fields": map[string]string{"host": "host", "event": "event"}}
+		case "kv-config":
+			config = map[string]any{"pair_separators": []string{";"}, "assignment_separators": []string{"="}}
+		case "known-keys":
+			config = map[string]any{"keys": []string{"status", "reason"}}
 		}
 		payload, marshalErr := json.Marshal(map[string]any{"name": class + " fixture", "config": config})
 		if marshalErr != nil {
@@ -507,14 +562,63 @@ func TestParserAssetBundleSynchronizesEveryRuntimeAssetClass(t *testing.T) {
 	if !runtimeResult.Success || runtimeResult.Quarantined || runtimeResult.ParseTelemetry == nil || runtimeResult.ParseTelemetry.ParserID != "assurance-runtime/assurance-runtime-rule" {
 		t.Fatalf("applied parser was not globally executable through the production adapter: %+v", runtimeResult)
 	}
-	fleetRecord := "node42 retry status=failed;reason=not needed"
+	fleetRecord := "node42 retry status=failed;reason=not needed;vjay=vjay"
 	parsed := runtimeParser.TryParseV5Production(fleetRecord, engine.Source{Hostname: "test-node", Service: "auto"})
 	if !parsed.Success || parsed.ParseTelemetry.ParserID != "template/fixture-3" {
 		t.Fatalf("applied template was not loaded through the production adapter: %+v", parsed)
 	}
-	if value, _ := parsed.EventPayload.Get("kv_pair"); value.(map[string]any)["reason"] != "not needed" {
-		t.Fatalf("applied template did not combine with the global KV fallback: %+v", value)
+	eventJSON, err := json.Marshal(parsed.EventPayload.WithSourceOrder(parsed.ParseTelemetry.FieldEvidence))
+	if err != nil || string(eventJSON) != `{"host":"node42","event":"retry","status":"failed","reason":"not needed","vjay":"vjay"}` {
+		t.Fatalf("synchronized templates did not produce ordered flat JSON: %s, %v", eventJSON, err)
 	}
+	input := filepath.Join(root, "sample.log")
+	normal := filepath.Join(root, "normal.jsonl")
+	quarantine := filepath.Join(root, "quarantine.jsonl")
+	malformed := "node43 retry status=failed;reason"
+	if err := os.WriteFile(input, []byte(fleetRecord+"\n"+malformed+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pushed := make(chan string, 2)
+	loki := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Streams []struct {
+				Values [][2]string `json:"values"`
+			} `json:"streams"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Streams) != 1 || len(body.Streams[0].Values) != 1 {
+			http.Error(w, "invalid Loki batch", http.StatusBadRequest)
+			return
+		}
+		pushed <- body.Streams[0].Values[0][1]
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer loki.Close()
+	if err := agent.Run(context.Background(), agent.Config{
+		Version: 2, PollMS: 50, Inputs: []agent.InputConfig{{Path: input, Service: "auto"}},
+		StateDir: filepath.Join(root, "agent-state"), ParserPackDir: client.cfg.ParserDir, ParserAssetDir: client.cfg.AssetDir,
+		Outputs: []output.Config{
+			{Type: "file", Path: normal, Routes: []string{"normal"}},
+			{Type: "file", Path: quarantine, Routes: []string{"quarantine"}},
+			{Type: "loki", URL: loki.URL, Routes: []string{"normal"}, Required: true},
+		},
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(normal); err != nil || strings.TrimSpace(string(data)) != string(eventJSON) {
+		t.Fatalf("unexpected normalized JSONL: %s, %v", data, err)
+	}
+	if data, err := os.ReadFile(quarantine); err != nil || !strings.Contains(string(data), malformed) || strings.Contains(string(data), `"kv_pair":`) {
+		t.Fatalf("unexpected quarantined JSONL: %s, %v", data, err)
+	}
+	select {
+	case line := <-pushed:
+		if line != string(eventJSON) {
+			t.Fatalf("Loki received different JSON: %s", line)
+		}
+	default:
+		t.Fatal("Loki did not receive normalized output")
+	}
+
 	inventory := parserInventory(client.cfg.ParserDir)
 	foundInventory := false
 	for _, item := range inventory {

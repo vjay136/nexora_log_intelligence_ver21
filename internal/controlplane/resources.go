@@ -29,8 +29,10 @@ import (
 	"nexora.local/nli-v20/internal/auth"
 	"nexora.local/nli-v20/internal/engine"
 	"nexora.local/nli-v20/internal/familyprofile"
+	"nexora.local/nli-v20/internal/fieldmapping"
 	"nexora.local/nli-v20/internal/fleet"
 	"nexora.local/nli-v20/internal/middleware"
+	"nexora.local/nli-v20/internal/mixedkv"
 	"nexora.local/nli-v20/internal/protocol"
 	metastore "nexora.local/nli-v20/internal/store"
 	"nexora.local/nli-v20/telemetry"
@@ -505,17 +507,15 @@ func (s *Server) handleConfiguration(w http.ResponseWriter, r *http.Request, col
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if collection == "known-keys" {
-			active, err := s.listParserSyncDocuments(r.Context(), collection, "active", parserSyncTargetLimit)
-			if err != nil {
-				jsonError(w, "active known key catalog could not be checked", http.StatusServiceUnavailable)
+		if isParserAssetCollection(collection) {
+			current, err := s.metadata.Get(r.Context(), collection, safeID(input.ID), 0)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				jsonError(w, "existing asset revision could not be checked", http.StatusServiceUnavailable)
 				return
 			}
-			for _, document := range active {
-				if document.ID == safeID(input.ID) && !document.Deleted {
-					jsonError(w, "copy this active definition into a new draft ID before editing", http.StatusConflict)
-					return
-				}
+			if err == nil && !current.Deleted && (current.State != "draft" || priorActiveAssetRevision(current) != 0) {
+				jsonError(w, "open the saved asset with Edit in the catalog to create or update its draft revision", http.StatusConflict)
+				return
 			}
 		}
 		payload, _ := json.Marshal(map[string]any{"name": input.Name, "config": input.Config})
@@ -588,12 +588,22 @@ func (s *Server) handleConfigurationResource(w http.ResponseWriter, r *http.Requ
 		jsonError(w, "configuration asset not found", http.StatusNotFound)
 		return
 	}
-	if action == "rollout" {
-		if collection != "input-paths" {
-			jsonError(w, "rollout action is supported only for input path profiles", http.StatusNotFound)
+	if expected := r.URL.Query().Get("expected_revision"); expected != "" && (r.Method == http.MethodPost || r.Method == http.MethodDelete) {
+		revision, err := strconv.Atoi(expected)
+		if err != nil || revision != doc.Revision {
+			jsonError(w, "the asset revision changed; reload it before continuing", http.StatusConflict)
 			return
 		}
-		s.handleInputPathProfileRollout(w, r, id)
+	}
+	if action == "rollout" {
+		switch collection {
+		case "input-paths":
+			s.handleInputPathProfileRollout(w, r, id)
+		case "output-destinations":
+			s.handleOutputProfileRollout(w, r, principal, id)
+		default:
+			jsonError(w, "this configuration collection does not support profile rollout", http.StatusNotFound)
+		}
 		return
 	}
 	if action == "download" {
@@ -617,13 +627,10 @@ func (s *Server) handleConfigurationResource(w http.ResponseWriter, r *http.Requ
 	case http.MethodGet:
 		jsonOK(w, documentView(doc))
 	case http.MethodPut:
-		if doc.State != "draft" || doc.Deleted {
-			jsonError(w, "only draft assets may be edited", http.StatusConflict)
-			return
-		}
 		var input struct {
-			Name   string         `json:"name"`
-			Config map[string]any `json:"config"`
+			Name             string         `json:"name"`
+			Config           map[string]any `json:"config"`
+			ExpectedRevision int            `json:"expected_revision"`
 		}
 		if err := decodeJSON(r, &input, 2<<20); err != nil || strings.TrimSpace(input.Name) == "" {
 			jsonError(w, "name and config are required", http.StatusBadRequest)
@@ -633,8 +640,25 @@ func (s *Server) handleConfigurationResource(w http.ResponseWriter, r *http.Requ
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		payload, _ := json.Marshal(map[string]any{"name": strings.TrimSpace(input.Name), "config": input.Config})
-		saved, err := s.metadata.Put(r.Context(), metastore.Document{Collection: collection, ID: id, State: "draft", Payload: payload, CreatedBy: doc.CreatedBy})
+		if input.ExpectedRevision != 0 && input.ExpectedRevision != doc.Revision {
+			jsonError(w, "this asset changed while it was open; reload the latest revision before saving", http.StatusConflict)
+			return
+		}
+		previousActive := priorActiveAssetRevision(doc)
+		editable := doc.State == "draft" || doc.State == "rejected" || doc.State == "discarded"
+		if doc.State == "active" && isParserAssetCollection(collection) && input.ExpectedRevision == doc.Revision {
+			previousActive, editable = doc.Revision, true
+		}
+		if doc.Deleted || !editable {
+			jsonError(w, "only draft or rejected assets may be edited directly; use a revision draft for published assets", http.StatusConflict)
+			return
+		}
+		payloadData := map[string]any{"name": strings.TrimSpace(input.Name), "config": input.Config}
+		if previousActive > 0 {
+			payloadData["previous_active_revision"] = previousActive
+		}
+		payload, _ := json.Marshal(payloadData)
+		saved, err := s.metadata.Put(r.Context(), metastore.Document{Collection: collection, ID: id, State: "draft", Payload: payload, CreatedBy: principal.Username})
 		if err != nil {
 			jsonError(w, "configuration persistence failed", http.StatusInternalServerError)
 			return
@@ -646,7 +670,27 @@ func (s *Server) handleConfigurationResource(w http.ResponseWriter, r *http.Requ
 			jsonError(w, "only draft or rejected assets may be deleted", http.StatusConflict)
 			return
 		}
-		if err := s.metadata.Delete(r.Context(), collection, id, false, principal.Username); err != nil {
+		revision := priorActiveAssetRevision(doc)
+		var err error
+		if revision > 0 {
+			// Keep the existing published revision, including its bundle identity.
+			published, readErr := s.effectiveParserAsset(r.Context(), doc)
+			if readErr != nil {
+				jsonError(w, "published asset revision could not be loaded", http.StatusServiceUnavailable)
+				return
+			}
+			var payload map[string]any
+			if json.Unmarshal(published.Payload, &payload) != nil || payload == nil {
+				jsonError(w, "published asset revision is invalid", http.StatusServiceUnavailable)
+				return
+			}
+			payload["previous_active_revision"] = revision
+			retained, _ := json.Marshal(payload)
+			_, err = s.metadata.Put(r.Context(), metastore.Document{Collection: collection, ID: id, State: "discarded", Payload: retained, CreatedBy: principal.Username})
+		} else {
+			err = s.metadata.Delete(r.Context(), collection, id, false, principal.Username)
+		}
+		if err != nil {
 			jsonError(w, "configuration deletion failed", http.StatusInternalServerError)
 			return
 		}
@@ -666,6 +710,38 @@ func validateCatalogConfig(collection string, config map[string]any) error {
 		return err
 	}
 	switch collection {
+	case "templates":
+		// Older declarative assets can have no live capture map. A header that
+		// declares captures must compile before a revision can be saved.
+		if config["fields"] != nil {
+			encoded, _ := json.Marshal(config)
+			var header fieldmapping.HeaderTemplate
+			decoder := json.NewDecoder(bytes.NewReader(encoded))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&header); err != nil {
+				return fmt.Errorf("invalid header template: %w", err)
+			}
+			plan, err := fieldmapping.ComposeTemplates(header, nil)
+			if err != nil {
+				return err
+			}
+			if _, err := fieldmapping.Compile(plan); err != nil {
+				return err
+			}
+		}
+	case "kv-config":
+		if config["key_aliases"] != nil {
+			encoded, _ := json.Marshal(config)
+			var profile mixedkv.Config
+			decoder := json.NewDecoder(bytes.NewReader(encoded))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&profile); err != nil {
+				return fmt.Errorf("invalid KV template: %w", err)
+			}
+			if _, err := mixedkv.Compile(profile); err != nil {
+				return err
+			}
+		}
 	case "output-destinations":
 		outputs, ok := config["outputs"].([]any)
 		if !ok || len(outputs) == 0 || len(outputs) > 16 {
@@ -1477,6 +1553,9 @@ func (s *Server) createRolloutProposal(w http.ResponseWriter, r *http.Request, p
 			proposal["name"] = "Copy managed log file " + action.Source + " to " + action.Destination
 		}
 	}
+	if proposal["output_scope"] != nil && !s.bindOutputProfileProposal(w, r, proposal) {
+		return
+	}
 	proposal["status"] = "pending_approval"
 	proposal["created_by"] = principal.Username
 	proposal["created_at"] = time.Now().UTC()
@@ -1617,7 +1696,7 @@ func (s *Server) approveRollout(w http.ResponseWriter, r *http.Request, id strin
 	targetLimit := 1000
 	inputPathRollout := inputProfile != nil && proposal["type"] == rolloutTypeConfigPush
 	allowOffline := inputPathRollout || proposal["type"] == rolloutTypeRestart || proposal["type"] == protocol.ManagedInputFileCommand
-	if allowOffline {
+	if allowOffline || proposal["output_scope"] != nil {
 		targetLimit = maxInputPathRolloutTargets
 	}
 	if len(targets) > targetLimit {

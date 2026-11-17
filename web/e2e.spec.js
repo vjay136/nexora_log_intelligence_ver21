@@ -95,6 +95,37 @@ async function login(page) {
 
 test.beforeAll(requireCredentials);
 
+test('Known Key Catalog can save one key without editing JSON or inventing an ID', async ({ page }) => {
+  await login(page);
+  await page.getByTestId('nav-knownkeys').click();
+  const form = page.locator('#known-key-quick-form');
+  const key = `browser_known_key_${Date.now()}`;
+  await form.getByLabel('Known key', { exact: true }).fill(key);
+  await form.getByRole('button', { name:'Add known key', exact:true }).click();
+  const row = page.getByRole('row').filter({ has: page.getByRole('cell', { name:key, exact:true }) });
+  await expect(row.getByRole('button', { name:'Submit for review' })).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await row.getByRole('button', { name:'Discard draft' }).click();
+  await expect(row).toHaveCount(0);
+});
+
+test('a workspace favorite survives reload and opens the original workspace', async ({ page }) => {
+  await login(page);
+  const star = page.locator('#workspace-favorite');
+  await expect(star).toHaveAttribute('aria-pressed', 'false');
+  await star.click();
+  const shortcut = page.getByTestId('favorite-operations');
+  await expect(shortcut).toBeVisible();
+  await page.reload();
+  await expect(shortcut).toBeVisible();
+  await page.getByTestId('nav-monitoring').click();
+  await shortcut.click();
+  await expect(page.locator('#page-title')).toHaveText('Command Center');
+  await expect(star).toHaveAttribute('aria-pressed', 'true');
+  await star.click();
+  await expect(shortcut).toHaveCount(0);
+});
+
 test('premium login loads runtime assets and rejects invalid credentials', async ({ page }) => {
   let releaseAnonymousSession;
   const anonymousSessionGate = new Promise(resolve => { releaseAnonymousSession = resolve; });

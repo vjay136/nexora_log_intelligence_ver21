@@ -95,6 +95,38 @@ func TestFileWriterDoesNotCreateUnusedDestinationOnInitOrFlush(t *testing.T) {
 	}
 }
 
+func TestLokiDeliveryObserverCountsConfirmedBatches(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	acknowledged := 0
+	writer, err := output.NewLokiWriter(output.Config{
+		URL: server.URL, BatchSize: 10, Synchronous: true,
+		RecordBatch: func(records int, delivered bool) {
+			if !delivered {
+				t.Error("successful batch reported as failed")
+			}
+			acknowledged += records
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	for _, route := range []string{"normal", "quarantine", "normal"} {
+		if err := writer.Write([]byte(eventPayload), route); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if acknowledged != 0 {
+		t.Fatal("queue admission was reported as delivery")
+	}
+	if err := writer.Flush(); err != nil || acknowledged != 2 {
+		t.Fatalf("confirmed records=%d, want 2, err=%v", acknowledged, err)
+	}
+}
+
 func TestLokiWriterSpoolsOnFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "down", http.StatusServiceUnavailable)

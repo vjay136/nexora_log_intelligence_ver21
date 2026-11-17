@@ -55,8 +55,8 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 	if got := body["failures"].([]any)[0].(map[string]any)["line"]; got != float64(4) {
 		t.Fatalf("wrong failed line: %v", got)
 	}
-	if !strings.Contains(string(data), `"kv_pair":{"status":"failed","reason":"not needed"}`) {
-		t.Fatalf("combined preview flattened or reordered nested KV values: %s", data)
+	if !strings.Contains(string(data), `"event":"SieveRuleMsg","status":"failed","reason":"not needed"`) {
+		t.Fatalf("combined preview did not emit flat KV values in source order: %s", data)
 	}
 	examples := body["examples"].([]any)
 	if header := examples[0].(map[string]any)["actual"].(map[string]any); len(header) != 9 || header["event"] != "SieveRuleMsg" {
@@ -66,8 +66,7 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 		t.Fatalf("variant mismatch: %v", variant)
 	}
 	actual := examples[2].(map[string]any)["actual"].(map[string]any)
-	kv := actual["kv_pair"].(map[string]any)
-	if kv["address"] != "11.22.33.44" || kv["messages"].([]any)[0] != "HTTP CHALLENGE REQUEST" {
+	if actual["address"] != "11.22.33.44" || actual["messages"].([]any)[0] != "HTTP CHALLENGE REQUEST" {
 		t.Fatalf("wrong CARDDAV values: %v", actual)
 	}
 	cases := []assuranceRequest{{Raw: samples[1], Service: "smtp"}, {Raw: samples[2], Service: "pabd"}, {Raw: samples[4], Service: "smtp"}}
@@ -77,7 +76,7 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pack.Metadata["minimum_client_release"] != taggedMailMinimumRelease {
+	if pack.Metadata["minimum_client_release"] != flatTemplateMinimumRelease {
 		t.Fatalf("wrong runtime client compatibility: %v", pack.Metadata)
 	}
 	executor, err := parserpolicy.NewParserPackExecutor(pack)
@@ -98,6 +97,34 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 	if diff, _ := structuralDiff(tagged.EventPayload.Fields, examples[3].(map[string]any)["actual"].(map[string]any)); len(diff) != 0 {
 		t.Fatalf("tagged composition diverged from preview: %v", diff)
 	}
+	// Packs sealed from earlier saved compositions keep their original
+	// regression contract while the production consumer emits current JSON.
+	oldPlan := body["plan"].(map[string]any)
+	oldFields := oldPlan["fields"].([]any)
+	delete(oldFields[len(oldFields)-1].(map[string]any), "output_policy")
+	oldPack, err := assuranceMappingRuntimePack("old-compose", "1.0.0", "test", map[string]any{
+		"mapping_plan": oldPlan, "scope_pattern": body["scope_pattern"],
+	}, cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldExecutor, err := parserpolicy.NewParserPackExecutor(oldPack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &parserpolicy.ExecutionRequest{Input: samples[2], Service: "pabd", Context: ctx}
+	legacy, err := oldExecutor.Execute(request)
+	if err != nil || legacy.Quarantined || legacy.EventPayload.Fields["kv_pair"] == nil {
+		t.Fatalf("stored regression contract changed: %+v, %v", legacy, err)
+	}
+	current, err := oldExecutor.ExecuteProduction(request)
+	if err != nil || current.Quarantined || current.EventPayload == nil {
+		t.Fatalf("legacy composition failed in production: %+v, %v", current, err)
+	}
+	if diff, _ := structuralDiff(current.EventPayload.Fields, actual); len(diff) != 0 {
+		t.Fatalf("legacy composition did not emit flat production JSON: %v", diff)
+	}
+
 	encoded, err := json.Marshal(pack)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +133,7 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 		{AssetClass: "parser-packs", Payload: json.RawMessage(`{"rules":[{"stages":[{"type":"mapping","config":{"fields":[{"kv_input_edits":[{}]}]}}]}]}`)},
 		{AssetClass: "parser-packs", Payload: encoded},
 	}}
-	if minimum := parserBundleMinimumKVRelease(bundle); minimum != taggedMailMinimumRelease || parserClientSupportsKVRelease("22.10.0", minimum) {
+	if minimum := parserBundleMinimumKVRelease(bundle); minimum != flatTemplateMinimumRelease || parserClientSupportsKVRelease("22.18.1-0", minimum) || !parserClientSupportsKVRelease("22.19.1-0", minimum) {
 		t.Fatalf("advanced bundle should exclude prior clients: minimum %q", minimum)
 	}
 }
@@ -150,7 +177,7 @@ func TestTemplateComposeGlobalAutoSense(t *testing.T) {
 	}
 	response, data = f.request(http.MethodPost, "/api/v1/field-mapping/template-compose", map[string]any{
 		"header":  templateComposeRef{ID: doc.ID, Revision: doc.Revision},
-		"samples": []string{sample, header, header + " status=retry;future_key=present", header + " unrecognized payload"},
+		"samples": []string{sample, header, header + " status=retry;future_key=present;service.name=imap", header + " unrecognized payload"},
 	})
 	result := decodeMap(t, data)
 	if response.StatusCode != http.StatusOK || result["failed"] != float64(1) {
@@ -158,11 +185,13 @@ func TestTemplateComposeGlobalAutoSense(t *testing.T) {
 	}
 	examples := result["examples"].([]any)
 	actual := examples[0].(map[string]any)["actual"].(map[string]any)
-	tail := actual["kv_pair"].(map[string]any)
-	if tail["reason"] != "not needed" || tail["status"] != "failed" || actual["extra_tag3"] != "mnop" || actual["event"] != "SieveRuleMsg" {
+	if actual["reason"] != "not needed" || actual["status"] != "failed" || actual["kv_pair"] != nil || actual["extra_tag3"] != "mnop" || actual["event"] != "SieveRuleMsg" {
 		t.Fatalf("unexpected preview: %v", actual)
 	}
-	if _, exists := examples[1].(map[string]any)["actual"].(map[string]any)["kv_pair"]; exists {
-		t.Fatal("header-only sample emitted a KV object")
+	if _, exists := examples[1].(map[string]any)["actual"].(map[string]any)["status"]; exists {
+		t.Fatal("header-only sample emitted a KV value")
+	}
+	if future := examples[2].(map[string]any)["actual"].(map[string]any); future["future_key"] != "present" || future["service.name"] != "imap" {
+		t.Fatalf("dynamic key was renamed or omitted: %v", future)
 	}
 }

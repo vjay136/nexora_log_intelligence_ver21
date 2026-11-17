@@ -96,7 +96,7 @@ func (s *Server) annotateKnownKeys(ctx context.Context, service string, profiles
 	if s.metadata == nil || len(profiles) == 0 {
 		return nil
 	}
-	catalog, err := s.listParserSyncDocuments(ctx, "known-keys", "active", parserSyncTargetLimit)
+	catalog, err := s.listEffectiveParserAssets(ctx, "known-keys")
 	if err != nil {
 		return err
 	}

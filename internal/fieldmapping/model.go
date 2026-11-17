@@ -134,19 +134,22 @@ func (f Field) KVPairLimit() int {
 	if f.KVMaxPairs > 0 {
 		return f.KVMaxPairs
 	}
+	if f.KVHeaderPattern != "" && f.KVProfile == "auto" {
+		return DefaultAdvancedKVPairs
+	}
 	return MaxFields
 }
 
 // UsesLargeKV reports whether this plan depends on the raised pair or output budget.
 func (f Field) UsesLargeKV() bool {
-	return f.KVLiteralBoundaries && f.OutputPolicy == "flatten" && f.KVPairLimit() > MaxFields
+	return (f.KVLiteralBoundaries || f.KVHeaderPattern != "") && f.OutputPolicy == "flatten" && f.KVPairLimit() > MaxFields
 }
 
 // FlattenedKVFieldLimit includes room for the declared header fields.
 func (p Plan) FlattenedKVFieldLimit() int {
 	limit := MaxFields
 	for _, field := range p.Fields {
-		if field.Method == "kv_all" && field.OutputPolicy == "flatten" && field.KVLiteralBoundaries && field.KVPairLimit() > MaxFields {
+		if field.UsesLargeKV() {
 			limit = max(limit, MaxFields+field.KVPairLimit())
 		}
 	}
@@ -683,10 +686,14 @@ func (c *Compiled) execute(ctx context.Context, raw string, trace bool) (Result,
 				}
 				sort.Strings(keys)
 				for _, key := range keys {
-					if !fieldName.MatchString(key) || strings.HasPrefix(key, "_") || contains(ReservedNames, strings.ToLower(key)) {
+					if f.field.KVHeaderPattern != "" {
+						if !IsTemplateKVOutputKey(key) {
+							return result, fmt.Errorf("dynamic key %q is reserved for record retention", key)
+						}
+					} else if !fieldName.MatchString(key) || strings.HasPrefix(key, "_") || contains(ReservedNames, strings.ToLower(key)) {
 						return result, fmt.Errorf("dynamic key %q must be a non-reserved output identifier", key)
 					}
-					if _, exists := prior[key]; exists {
+					if _, exists := prior[key]; exists && (f.field.KVHeaderPattern == "" || key != f.field.Name) {
 						return result, fmt.Errorf("dynamic key %q collides with a mapped field", key)
 					}
 					if len(result.Values) >= c.outputFieldLimit {
@@ -724,7 +731,9 @@ func (c *Compiled) execute(ctx context.Context, raw string, trace bool) (Result,
 			}
 		}
 		evidence.keySpans = nil
-		result.Evidence[f.field.Name] = evidence
+		if _, emitted := result.Values[f.field.Name]; !emitted || f.field.OutputPolicy != "flatten" {
+			result.Evidence[f.field.Name] = evidence
+		}
 	}
 	return result, nil
 }

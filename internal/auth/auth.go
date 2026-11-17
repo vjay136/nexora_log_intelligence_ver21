@@ -54,12 +54,14 @@ type User struct {
 
 // userStore is the on-disk format.
 type userStore struct {
-	Users     []*User `json:"users"`
-	JWTSecret string  `json:"jwt_secret"`
+	Favorites map[string]map[string][]string `json:"workspace_favorites,omitempty"`
+	Users     []*User                        `json:"users"`
+	JWTSecret string                         `json:"jwt_secret"`
 }
 
 // Store manages users and JWT secrets.
 type Store struct {
+	favorites map[string]map[string][]string
 	mu        sync.RWMutex
 	path      string
 	users     map[string]*User // keyed by username
@@ -113,6 +115,7 @@ func (s *Store) load(bootstrapPassword string) error {
 		return err
 	}
 	s.jwtSecret = secretBytes
+	s.favorites = store.Favorites
 	for _, u := range store.Users {
 		s.users[u.Username] = u
 	}
@@ -125,6 +128,7 @@ func (s *Store) save() error {
 		users = append(users, u)
 	}
 	store := userStore{
+		Favorites: s.favorites,
 		Users:     users,
 		JWTSecret: hex.EncodeToString(s.jwtSecret),
 	}

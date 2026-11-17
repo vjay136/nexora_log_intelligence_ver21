@@ -18,39 +18,40 @@ import (
 
 // Config defines one output destination.
 type Config struct {
-	DeliveryStatePath string            `json:"-"`                  // Agent-owned local delivery journal, independent of customer JSON.
-	Synchronous       bool              `json:"-"`                  // Router flushes before checkpointing
-	Type              string            `json:"type"`               // file, loki, clickhouse, controller, stdout
-	Routes            []string          `json:"routes,omitempty"`   // nil = all routes
-	Families          []string          `json:"families,omitempty"` // optional input/parser families routed here
-	Path              string            `json:"path,omitempty"`
-	PathTemplate      string            `json:"path_template,omitempty"` // file: absolute path containing exactly one {hour_utc} token
-	MaxMB             int64             `json:"max_mb,omitempty"`
-	MaxBackups        int               `json:"max_backups,omitempty"`
-	URL               string            `json:"url,omitempty"`
-	Labels            map[string]string `json:"labels,omitempty"`
-	BatchSize         int               `json:"batch_size,omitempty"`
-	FlushSec          int               `json:"flush_sec,omitempty"`
-	DSN               string            `json:"dsn,omitempty"`
-	Database          string            `json:"database,omitempty"`
-	Table             string            `json:"table,omitempty"`
-	FieldColumns      map[string]string `json:"field_columns,omitempty"` // source field -> ClickHouse column; unmapped safe fields retain their name
-	MaxFieldColumns   int               `json:"max_field_columns,omitempty"`
-	Username          string            `json:"username,omitempty"`
-	PasswordEnv       string            `json:"password_env,omitempty"`
-	BearerTokenEnv    string            `json:"bearer_token_env,omitempty"`
-	TenantID          string            `json:"tenant_id,omitempty"` // Loki multi-tenancy
-	CAFile            string            `json:"ca_file,omitempty"`   // Additional trusted PEM CA
-	TokenFile         string            `json:"token_file,omitempty"`
-	Writer            Writer            `json:"-"` // For test injection only
-	NodeID            string            `json:"node_id,omitempty"`
-	NodeIDFile        string            `json:"node_id_file,omitempty"`
-	FallbackPath      string            `json:"fallback_path,omitempty"`
-	Required          bool              `json:"required,omitempty"`
-	RetryMax          int               `json:"retry_max,omitempty"`
-	RetryBackoffMS    int               `json:"retry_backoff_ms,omitempty"`
-	QueueCapacity     int               `json:"queue_capacity,omitempty"` // per-destination pending writes; defaults to 256
-	Format            string            `json:"format,omitempty"`         // stdout: json|pretty
+	RecordBatch       func(records int, delivered bool) `json:"-"`                  // Local delivery telemetry only.
+	DeliveryStatePath string                            `json:"-"`                  // Agent-owned local delivery journal, independent of customer JSON.
+	Synchronous       bool                              `json:"-"`                  // Router flushes before checkpointing
+	Type              string                            `json:"type"`               // file, loki, clickhouse, controller, stdout
+	Routes            []string                          `json:"routes,omitempty"`   // nil = all routes
+	Families          []string                          `json:"families,omitempty"` // optional input/parser families routed here
+	Path              string                            `json:"path,omitempty"`
+	PathTemplate      string                            `json:"path_template,omitempty"` // file: absolute path containing exactly one {hour_utc} token
+	MaxMB             int64                             `json:"max_mb,omitempty"`
+	MaxBackups        int                               `json:"max_backups,omitempty"`
+	URL               string                            `json:"url,omitempty"`
+	Labels            map[string]string                 `json:"labels,omitempty"`
+	BatchSize         int                               `json:"batch_size,omitempty"`
+	FlushSec          int                               `json:"flush_sec,omitempty"`
+	DSN               string                            `json:"dsn,omitempty"`
+	Database          string                            `json:"database,omitempty"`
+	Table             string                            `json:"table,omitempty"`
+	FieldColumns      map[string]string                 `json:"field_columns,omitempty"` // source field -> ClickHouse column; unmapped safe fields retain their name
+	MaxFieldColumns   int                               `json:"max_field_columns,omitempty"`
+	Username          string                            `json:"username,omitempty"`
+	PasswordEnv       string                            `json:"password_env,omitempty"`
+	BearerTokenEnv    string                            `json:"bearer_token_env,omitempty"`
+	TenantID          string                            `json:"tenant_id,omitempty"` // Loki multi-tenancy
+	CAFile            string                            `json:"ca_file,omitempty"`   // Additional trusted PEM CA
+	TokenFile         string                            `json:"token_file,omitempty"`
+	Writer            Writer                            `json:"-"` // For test injection only
+	NodeID            string                            `json:"node_id,omitempty"`
+	NodeIDFile        string                            `json:"node_id_file,omitempty"`
+	FallbackPath      string                            `json:"fallback_path,omitempty"`
+	Required          bool                              `json:"required,omitempty"`
+	RetryMax          int                               `json:"retry_max,omitempty"`
+	RetryBackoffMS    int                               `json:"retry_backoff_ms,omitempty"`
+	QueueCapacity     int                               `json:"queue_capacity,omitempty"` // per-destination pending writes; defaults to 256
+	Format            string                            `json:"format,omitempty"`         // stdout: json|pretty
 }
 
 // Writer sends a parsed envelope to a destination.

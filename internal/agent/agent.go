@@ -711,6 +711,7 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 		}
 	}
 	ensureLocalQuarantineOutput(&c)
+	deliveryMetrics := instrumentRemoteDelivery(c.Outputs)
 	for i := range c.Outputs {
 		if c.Outputs[i].Type == "file" {
 			c.Outputs[i].DeliveryStatePath = output.DeliveryJournalPath(c.StateDir, c.Outputs[i].Path, c.Outputs[i].PathTemplate)
@@ -1205,6 +1206,7 @@ func Run(ctx context.Context, c Config, once bool) (runErr error) {
 				upesStats.QueuedDiscoveries,
 				upesStats.DroppedDiscoveries,
 				upesStats.PendingDiscoveries)
+			deliveryMetrics.write(w)
 		})
 		mux.HandleFunc("/stream-snapshot", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {

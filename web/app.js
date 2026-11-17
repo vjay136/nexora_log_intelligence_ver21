@@ -93,6 +93,7 @@
     'parser-form': 'parsers:manage',
     'migration-form': 'migration:manage',
     'config-form': 'parsers:manage',
+    'known-key-quick-form': 'parsers:manage',
     'input-profile-form': 'parsers:manage',
     'input-rollout-form': 'rollout:trigger',
     'output-profile-form': 'parsers:manage',
@@ -134,6 +135,7 @@
     'recovery-open-helper': 'assurance:save',
     'recovery-prepare-replay': 'rollout:trigger',
     'nupire-transition': 'parsers:manage',
+    'catalog-add-alias': 'parsers:manage',
   };
   const can = permission => !permission || state.user?.role === 'admin' || (state.user?.permissions || []).includes(permission);
   function actionPermission(button) {
@@ -166,6 +168,8 @@
     }
     if (button.dataset.action === 'engine-test') return 'assurance:run';
     if (button.dataset.action === 'output-config-test') return 'assurance:run';
+    if (button.dataset.action === 'output-reset') return 'parsers:manage';
+    if (button.dataset.action === 'output-refresh-delivery') return 'fleet:read';
     if (button.dataset.action === 'parser-sync-verify') return 'parsers:read';
     if (button.dataset.action === 'parser-sync-retry') return 'rollout:trigger';
     if (button.dataset.action === 'nupire-transition' && button.dataset.value === 'approve') return 'parsers:review';
@@ -871,10 +875,10 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const nav=document.createElement('div');nav.className='assurance-subnav';nav.setAttribute('role','tablist');nav.setAttribute('aria-label','Endpoint configuration sections');
     const buttons=specs.map(([key,label],i)=>{const b=document.createElement('button');b.type='button';b.className='tab'+(i===0?' active':'');b.textContent=label;b.dataset.endpointTab=key;b.setAttribute('role','tab');b.setAttribute('aria-selected',String(i===0));b.tabIndex=i===0?0:-1;nav.append(b);return b;});
     const getPanel=needle=>panels.find(p=>(p.querySelector('h3')?.textContent||'').toLowerCase().includes(needle));
-    const adapters=getPanel('supported output'),editor=getPanel('create output'),saved=getPanel('saved output'),rollout=getPanel('roll out');
+    const adapters=getPanel('supported output'),editor=getPanel('create output'),saved=getPanel('saved output'),rollout=getPanel('roll out'),delivery=getPanel('remote delivery status');
     const form=editor?.querySelector('#output-profile-form');let groups=[];
     if(form){const formChildren=[...form.children],classify=node=>{const names=[...node.querySelectorAll('[name]')].map(el=>el.name);if(names.some(n=>['loki_token_env','loki_tenant','clickhouse_username','clickhouse_password_env','controller_token_file','controller_node_id_file'].includes(n)))return'security';if(names.some(n=>['loki_labels','field_columns'].includes(n))||node.id==='output-config-test-result'||node.id==='output-profile-preview'||node.querySelector('[data-action="output-config-test"],[data-action="download-output-config"]'))return'validation';return'destinations';};groups=specs.slice(0,3).map(([key,label],i)=>{const section=document.createElement('section');section.className='endpoint-form-section';section.dataset.endpointFormSection=key;section.id='endpoint-form-'+key;section.setAttribute('role','tabpanel');section.setAttribute('aria-label',label);section.hidden=i!==0;return section;});formChildren.forEach(child=>groups.find(section=>section.dataset.endpointFormSection===classify(child))?.append(child));form.prepend(...groups);}
-    const activate=key=>{buttons.forEach(button=>{const active=button.dataset.endpointTab===key;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;});if(groups.length)groups.forEach(group=>group.hidden=group.dataset.endpointFormSection!==key);if(adapters)adapters.hidden=key!=='destinations';if(editor)editor.hidden=!['destinations','security','validation'].includes(key);if(saved)saved.hidden=key!=='profiles';if(rollout)rollout.hidden=key!=='live';};
+    const activate=key=>{buttons.forEach(button=>{const active=button.dataset.endpointTab===key;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;});if(groups.length)groups.forEach(group=>group.hidden=group.dataset.endpointFormSection!==key);if(adapters)adapters.hidden=key!=='destinations';if(editor)editor.hidden=!['destinations','security','validation'].includes(key);if(saved)saved.hidden=key!=='profiles';if(rollout)rollout.hidden=key!=='live';if(delivery)delivery.hidden=key!=='live';};
     if(form)form.addEventListener('invalid',event=>{const section=event.target.closest('[data-endpoint-form-section]');if(section)activate(section.dataset.endpointFormSection);},true);
     const intro=page.querySelector('.engine-intro');(intro||page.firstChild).after(nav);
     if(adapters)adapters.setAttribute('aria-label','Destinations');if(editor)editor.setAttribute('aria-label','Output profile editor');if(saved)saved.setAttribute('aria-label','Saved endpoint profiles');if(rollout)rollout.setAttribute('aria-label','Live endpoint rollout and rollback');
@@ -1528,18 +1532,90 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     }
   }
 
+  let favoriteWorkspaces = new Set();
+  let favoriteRequest = 0;
+  let favoriteSaving = false;
+  let favoritesLoaded = false;
+
   function buildNav() {
+    const nav = el('nav');
+    const scrollTop = nav.scrollTop;
+    const entry = ([, id, title, icon], shortcut = false) => {
+      const count = NAV_COUNT_PAGES.has(id) ? `<span ${shortcut ? '' : `id="${id==='rollouts'?'approval-badge':`nav-count-${id}`}"`} class="nav-count" data-nav-count="${id}" aria-label="${esc(title)} pending actions" hidden>0</span>` : '';
+      return `<button class="nav-item" data-page="${id}" data-testid="${shortcut ? 'favorite' : 'nav'}-${id}"><span class="nav-icon">${esc(icon)}</span><span class="nav-label">${esc(title)}</span>${count}</button>`;
+    };
+    const shortcuts = NAV.filter(([, id]) => favoriteWorkspaces.has(id));
     let group = '';
-    el('nav').innerHTML = NAV.map(([section, id, title, icon]) => {
-      const heading = section !== group ? `<div class="nav-group">${esc(section)}</div>` : ''; group = section;
-      const count = NAV_COUNT_PAGES.has(id) ? `<span id="${id==='rollouts'?'approval-badge':`nav-count-${id}`}" class="nav-count" data-nav-count="${id}" aria-label="${esc(title)} pending actions" hidden>0</span>` : '';
-      return `${heading}<button class="nav-item" data-page="${id}" data-testid="nav-${id}"><span class="nav-icon">${esc(icon)}</span><span class="nav-label">${esc(title)}</span>${count}</button>`;
+    nav.innerHTML = (shortcuts.length ? `<div class="nav-group">Favorites</div>${shortcuts.map(item => entry(item, true)).join('')}` : '') + NAV.map(item => {
+      const section = item[0];
+      const heading = section !== group ? `<div class="nav-group">${esc(section)}</div>` : '';
+      group = section;
+      return heading + entry(item);
     }).join('');
+    nav.scrollTop = scrollTop;
     updateNavigationBadges();
+    markActive();
+  }
+
+  function updateFavoriteButton() {
+    const button = el('workspace-favorite');
+    const starred = favoriteWorkspaces.has(state.page);
+    button.disabled = favoriteSaving || !favoritesLoaded;
+    button.setAttribute('aria-pressed', String(starred));
+    button.textContent = starred ? '★ Favorited' : '☆ Favorite';
+    button.title = starred ? 'Remove this workspace from Favorites' : 'Add this workspace to Favorites';
+  }
+
+  async function refreshFavorites() {
+    if (!state.user || favoriteSaving) return;
+    const request = ++favoriteRequest;
+    try {
+      const data = await api('/auth/workspace-favorites');
+      if (request !== favoriteRequest || !state.user) return;
+      const favorites = new Set(data.favorites || []);
+      const changed = favorites.size !== favoriteWorkspaces.size || [...favorites].some(id => !favoriteWorkspaces.has(id));
+      favoriteWorkspaces = favorites;
+      favoritesLoaded = true;
+      if (changed) buildNav();
+      updateFavoriteButton();
+    } catch { /* Keep the last confirmed shortcuts during a controller outage. */ }
+  }
+
+  async function toggleWorkspaceFavorite() {
+    if (!state.user || favoriteSaving) return;
+    const workspace = state.page;
+    const request = ++favoriteRequest;
+    favoriteSaving = true;
+    updateFavoriteButton();
+    try {
+      const data = await api('/auth/workspace-favorites', {method:'PUT', body:{workspace, starred:!favoriteWorkspaces.has(workspace)}});
+      if (request !== favoriteRequest || !state.user) return;
+      favoriteWorkspaces = new Set(data.favorites || []);
+      buildNav();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      favoriteSaving = false;
+      updateFavoriteButton();
+    }
   }
   function updateNavigationBadges(counts=state.navCounts) {
     state.navCounts=counts&&typeof counts==='object'?counts:{};
-    for(const pageID of NAV_COUNT_PAGES){const node=document.querySelector(`[data-nav-count="${pageID}"]`);if(!node)continue;const raw=state.navCounts[pageID];if(raw?.available===false){node.classList.add('unavailable');node.title='Pending action count is temporarily unavailable; the last confirmed count is shown when available';continue;}node.classList.remove('unavailable');const value=Math.max(0,Number(raw?.total??raw)||0);node.textContent=value>99?'99+':String(value);node.hidden=value===0;node.title=value?`${value} current operator action${value===1?'':'s'} required`:'';}
+    for (const pageID of NAV_COUNT_PAGES) {
+      const raw = state.navCounts[pageID];
+      const unavailable = raw?.available === false;
+      const value = Math.max(0, Number(raw?.total ?? raw) || 0);
+      for (const node of document.querySelectorAll(`[data-nav-count="${pageID}"]`)) {
+        node.classList.toggle('unavailable', unavailable);
+        if (unavailable) {
+          node.title = 'Pending action count is temporarily unavailable; the last confirmed count is shown when available';
+          continue;
+        }
+        node.textContent = value > 99 ? '99+' : String(value);
+        node.hidden = value === 0;
+        node.title = value ? `${value} current operator action${value === 1 ? '' : 's'} required` : '';
+      }
+    }
     state.pendingApprovals=Math.max(0,Number(state.navCounts.rollouts?.total??state.navCounts.rollouts)||0);
   }
   function updateApprovalBadge(value=state.pendingApprovals) { updateNavigationBadges({...state.navCounts,rollouts:{total:Math.max(0,Number(value)||0)}}); }
@@ -1562,7 +1638,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const navEntry = NAV.find(([, pageID]) => pageID === state.page);
     el('page-title').textContent = TITLES[state.page];
     el('page-kicker').textContent = `${navEntry?.[0] || 'Control plane'} workspace`;
-    markActive(); el('sidebar').classList.remove('open');
+    markActive(); updateFavoriteButton(); el('sidebar').classList.remove('open');
     page.removeAttribute('data-page');
     page.innerHTML = loading();
     try {
@@ -2306,6 +2382,48 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     renderPage('sample-history',panel('Test Sample History','Reopen encrypted manual samples in Guided Parser Repair. The controller applies access and retention rules.',`<label class="field"><span><input id="sample-history-automatic" type="checkbox" ${state.sampleHistoryEnabled?'checked':''} ${can('assurance:save')?'':'disabled'}> Automatically save pasted test samples during this sign-in</span><small>You can uncheck retention for any individual sample. Signing out turns automatic retention off.</small></label>`+table(['Sample','Saved','Actions'],samples.map(item=>`<tr><td>${esc(item.name)} <code>${esc(item.id)}</code></td><td>${time(item.created_at)}</td><td><button class="secondary" data-action="test-sample-open" data-id="${esc(item.id)}">Open in Guided Repair</button> <button class="secondary" data-action="download-case" data-id="${esc(item.id)}">Download</button></td></tr>`))));
     el('sample-history-automatic')?.addEventListener('change',event=>{state.sampleHistoryEnabled=event.currentTarget.checked;});
   }
+  const catalogMappingKey = kind => ({'header-templates':'fields', studio:'fields', regex:'fields', 'kv-templates':'key_aliases', kv:'key_aliases'})[kind];
+
+  function catalogFieldRow(source, name, optional, alias) {
+    return `<tr data-catalog-field data-optional="${optional}"><td>${alias?`<input aria-label="Raw key" data-catalog-source value="${esc(source)}" maxlength="128" placeholder="Raw key">`:`<code data-catalog-source="${esc(source)}">${esc(source)}</code>`}</td><td><input aria-label="Output field name" data-catalog-name value="${esc(name)}" maxlength="128" placeholder="Output field name" ${alias?'':'required'}></td></tr>`;
+  }
+
+  function showCatalogFields(form) {
+    const target=form.querySelector('[data-catalog-fields]');
+    if(!target)return;
+    target.innerHTML='';
+    const key=catalogMappingKey(form.dataset.kind);
+    const alias=key==='key_aliases';
+    let config;
+    try { config=JSON.parse(form.elements.config.value); } catch { return; }
+    if(!config||typeof config!=='object'||Array.isArray(config))return;
+    const optional=new Set(Array.isArray(config.optional_fields)?config.optional_fields:[]);
+    const rows=Object.entries(config[key]||{}).filter(([,name])=>typeof name==='string').map(([source,name])=>catalogFieldRow(source,name,optional.has(name),alias));
+    target.innerHTML=alias?
+      `<div class="table-wrap"><table><thead><tr><th>Raw key</th><th>Output field name</th></tr></thead><tbody>${rows.join('')}</tbody></table></div><button class="secondary small" type="button" data-action="catalog-add-alias">Add key rename</button>`:
+      table(['Capture group','Output field name'],rows,'Add named captures to the pattern to edit output names here.');
+  }
+
+  function saveCatalogFields(form) {
+    const config=parseJSON(form.elements.config.value,'Configuration JSON');
+    const key=catalogMappingKey(form.dataset.kind);
+    const alias=key==='key_aliases';
+    const mapped=new Map(),optional=[];
+    for(const row of form.querySelectorAll('[data-catalog-field]')) {
+      const input=row.querySelector('[data-catalog-source]');
+      const source=alias?input.value.trim():input.dataset.catalogSource;
+      const name=row.querySelector('[data-catalog-name]').value.trim();
+      if(alias&&(!source||!name))continue;
+      if(mapped.has(source))throw new Error(`Duplicate key rename for ${source}`);
+      mapped.set(source,name);
+      if(row.dataset.optional==='true')optional.push(name);
+    }
+    config[key]=Object.fromEntries(mapped);
+    if(!alias&&(optional.length||Object.hasOwn(config,'optional_fields')))config.optional_fields=optional;
+    form.elements.config.value=pretty(config);
+    page.dataset.dirty='true';
+  }
+
   async function loadConfig(kind) {
     const [path,title,example]=CONFIG[kind]; let data={items:[]}, warning='';
     try { data=await api(path); } catch(error) { warning=`<div class="callout warn">Live ${esc(title.toLowerCase())} could not be loaded: ${esc(error.message)}. Defaults are shown for reference; retry after controller storage recovers.</div>`; }
@@ -2315,18 +2433,23 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       if (['draft','rejected'].includes(doc.state)) actions.push(['submit','Submit for review']);
       if (doc.state === 'in_review') actions.push(['approve','Approve']);
       if (doc.state === 'approved') actions.push(['publish',known?'Publish + request fleet rollout':'Publish + auto-rollout']);
-      if (known && doc.state === 'active') actions.push(['revoke','Revoke published keys']);
+      if (known && ['active','discarded'].includes(doc.state)) actions.push(['revoke','Revoke published keys']);
       if (known && doc.state === 'revoked') actions.push(['revoke','Retry fleet removal']);
-      return actions.map(([value,label])=>` <button class="secondary small" data-action="config-action" data-kind="${kind}" data-id="${esc(doc.id)}" data-value="${value}">${label}</button>`).join('');
+      return actions.map(([value,label])=>` <button class="secondary small" data-action="config-action" data-kind="${kind}" data-id="${esc(doc.id)}" data-revision="${doc.revision}" data-value="${value}">${label}</button>`).join('');
     };
     let templateWorkbench = '';
     if (['header-templates','kv-templates'].includes(kind)) {
       const otherPath = CONFIG[kind === 'header-templates' ? 'kv-templates' : 'header-templates'][0];
       const other = await api(otherPath).catch(() => ({items:[]}));
       const select = (id,label,docs,defaultOption='<option value="">Select a saved revision</option>') => '<label class="field">' + label + '<select id="' + id + '">' +
-        defaultOption + docs.filter(doc => doc.id && Number(doc.revision)>0).map(doc =>
-          '<option value="' + esc(JSON.stringify({id:doc.id,revision:Number(doc.revision)})) + '">' +
-          esc((doc.payload?.name || doc.id) + ' · revision ' + doc.revision) + '</option>').join('') + '</select></label>';
+        defaultOption + docs.filter(doc => doc.id && Number(doc.revision)>0).flatMap(doc => {
+          const option=(revision,status)=>'<option value="'+esc(JSON.stringify({id:doc.id,revision}))+'">'+
+            esc((doc.payload?.name||doc.id)+' · revision '+revision+(status?' · '+status:''))+'</option>';
+          const previous=Number(doc.payload?.previous_active_revision);
+          const options=doc.state==='discarded'?[]:[option(Number(doc.revision),doc.state)];
+          if(previous>0)options.push(option(previous,'active'));
+          return options;
+        }).join('') + '</select></label>';
       const header = kind === 'header-templates' ? items : other.items || [];
       const kv = kind === 'kv-templates' ? items : other.items || [];
       const artifact = kind === 'header-templates' ? 'template' : 'kv_template';
@@ -2344,7 +2467,36 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         '<button type="button" class="secondary" data-action="template-compose-mapping">Open combined mapping in FieldSense</button></div>' +
         '<pre class="json-output" id="template-composition-result" role="status" hidden></pre>');
     }
-    renderPage(kind, `${warning}${templateWorkbench}${panel(title,'Revisioned declarative assets stored in Supabase metadata. Drafts require independent review; publishing builds the canonical asset bundle and starts automatic fleet rollout.',table(['Name','ID','Revision','State','Updated','Configuration','Actions'],items.map(doc=>`<tr><td>${esc(doc.payload?.name||doc.id)}</td><td class="mono">${esc(doc.id)}</td><td>${doc.revision}</td><td>${badge(doc.state)}${approvalDetails(doc)}</td><td>${time(doc.updated_at)}</td><td><details><summary>View full content</summary><pre class="json-output">${esc(pretty(doc.payload?.config))}</pre></details></td><td><button class="secondary small" data-action="config-action" data-kind="${kind}" data-id="${esc(doc.id)}" data-value="${known&&!['draft','rejected'].includes(doc.state)?'copy':'edit'}">${known&&!['draft','rejected'].includes(doc.state)?'Copy to new draft':'Edit draft'}</button> <button class="secondary small" data-action="config-action" data-kind="${kind}" data-id="${esc(doc.id)}" data-value="download">Download JSON</button>${!known||['draft','rejected'].includes(doc.state)?` <button class="danger small" data-action="config-action" data-kind="${kind}" data-id="${esc(doc.id)}" data-value="delete">${known?'Delete draft':'Delete'}</button>`:''}${lifecycle(doc)}</td></tr>`)))}${panel('Create or revise definition','Saving creates a draft revision in Supabase. It does not affect live parsing until independent approval and publication.',`<form id="config-form" data-kind="${kind}" class="form-grid"><label class="field">ID<input name="id" required title="Stable identifier for this asset. Reusing an ID creates a new revision."></label><label class="field">Name<input name="name" required></label>${known?`<label class="field wide">Known keys<textarea name="known_keys" rows="8" required spellcheck="false" placeholder="status&#10;reason&#10;source_ip">${esc((example.keys||[]).join('\n'))}</textarea><span class="hint">One key per line. Add, rename or remove lines, then save the draft. Published keys guide FieldSense and name matching fields in live template parses. Copy a published definition to a new draft, then revoke the prior definition after reviewing its replacement.</span></label>`:''}<label class="field wide">${known?'Advanced metadata JSON':'Configuration JSON'}<textarea name="config" required>${esc(pretty(known?{}:example))}</textarea><span class="hint">ⓘ Declarative JSON only. Validate the draft in Assurance, submit it, obtain independent approval, then publish to trigger verified fleet synchronization.</span></label><button class="primary" type="submit">${known?"Create known key draft":"Save draft revision"}</button></form>`)}`);
+    const quickKnownKey=known?panel('Add a known key','Enter a key exactly as it appears in the raw log. Publish the draft after review to include it in fleet synchronization.',`<form id="known-key-quick-form" class="form-grid">
+      <label class="field">Known key<input name="key" required maxlength="128" pattern="[A-Za-z_][A-Za-z0-9_.\\-]{0,127}" placeholder="e.g. client_id" spellcheck="false"></label>
+      <button type="submit" class="primary">Add known key</button></form>`):'';
+    const assetRows=items.map(doc=>{
+      const editable=['draft','rejected'].includes(doc.state), published=['active','discarded'].includes(doc.state);
+      const activeRevision=Number(doc.payload?.previous_active_revision);
+      const edit=editable||published?`<button class="secondary small" data-action="config-action" data-kind="${kind}" data-id="${esc(doc.id)}" data-value="edit">${editable?'Edit draft':'Create revision draft'}</button>`:'';
+      const discard=editable?` <button class="danger small" data-action="config-action" data-kind="${kind}" data-id="${esc(doc.id)}" data-revision="${doc.revision}" data-value="delete">Discard draft</button>`:'';
+      return `<tr><td>${esc(doc.payload?.name||doc.id)}</td><td class="mono">${esc(doc.id)}</td><td>${doc.revision}</td><td>${badge(doc.state)}${activeRevision>0?` <small>Active r${activeRevision}</small>`:''}${approvalDetails(doc)}</td><td>${time(doc.updated_at)}</td><td><details><summary>View full content</summary><pre class="json-output">${esc(pretty(doc.payload?.config))}</pre></details></td><td>${edit} <button class="secondary small" data-action="config-action" data-kind="${kind}" data-id="${esc(doc.id)}" data-value="download">Download JSON</button>${discard}${lifecycle(doc)}</td></tr>`;
+    });
+    const editor=`<form id="config-form" data-kind="${kind}" class="form-grid">
+      <label class="field">ID<input name="id" required title="Stable identifier for this asset."></label>
+      <label class="field">Name<input name="name" required></label>
+      ${known?`<label class="field wide">Known keys<textarea name="known_keys" rows="6" required spellcheck="false" placeholder="status&#10;reason&#10;source_ip"></textarea><span class="hint">Use one key per line to create or revise a list.</span></label>`:''}
+      ${catalogMappingKey(kind)?'<details class="wide" open><summary>Output field names</summary><div data-catalog-fields></div></details>':''}
+      <label class="field wide">${known?'Advanced metadata JSON':'Configuration JSON'}<textarea name="config" required>${esc(pretty(known?{}:example))}</textarea></label>
+      <button class="primary" type="submit">${known?'Create known key draft':'Save draft revision'}</button>
+    </form>`;
+    renderPage(kind,warning+quickKnownKey+templateWorkbench+
+      panel(title,'Publish an approved revision to request fleet synchronization.',table(['Name','ID','Revision','State','Updated','Configuration','Actions'],assetRows))+
+      panel('Create or revise definition','The published revision continues parsing during draft review.',editor));
+    const form=el('config-form');
+    if(state.page!==kind||!form)return;
+    showCatalogFields(form);
+    form.addEventListener('change',event=>{
+      if(event.target===form.elements.config)showCatalogFields(form);
+      if(event.target.matches('[data-catalog-name], input[data-catalog-source]')) {
+        try { saveCatalogFields(form); } catch(error) { toast(error.message,'error'); }
+      }
+    });
   }
 
   const INPUT_FAMILIES = ['auto','imap','pop','webtop','mta','smtp-in','smtp-out','pss','pabd','capd'];
@@ -2406,7 +2558,12 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       ${panel('Rollout history','Approval and delivery history for the selected active input profile.',table(['Proposal','Target clients','Status','Created'],historyRows,'No input profile rollouts have been requested yet.'))}`);
   }
   async function loadOutputEngine() {
-    const result = await api('/config/output-destinations').catch(error => { throw new Error(`Output profiles could not load: ${error.message}`); });
+    const [result, fleetResult] = await Promise.all([
+      api('/config/output-destinations'),
+      can('fleet:read') ? api('/fleet').catch(() => null) : Promise.resolve(null),
+    ]);
+    const onlineNodes = (fleetResult || []).filter(node => ['online', 'degraded'].includes(node.status)).sort((a,b) => a.id.localeCompare(b.id));
+    const nodeOptions = onlineNodes.map(node => `<option value="${esc(node.id)}">${esc(node.hostname || node.id)} · ${esc(node.id)}</option>`).join('');
     const profiles = result.items || [];
     const lifecycle = doc => {
       const actions=[];
@@ -2420,12 +2577,39 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       ${renderRecordAccountingHelp()}
       ${panel('Supported output adapters','Each adapter uses the same normalized customer event. Controller metadata continues through the protected telemetry channel.',`<div class="grid cols-4">${card('Local JSONL','Available','Rotated files; parsed and quarantine streams are separate')}${card('Grafana Loki','Available','Batched push API; TLS CA and bearer token supported')}${card('ClickHouse','Available','HTTP JSONEachRow; mapped event fields become table columns')}${card('Controller endpoint','Available','Authenticated controller event endpoint; token file based')}</div><div class="callout">Remote destinations must use HTTPS in production. The profile stores credential variable names or protected file paths only; it never stores secret values. Loki and ClickHouse delivery failures require a local fallback spool.</div>`)}
       ${panel('Create output destination profile','Profiles are saved as revisioned Supabase drafts. Review and approval control publication; the rollout form applies a validated outputs-only patch to selected enrolled clients.',`<form id="output-profile-form" class="form-grid"><label class="field">Profile ID<input name="id" required pattern="[A-Za-z0-9._-]{1,64}" value="customer-output"></label><label class="field">Profile name<input name="name" required maxlength="120" value="Customer output profile"></label>
-        <fieldset class="field wide output-choice"><legend>Destinations</legend><label><input type="checkbox" name="normalised_enabled" value="true" checked> Write parsed events to local normalised JSONL</label><label><input type="checkbox" name="destinations" value="loki"> Grafana Loki</label><label><input type="checkbox" name="destinations" value="clickhouse"> ClickHouse</label><label><input type="checkbox" name="destinations" value="controller"> Controller endpoint</label><small class="hint">Local quarantine JSONL is always enabled for raw unparsed records. Loki and ClickHouse continue to receive parsed events when local normalised output is disabled.</small></fieldset>
+        <fieldset class="field wide output-choice"><legend>Destinations</legend><label><input type="checkbox" name="normalised_enabled" value="true" checked> Write parsed events to local normalised JSONL</label><label><input type="checkbox" name="destinations" value="loki"> Enable Grafana Loki</label><label><input type="checkbox" name="destinations" value="clickhouse"> Enable ClickHouse</label><label><input type="checkbox" name="destinations" value="controller"> Controller endpoint</label><small class="hint">Local quarantine JSONL is always enabled for raw unparsed records. Loki and ClickHouse continue to receive parsed events when local normalised output is disabled.</small></fieldset>
         <label class="field">Parsed JSONL path or hourly template<input name="normal_path" value="/var/log/nli/output/auto_normalised_{hour_utc}.jsonl"></label><label class="field">Required quarantine path or hourly template<input name="quarantine_path" value="/var/log/nli/output/auto_quarantine_{hour_utc}.jsonl" required></label>
-        <label class="field wide">Loki HTTPS endpoint<input name="loki_url" type="url" placeholder="https://loki.example.com/api/v1/push" title="Editable sample only; replace it with your Loki endpoint."></label><label class="field">Loki bearer token environment variable<input name="loki_token_env" placeholder="NLI_LOKI_TOKEN"></label><label class="field">Loki tenant ID<input name="loki_tenant" placeholder="optional"></label><label class="field wide">Loki labels JSON<textarea name="loki_labels">{"job":"nli"}</textarea></label>
+        <label class="field wide">Loki HTTPS endpoint<input name="loki_url" type="url" placeholder="https://loki.example.com/loki/api/v1/push" title="Editable sample only; replace it with your Loki endpoint."></label><label class="field">Loki bearer token environment variable<input name="loki_token_env" placeholder="NLI_LOKI_TOKEN"></label><label class="field">Loki tenant ID<input name="loki_tenant" placeholder="optional"></label><label class="field wide">Loki labels JSON<textarea name="loki_labels">{"job":"nli"}</textarea></label>
         <label class="field wide">ClickHouse HTTPS endpoint<input name="clickhouse_url" type="url" placeholder="https://clickhouse.example.com:8443"></label><label class="field">Database<input name="clickhouse_database" value="default"></label><label class="field">Table<input name="clickhouse_table" value="nli_logs"></label><label class="field">Username<input name="clickhouse_username" autocomplete="off"></label><label class="field">Password environment variable<input name="clickhouse_password_env" placeholder="NLI_CLICKHOUSE_PASSWORD"></label><label class="field wide">Source field → ClickHouse column mappings<textarea name="field_columns">{"fromhost":"fromhost","user":"user"}</textarea><span class="hint">JSON object. When mappings are present, only mapped source fields become table columns; event_json retains the complete typed customer object. Leave mappings empty to create bounded safe columns for every top-level field.</span></label>
-        <label class="field wide">Controller HTTPS endpoint<input name="controller_url" type="url" placeholder="https://controller.example.com/api/v1"></label><label class="field">Controller token file<input name="controller_token_file" placeholder="/etc/nli/secrets/controller-token"></label><label class="field">Node ID file<input name="controller_node_id_file" value="/var/lib/nli/node-id"></label><div class="actions wide"><button class="primary" type="submit">Validate and save draft</button><button class="secondary" type="button" data-action="output-config-test">Validate configuration</button><button class="secondary" type="button" data-action="download-output-config" ${state.outputPreview?'':'disabled'}>Download outputs JSON</button></div><p id="output-config-test-result" class="hint wide" role="status">Local profile validation checks structure and safe routing. Network connectivity is not tested here; verify reachability from the enrolled client.</p></form><pre id="output-profile-preview" class="json-output" aria-live="polite">${state.outputPreview?esc(pretty(state.outputPreview)):'Choose destinations and save to preview the validated outputs array.'}</pre>`)}
-      <section class="panel"><h3>Native field mapping before delivery</h3><p>Use NFI to split and normalize source fields, then publish that parser before selecting those resulting JSON keys in an endpoint field map. Delivery profiles keep their existing independent review and rollout controls.</p><button type="button" class="secondary" data-action="nfi-open-context" data-target="outputs">Open NFI field workbench</button></section>${panel('Saved output profiles','Profiles remain drafts until reviewed. Approved profiles are applied to selected clients through an independent rollout proposal.',profiles.length?table(['Profile','Revision','State','Destinations','Actions'],profiles.map(doc=>`<tr><td><b>${esc(doc.payload?.name||doc.id)}</b><br><small class="mono">${esc(doc.id)}</small></td><td>${doc.revision}</td><td>${badge(doc.state)}${approvalDetails(doc)}</td><td>${(doc.payload?.config?.outputs||[]).map(out=>esc(out.type)).join(', ')||'—'}</td><td><button class="secondary small" data-action="config-action" data-kind="outputs" data-id="${esc(doc.id)}" data-value="download">Download JSON</button> <button class="secondary small" data-action="config-action" data-kind="outputs" data-id="${esc(doc.id)}" data-value="edit">Edit draft</button> <button class="danger small" data-action="config-action" data-kind="outputs" data-id="${esc(doc.id)}" data-value="delete">Remove</button>${lifecycle(doc)}</td></tr>`)):empty('No output profiles have been saved yet.'))}${panel('Roll out endpoint profile','The client applies only the outputs section and preserves its input, enrollment, telemetry, parser and enrichment configuration.',`<form id="output-rollout-form" class="form-grid"><label class="field wide">Published endpoint profile<select name="profile_id" required>${profiles.filter(doc=>doc.state==='active').map(doc=>`<option value="${esc(doc.id)}">${esc(doc.payload?.name||doc.id)} · r${doc.revision}</option>`).join('')}</select></label><label class="field wide">Target node IDs<input name="targets" required placeholder="node-id-1, node-id-2"></label><button class="primary" type="submit" ${profiles.some(doc=>doc.state==='active')?'':'disabled'}>Request independent approval</button><span class="hint wide">Only active profiles can be proposed. A different authorized operator must approve the rollout before enrolled clients receive the validated config patch.</span></form>`)}`);
+        <label class="field wide">Controller HTTPS endpoint<input name="controller_url" type="url" placeholder="https://controller.example.com/api/v1"></label><label class="field">Controller token file<input name="controller_token_file" placeholder="/etc/nli/secrets/controller-token"></label><label class="field">Node ID file<input name="controller_node_id_file" value="/var/lib/nli/node-id"></label><div class="actions wide"><button class="primary" type="submit">Validate and save draft</button><button class="secondary" type="button" data-action="output-reset">New profile</button><button class="secondary" type="button" data-action="output-config-test">Validate configuration</button><button class="secondary" type="button" data-action="download-output-config" ${state.outputPreview?'':'disabled'}>Download outputs JSON</button></div><p id="output-config-test-result" class="hint wide" role="status">Local profile validation checks structure and safe routing. Network connectivity is not tested here; verify reachability from the enrolled client.</p></form><pre id="output-profile-preview" class="json-output" aria-live="polite">${state.outputPreview?esc(pretty(state.outputPreview)):'Choose destinations and save to preview the validated outputs array.'}</pre>`)}
+      <section class="panel"><h3>Native field mapping before delivery</h3><p>Use NFI to split and normalize source fields, then publish that parser before selecting those resulting JSON keys in an endpoint field map. Delivery profiles keep their existing independent review and rollout controls.</p><button type="button" class="secondary" data-action="nfi-open-context" data-target="outputs">Open NFI field workbench</button></section>${panel('Remote delivery status','Counts are process-local. Delivered records are counted only after Loki or ClickHouse confirms a push. Failed delivery attempts can include retried records.',`<div id="endpoint-delivery-status" aria-live="polite">${renderEndpointDelivery(fleetResult)}</div><button type="button" class="secondary" data-action="output-refresh-delivery" ${can('fleet:read')?'':'disabled'}>Refresh delivery status</button>`)}${panel('Saved output profiles','Profiles remain drafts until reviewed. Approved profiles are applied to selected clients through an independent rollout proposal.',profiles.length?table(['Profile','Revision','State','Destinations','Actions'],profiles.map(doc=>`<tr><td><b>${esc(doc.payload?.name||doc.id)}</b><br><small class="mono">${esc(doc.id)}</small></td><td>${doc.revision}</td><td>${badge(doc.state)}${approvalDetails(doc)}</td><td>${(doc.payload?.config?.outputs||[]).map(out=>esc(out.type)).join(', ')||'—'}</td><td><button class="secondary small" data-action="config-action" data-kind="outputs" data-id="${esc(doc.id)}" data-value="download">Download JSON</button> <button class="secondary small" data-action="config-action" data-kind="outputs" data-id="${esc(doc.id)}" data-value="${['draft','rejected','discarded'].includes(doc.state)?'edit':'copy'}">${['draft','rejected','discarded'].includes(doc.state)?'Edit draft':'Copy to new profile'}</button> <button class="danger small" data-action="config-action" data-kind="outputs" data-id="${esc(doc.id)}" data-value="delete">Remove</button>${lifecycle(doc)}</td></tr>`)):empty('No output profiles have been saved yet.'))}${panel('Roll out endpoint profile','The client applies only the outputs section and preserves its input, enrollment, telemetry, parser and enrichment configuration.',`<form id="output-rollout-form" class="form-grid"><label class="field wide">Published endpoint profile<select name="profile_id" required>${profiles.filter(doc=>doc.state==='active').map(doc=>`<option value="${esc(JSON.stringify([doc.id,doc.revision]))}">${esc(doc.payload?.name||doc.id)} · r${doc.revision}</option>`).join('')}</select></label><label class="field wide">Rollout scope<select name="scope" required><option value="canary">One test client</option><option value="selected">Selected clients</option><option value="fleet">All online clients</option></select></label><label class="field wide">Test client<select name="canary_node"><option value="">Choose a client</option>${nodeOptions}</select></label><label class="field wide">Selected client IDs<input name="targets" placeholder="node-id-1, node-id-2"></label><button class="primary" type="submit" ${profiles.some(doc=>doc.state==='active')?'':'disabled'}>Request independent approval</button><span class="hint wide">Start with one client to test its direct delivery. After checking confirmed records, request a new rollout for all online clients. Each request uses the selected published revision and goes through approval.</span></form>`)}`);
+  }
+
+  function renderEndpointDelivery(nodes) {
+    if (!nodes) return '<div class="callout warn">Fleet delivery status could not be loaded.</div>';
+    const destinations = [['Grafana Loki','loki_delivery'], ['ClickHouse','clickhouse_delivery']];
+    const rows = [], summaries = [];
+    for (const [label, key] of destinations) {
+      const online = nodes.filter(node => node.status !== 'offline');
+      const reporting = online.filter(node => node.metrics?.[key]);
+      const active = reporting.filter(node => node.metrics[key].active_writers > 0);
+      const delivered = active.reduce((total, node) => total + Number(node.metrics[key].delivered || 0), 0);
+      summaries.push(card(label, reporting.length ? number(delivered) : '—', `delivered records · ${active.length} enabled / ${reporting.length} reporting / ${online.length} online clients`));
+      for (const node of nodes) {
+        const metrics = node.metrics?.[key];
+        const status = node.status === 'offline' ? 'offline' : !metrics ? 'not reported' : !metrics.active_writers ? 'disabled' : metrics.failed_attempts ? 'enabled · failures recorded' : metrics.delivered ? 'delivering' : 'enabled · awaiting data';
+        rows.push(`<tr><td>${esc(node.hostname || node.id)}<br><small class="mono">${esc(node.id)}</small></td><td>${label}</td><td>${badge(status)}</td><td>${metrics ? number(metrics.delivered) : '—'}</td><td>${metrics ? number(metrics.failed_attempts) : '—'}</td><td>${time(node.metrics?.updated_at)}</td></tr>`);
+      }
+    }
+    return `<div class="grid cols-2">${summaries.join('')}</div>${table(['Client','Destination','State','Delivered records','Failed attempts','Reported at'],rows,'No enrolled clients are reporting delivery status.')}`;
+  }
+
+  function outputDestinationRole(item) {
+    if (item.type !== 'file') return item.type;
+    const routes = item.routes || [];
+    if (routes.some(route=>route==='quarantine'||route==='unknown')) return 'quarantine';
+    if (routes.some(route=>route==='normal'||route==='warning')) return 'normalised';
+    return 'file';
   }
 
   function buildOutputProfile(form) {
@@ -2444,7 +2628,31 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     if(selected.includes('loki')){const labels=parseJSON(data.loki_labels,'Loki labels');if(!labels||Array.isArray(labels)||typeof labels!=='object'||Object.values(labels).some(value=>typeof value!=='string'))throw new Error('Loki labels must be a JSON object of string values');const item={type:'loki',url:endpoint(data.loki_url,'Loki endpoint'),routes:remoteRoutes,fallback_path:fallback,batch_size:250,flush_sec:5};if(data.loki_token_env)item.bearer_token_env=env(data.loki_token_env,'Loki token variable');if(data.loki_tenant)item.tenant_id=data.loki_tenant;item.labels=labels;outputs.push(item);}
     if(selected.includes('clickhouse')){const fieldColumns=parseJSON(data.field_columns,'ClickHouse mappings');if(!fieldColumns||Array.isArray(fieldColumns)||typeof fieldColumns!=='object'||Object.entries(fieldColumns).some(([source,target])=>!source.trim()||typeof target!=='string'||!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(target)))throw new Error('ClickHouse mappings must be a JSON object with safe column identifiers');for(const [key,value] of [['database',data.clickhouse_database],['table',data.clickhouse_table]])if(!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(value))throw new Error(`ClickHouse ${key} must be an identifier`);const item={type:'clickhouse',url:endpoint(data.clickhouse_url,'ClickHouse endpoint'),database:data.clickhouse_database,table:data.clickhouse_table,routes:remoteRoutes,fallback_path:fallback,batch_size:250,flush_sec:5,field_columns:fieldColumns,max_field_columns:256};if(data.clickhouse_username)item.username=data.clickhouse_username;if(data.clickhouse_password_env)item.password_env=env(data.clickhouse_password_env,'ClickHouse password variable');outputs.push(item);}
     if(selected.includes('controller')){if(!data.controller_token_file.startsWith('/'))throw new Error('Controller token file must be an absolute protected path');outputs.push({type:'controller',url:endpoint(data.controller_url,'Controller endpoint'),token_file:data.controller_token_file,node_id_file:data.controller_node_id_file,routes:remoteRoutes,fallback_path:fallback});}
-    return {outputs};
+    const original = form.baseOutputProfile;
+    if (!original) return {outputs};
+    const editable = {
+      normalised: ['path','path_template'],
+      quarantine: ['path','path_template'],
+      loki: ['url','bearer_token_env','tenant_id','labels'],
+      clickhouse: ['url','database','table','username','password_env','field_columns'],
+      controller: ['url','token_file','node_id_file'],
+    };
+    const draftOutputs = outputs.flatMap(item => {
+      const role = outputDestinationRole(item);
+      const previous = (original.outputs || []).filter(entry => outputDestinationRole(entry) === role);
+      if (!previous.length) return [item];
+      const [first, ...additional] = previous;
+      const updated = {...first};
+      for (const key of editable[role]) {
+        if (Object.hasOwn(item,key)) updated[key] = item[key];
+        else delete updated[key];
+      }
+      return [updated, ...additional];
+    });
+    for (const item of original.outputs || []) {
+      if (!Object.hasOwn(editable, outputDestinationRole(item))) draftOutputs.push(item);
+    }
+    return {...original,outputs:draftOutputs};
   }
 
   function normalizeStreamFile(file={}) { const input=Number(sourceValue(file,'read_lines_per_second')||0),normal=Number(sourceValue(file,'normalized_per_second')||0),quarantine=Number(sourceValue(file,'quarantined_per_second')||0),thresholds=file.thresholds||state.sync.snapshot?.diagnostics?.thresholds||{};return {...file,bytes_per_second:sourceValue(file,'bytes_per_second'),queue_depth:sourceValue(file,'nli_queue_depth')??sourceValue(file,'queue_depth'),queue_capacity:sourceValue(file,'queue_capacity'),backpressure:sourceValue(file,'backpressure'),updated_at:file.controller_received_at||file.updated_at,input_rate:input,normal_rate:normal,quarantine_rate:quarantine,output_rate:normal+quarantine,thresholds:{read_lines_per_second:Number(thresholds.read_lines_per_second||0),bytes_per_second:Number(thresholds.bytes_per_second||0),quarantined_per_second:Number(thresholds.quarantined_per_second||0),queue_depth:Number(thresholds.queue_depth||0)}}; }
@@ -2955,9 +3163,42 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       case 'migration-form': { const file=form.querySelector('[name=source_file]').files[0];const filename=file?.name||data.filename;const content=file?await file.text():data.content;if(!content.trim())throw new Error('Choose a parser source file or paste its contents');await api('/migration/import',{method:'POST',body:{filename,source_type:data.source_type,content,create_draft:data.create_draft==='true'}});toast('Source analyzed without execution');await navigate('migration');break; }
       case 'input-profile-form': { const config=parseJSON(data.config,'Input definitions JSON');await api('/config/input-paths',{method:'POST',body:{id:data.id,name:data.name,config}});toast('Input profile revision saved');await navigate('input-paths');break; }
       case 'input-rollout-form': { const formData=new FormData(form),profileIds=formData.getAll('profile_id').filter(Boolean),allEligible=formData.has('all_eligible'),targets=(data.targets||'').split(',').map(v=>v.trim()).filter(Boolean);if(!profileIds.length)throw new Error('Select one or more published path profiles');if(!allEligible&&!targets.length)throw new Error('Select clients or choose every eligible online client');for(const profileId of profileIds)await api(`/config/input-paths/${encodeURIComponent(profileId)}/rollout`,{method:'POST',body:{node_ids:allEligible?[]:targets,...(allEligible&&formData.has('include_offline')?{include_offline:true}:{})}});state.inputHistoryProfile=profileIds[0];toast(`${profileIds.length} input-path rollout proposal${profileIds.length===1?'':'s'} await independent approval`);refreshApprovalBadge();await navigate('input-paths');break; }
-      case 'config-form': { const [path]=CONFIG[form.dataset.kind], config=parseJSON(data.config,'Configuration JSON');if(form.dataset.kind==='knownkeys'){if(!config||Array.isArray(config)||typeof config!=='object')throw new Error('Advanced metadata must be a JSON object.');config.keys=[...new Set(data.known_keys.split(/\r?\n/).map(key=>key.trim()).filter(Boolean))];}await api(path,{method:'POST',body:{id:data.id,name:data.name,config}});toast('Configuration revision saved');await navigate(form.dataset.kind);break; }
+      case 'known-key-quick-form': {
+        const key=data.key.trim();
+        if(!/^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/.test(key))throw new Error('Enter a valid key name, up to 128 characters.');
+        const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key.toLowerCase()));
+        const keyID=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
+        await api(CONFIG.knownkeys[0],{method:'POST',body:{id:'key-'+keyID,name:key,config:{keys:[key]}}});
+        toast('Known key draft saved. Submit it for review to publish.');
+        await navigate('knownkeys');
+        break;
+      }
+      case 'config-form': {
+        const kind=form.dataset.kind,[path]=CONFIG[kind],config=parseJSON(data.config,'Configuration JSON');
+        if(kind==='knownkeys'){
+          if(!config||Array.isArray(config)||typeof config!=='object')throw new Error('Advanced metadata must be a JSON object.');
+          const keys=data.known_keys.split(/\r?\n/).map(key=>key.trim()).filter(Boolean);
+          config.keys=[...new Map(keys.map(key=>[key.toLowerCase(),key])).values()];
+        }
+        if(form.dataset.editRevision){
+          await api(path+'/'+encodeURIComponent(data.id),{method:'PUT',body:{name:data.name,config,expected_revision:Number(form.dataset.editRevision)}});
+        }else{
+          await api(path,{method:'POST',body:{id:data.id,name:data.name,config}});
+        }
+        toast('Configuration draft revision saved');
+        await navigate(kind);
+        break;
+      }
       case 'output-profile-form': { const config=buildOutputProfile(form);await api('/config/output-destinations',{method:'POST',body:{id:data.id,name:data.name,config}});state.outputPreview=config;notify('Output profile validated and saved as a Supabase draft. Submit, approve, publish, then create a node rollout.');await navigate('outputs');break; }
-      case 'output-rollout-form': { const profile=await api(`/config/output-destinations/${encodeURIComponent(data.profile_id)}`);if(profile.state!=='active')throw new Error('Only a published endpoint profile can be rolled out');const outputs=profile.payload?.config?.outputs||[];await api('/rollouts',{method:'POST',body:{name:`Endpoint profile ${profile.payload?.name||data.profile_id}`,type:'config_push',target_nodes:data.targets.split(',').map(v=>v.trim()).filter(Boolean),payload:{config_patch:{outputs}},profile_id:data.profile_id,profile_revision:profile.revision}});toast('Endpoint rollout awaits independent approval');await navigate('rollouts');break; }
+      case 'output-rollout-form': {
+        const [profileID, revision] = JSON.parse(data.profile_id);
+        const targets = data.scope === 'canary' ? [data.canary_node].filter(Boolean) : data.scope === 'selected' ? data.targets.split(',').map(value => value.trim()).filter(Boolean) : [];
+        if (data.scope !== 'fleet' && !targets.length) throw new Error('Choose at least one online client for this rollout');
+        await api(`/config/output-destinations/${encodeURIComponent(profileID)}/rollout`,{method:'POST',body:{scope:data.scope,target_nodes:targets,profile_revision:revision}});
+        toast('Endpoint rollout awaits independent approval');
+        await navigate('rollouts');
+        break;
+      }
       case 'managed-input-file-form': {
         const all=data.scope==='all',select=form.elements.targets;
         const targets=[...(all?select.options:select.selectedOptions)].map(option=>option.value);
@@ -3039,6 +3280,29 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       case 'monitoring-pause': state.monitoringPaused=!state.monitoringPaused;renderMonitoring();break;
       case 'monitoring-reset': state.monitoringRange='15m';state.monitoringNode='all';state.monitoringSource='all';state.monitoringSearch='';state.monitoringView='overview';renderMonitoring();break;
       case 'download-output-config': if(state.outputPreview)downloadJSON('nli-output-destinations.json',state.outputPreview); break;
+      case 'output-reset': {
+        const form = page.querySelector('#output-profile-form');
+        if (!form) break;
+        form.reset();
+        delete form.baseOutputProfile;
+        state.outputPreview = null;
+        form.elements.id.readOnly = false;
+        form.elements.id.value = '';
+        form.querySelector('button[type=submit]').textContent = 'Validate and save draft';
+        page.querySelector('[data-endpoint-tab="destinations"]')?.click();
+        const preview = el('output-profile-preview');
+        if (preview) preview.textContent = 'Choose destinations and save to preview the validated outputs array.';
+        const download = page.querySelector('[data-action="download-output-config"]');
+        if (download) download.disabled = true;
+        form.elements.id.focus();
+        break;
+      }
+      case 'output-refresh-delivery': {
+        const nodes = await api('/fleet');
+        const status = el('endpoint-delivery-status');
+        if (status) status.innerHTML = renderEndpointDelivery(nodes);
+        break;
+      }
       case 'output-config-test': { const form=page.querySelector('#output-profile-form');if(!form)throw new Error('Endpoint configuration editor is unavailable');const config=buildOutputProfile(form);state.outputPreview=config;const preview=el('output-profile-preview'),result=el('output-config-test-result');if(preview)preview.textContent=pretty(config);if(result)result.textContent='Local profile validation passed. Only normal and warning routes are enabled for remote destinations; quarantine and unknown stay local and retryable. Network connectivity was not tested; verify reachability from the enrolled client.';const download=page.querySelector('[data-action=download-output-config]');if(download)download.disabled=false;toast('Endpoint configuration validated locally; network connectivity was not tested');break; }
       case 'parser-sync-verify': { const target=['quarantine-wizard','assurance','field-mapping'].includes(state.page)?state.page:'parser-sync',progress=notify('Refreshing controller and client reported parser state…','progress');try{const node=button.dataset.node;
         const body=node?{bundle_hash:button.dataset.bundle,node_ids:[node]}:{asset_class:button.dataset.class,asset_id:id};
@@ -3115,7 +3379,31 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       }
       case 'input-use-automatic': { const form=button.closest('form'),config=defaultInputProfile();form.elements.config.value=pretty(config);el('input-path-list').innerHTML=table(['Log path','Family','Status and actions'],inputPathRows(config));toast('All standard paths loaded');break; }
       case 'input-profile-reset': { const form=page.querySelector('#input-profile-form'),config=defaultInputProfile();form.reset();form.elements.id.readOnly=false;form.elements.config.value=pretty(config);el('input-path-list').innerHTML=table(['Log path','Family','Status and actions'],inputPathRows(config));break; }
-      case 'config-action': { const kind=button.dataset.kind,[collection]=CONFIG[kind],assetPath=`${collection}/${encodeURIComponent(id)}`;if(value==='revoke'&&kind==='knownkeys'){if(confirm(`Remove ${id} from the published Known Key Catalog and request fleet synchronization?`)){await api(`${assetPath}/revoke`,{method:'POST',body:{}});toast('Known keys revoked. Review the removal rollout in Approvals & Rollouts.');await navigate(kind);}}else if(value==='edit'||value==='copy'&&kind==='knownkeys'){const doc=await api(assetPath);if(value==='edit'&&!['draft','rejected'].includes(doc.state))throw new Error('Only draft or rejected assets can be edited.');if(kind==='outputs'){const form=page.querySelector('#output-profile-form'),config=doc.payload?.config||{},outputs=config.outputs||[],byType=type=>outputs.find(item=>item.type===type);if(!form)throw new Error('Output profile editor is unavailable');form.elements.id.value=id;form.elements.name.value=doc.payload?.name||id;form.elements.id.readOnly=true;form.querySelectorAll('[name=destinations]').forEach(input=>input.checked=outputs.some(item=>item.type===input.value));const local=outputs.filter(item=>item.type==='file'),normalised=form.querySelector('[name=normalised_enabled]');if(normalised)normalised.checked=local.some(item=>(item.routes||[]).includes('normal')||(item.routes||[]).includes('warning'));const normalFile=local.find(item=>(item.routes||[]).includes('normal')||(item.routes||[]).includes('warning'));const quarantineFile=local.find(item=>(item.routes||[]).includes('quarantine')||(item.routes||[]).includes('unknown'));if(normalFile)form.elements.normal_path.value=normalFile.path_template||normalFile.path;if(quarantineFile)form.elements.quarantine_path.value=quarantineFile.path_template||quarantineFile.path;const loki=byType('loki')||{};form.elements.loki_url.value=loki.url||'';form.elements.loki_token_env.value=loki.bearer_token_env||'';form.elements.loki_tenant.value=loki.tenant_id||'';form.elements.loki_labels.value=pretty(loki.labels||{job:'nli'});const clickhouse=byType('clickhouse')||{};form.elements.clickhouse_url.value=clickhouse.url||'';form.elements.clickhouse_database.value=clickhouse.database||'default';form.elements.clickhouse_table.value=clickhouse.table||'nli_logs';form.elements.clickhouse_username.value=clickhouse.username||'';form.elements.clickhouse_password_env.value=clickhouse.password_env||'';form.elements.field_columns.value=pretty(clickhouse.field_columns||{});const controller=byType('controller')||{};form.elements.controller_url.value=controller.url||'';form.elements.controller_token_file.value=controller.token_file||'';form.elements.controller_node_id_file.value=controller.node_id_file||'/var/lib/nli/node-id';state.outputPreview=config;const preview=el('output-profile-preview');if(preview)preview.textContent=pretty(config);const download=page.querySelector('[data-action=download-output-config]');if(download)download.disabled=false;form.scrollIntoView({behavior:'smooth',block:'center'});form.querySelector('button[type=submit]').textContent='Validate and save revised draft';toast('Output profile loaded for editing');}else{const form=page.querySelector('#config-form');const config={...(doc.payload?.config||{})};form.elements.id.value=value==='copy'?'':id;form.elements.name.value=doc.payload?.name||id;if(kind==='knownkeys'){form.elements.known_keys.value=(config.keys||[]).join('\n');delete config.keys;}form.elements.config.value=pretty(config);form.scrollIntoView({behavior:'smooth',block:'center'});form.querySelector('[name=id]').readOnly=value!=='copy';form.querySelector('button[type=submit]').textContent='Save new draft revision';toast('Draft loaded in the editor');}}else if(value==='delete'){if(confirm(`Remove ${kind==='outputs'?'endpoint profile':'parser asset'} ${id}?`)){await api(assetPath,{method:'DELETE',body:{}});toast(kind==='outputs'?'Endpoint profile removed':'Asset deleted');await navigate(kind);}}else if(value==='download'){const response=await fetchWithTimeout(`/api/v1${assetPath}/download`,{credentials:'same-origin',headers:{Accept:'application/json'}},15000);if(!response.ok)throw new Error(`Asset download failed (${response.status})`);downloadBlob(`${id}.json`,await response.blob());}else if(['submit','approve','publish'].includes(value)){const noun=kind==='outputs'?'endpoint profile':kind==='input-paths'?'input-path profile':'parser asset',body={};if(value==='approve'){const reason=prompt('Approval comment (optional, 3–512 characters):');if(reason===null)break;const comment=reason.trim();if(comment&&comment.length<3)throw new Error('Approval comment must contain at least 3 characters');if(comment)body.reason=comment;}const progress=notify(value==='publish'?`Publishing ${noun}…`:`${value==='approve'?'Approving':'Submitting'} ${noun}…`,'progress');try{const result=await api(`${assetPath}/${value}`,{method:'POST',body});notify(value==='publish'?(kind==='outputs'?'Endpoint profile published. Select target nodes in the rollout form.':kind==='input-paths'?'Input-path profile published and available for rollout.':`Published. Fleet bundle ${String(result.bundle_hash||'').slice(0,12)} is synchronizing.`):`${noun} ${value} complete.`);await navigate(kind);}catch(error){progress.fail(error.message);throw error;}}break; }
+      case 'catalog-add-alias': {
+        const form=button.closest('form');
+        form.querySelector('[data-catalog-fields] tbody').insertAdjacentHTML('beforeend',catalogFieldRow('','',false,true));
+        form.querySelector('[data-catalog-field]:last-child [data-catalog-source]').focus();
+        break;
+      }
+      case 'config-action': { const kind=button.dataset.kind,[collection]=CONFIG[kind],assetPath=`${collection}/${encodeURIComponent(id)}`,revisionQuery=button.dataset.revision?`?expected_revision=${encodeURIComponent(button.dataset.revision)}`:'';if(value==='revoke'&&kind==='knownkeys'){if(confirm(`Remove ${id} from the published Known Key Catalog and request fleet synchronization?`)){await api(`${assetPath}/revoke${revisionQuery}`,{method:'POST',body:{}});toast('Known keys revoked. Review the removal rollout in Approvals & Rollouts.');await navigate(kind);}}else if(value==='edit'||value==='copy'){const doc=await api(assetPath);if(value==='edit'&&!['draft','rejected','active','discarded'].includes(doc.state))throw new Error('This asset is already awaiting review or publication.');if(kind==='outputs'){const form=page.querySelector('#output-profile-form'),config=doc.payload?.config||{},outputs=config.outputs||[],byType=type=>outputs.find(item=>item.type===type);if(!form)throw new Error('Output profile editor is unavailable');form.elements.id.value=value==='copy'?'':id;form.elements.name.value=doc.payload?.name||id;form.elements.id.readOnly=value!=='copy';form.baseOutputProfile=config;page.querySelector('[data-endpoint-tab="destinations"]')?.click();form.querySelectorAll('[name=destinations]').forEach(input=>input.checked=outputs.some(item=>item.type===input.value));const local=outputs.filter(item=>item.type==='file'),normalised=form.querySelector('[name=normalised_enabled]');if(normalised)normalised.checked=local.some(item=>outputDestinationRole(item)==='normalised');const normalFile=local.find(item=>outputDestinationRole(item)==='normalised');const quarantineFile=local.find(item=>outputDestinationRole(item)==='quarantine');if(normalFile)form.elements.normal_path.value=normalFile.path_template||normalFile.path;if(quarantineFile)form.elements.quarantine_path.value=quarantineFile.path_template||quarantineFile.path;const loki=byType('loki')||{};form.elements.loki_url.value=loki.url||'';form.elements.loki_token_env.value=loki.bearer_token_env||'';form.elements.loki_tenant.value=loki.tenant_id||'';form.elements.loki_labels.value=pretty(loki.labels||{job:'nli'});const clickhouse=byType('clickhouse')||{};form.elements.clickhouse_url.value=clickhouse.url||'';form.elements.clickhouse_database.value=clickhouse.database||'default';form.elements.clickhouse_table.value=clickhouse.table||'nli_logs';form.elements.clickhouse_username.value=clickhouse.username||'';form.elements.clickhouse_password_env.value=clickhouse.password_env||'';form.elements.field_columns.value=pretty(clickhouse.field_columns||{});const controller=byType('controller')||{};form.elements.controller_url.value=controller.url||'';form.elements.controller_token_file.value=controller.token_file||'';form.elements.controller_node_id_file.value=controller.node_id_file||'/var/lib/nli/node-id';state.outputPreview=config;const preview=el('output-profile-preview');if(preview)preview.textContent=pretty(config);const download=page.querySelector('[data-action=download-output-config]');if(download)download.disabled=false;form.scrollIntoView({behavior:'smooth',block:'center'});form.querySelector('button[type=submit]').textContent=value==='copy'?'Validate and save new profile':'Validate and save revised draft';if(value==='copy')form.elements.id.focus();toast(value==='copy'?'Choose a new profile ID before saving':'Output profile loaded for editing');}else{
+        const form=el('config-form'),config={...(doc.payload?.config||{})};
+        if(!form)throw new Error('Configuration editor is unavailable');
+        form.elements.id.value=id;
+        form.elements.id.readOnly=true;
+        form.dataset.editRevision=String(doc.revision);
+        form.elements.name.value=doc.payload?.name||id;
+        if(kind==='knownkeys'){
+          form.elements.known_keys.value=(config.keys||[]).join('\n');
+          delete config.keys;
+        }
+        form.elements.config.value=pretty(config);
+        form.querySelector('button[type=submit]').textContent='Save draft revision';
+        showCatalogFields(form);
+        page.dataset.dirty='true';
+        form.scrollIntoView({behavior:'smooth',block:'center'});
+        form.querySelector('[data-catalog-name], [name=known_keys], [name=config]')?.focus({preventScroll:true});
+        toast('Asset loaded for a draft revision');
+      }}else if(value==='delete'){if(confirm(`Remove ${kind==='outputs'?'endpoint profile':'parser asset'} ${id}?`)){await api(assetPath+revisionQuery,{method:'DELETE',body:{}});toast(kind==='outputs'?'Endpoint profile removed':'Draft discarded');await navigate(kind);}}else if(value==='download'){const response=await fetchWithTimeout(`/api/v1${assetPath}/download`,{credentials:'same-origin',headers:{Accept:'application/json'}},15000);if(!response.ok)throw new Error(`Asset download failed (${response.status})`);downloadBlob(`${id}.json`,await response.blob());}else if(['submit','approve','publish'].includes(value)){const noun=kind==='outputs'?'endpoint profile':kind==='input-paths'?'input-path profile':'parser asset',body={};if(value==='approve'){const reason=prompt('Approval comment (optional, 3–512 characters):');if(reason===null)break;const comment=reason.trim();if(comment&&comment.length<3)throw new Error('Approval comment must contain at least 3 characters');if(comment)body.reason=comment;}const progress=notify(value==='publish'?`Publishing ${noun}…`:`${value==='approve'?'Approving':'Submitting'} ${noun}…`,'progress');try{const result=await api(`${assetPath}/${value}${revisionQuery}`,{method:'POST',body});notify(value==='publish'?(kind==='outputs'?'Endpoint profile published. Select target nodes in the rollout form.':kind==='input-paths'?'Input-path profile published and available for rollout.':`Published. Fleet bundle ${String(result.bundle_hash||'').slice(0,12)} is synchronizing.`):`${noun} ${value} complete.`);await navigate(kind);}catch(error){progress.fail(error.message);throw error;}}break; }
       case 'parser-restore': {const newID=prompt('New parser ID for the restored inactive draft:',`${id}-restored`);if(newID===null)break;if(!newID.trim()||newID.trim()===id)throw new Error('Use a distinct, nonempty parser ID for the restored draft.');const result=await api(`/parser-packs/deleted/${encodeURIComponent(id)}/restore`,{method:'POST',body:{id:newID.trim(),reason:'Administrator restored archived parser as inactive draft'}});notify(`Restored ${result.id||newID} as an inactive draft. Validate representative logs, submit, approve and publish before rollout.`);await navigate('parsers');break;}
       case 'parser-asset': { if(value==='edit'){const doc=await api(`/parser-packs/${encodeURIComponent(id)}`);const p=doc.payload||doc;if(!['draft','rejected'].includes(doc.state))throw new Error('Only draft or rejected parser packs can be edited.');const form=page.querySelector('#parser-form');form.dataset.editId=id;form.elements.id.value=id;form.elements.id.readOnly=true;form.elements.name.value=p.name||id;form.elements.version.value=p.version||'0.1.0';form.elements.priority.value=p.priority||100;form.elements.rules.value=pretty(p.rules||[]);form.elements.regression_cases.value=pretty(p.regression_cases||[]);form.querySelector('button[type=submit]').textContent='Save parser revision';form.scrollIntoView({behavior:'smooth',block:'center'});}else if(value==='delete'){if(confirm(`Archive and remove parser pack ${id} from the desired runtime bundle? Active clients must acknowledge the removal bundle before it stops running there. You can restore an inactive draft later.`)){const deleted=await api(`/parser-packs/${encodeURIComponent(id)}`,{method:'DELETE',body:{}});toast(deleted.rollout_proposal?`Parser archived. Removal rollout ${deleted.rollout_proposal.id||''} requires approval; client removal is pending exact acknowledgement.`:'Parser archived; refresh inventory to verify controller and client status.');await navigate('parsers');}}else if(value==='download'){const doc=await api(`/parser-packs/${encodeURIComponent(id)}`);downloadJSON(`${id}.json`,doc.payload||doc);}break; }
       case 'download-builtin': { const item=state.builtinParsers.find(parser=>String(parser.id)===id);if(!item)throw new Error('Built-in parser details are no longer available; refresh the catalog.');downloadJSON(`${id}-builtin.json`,item);break; }
@@ -3288,6 +3576,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
             editor.elements.known_keys.value=(keys||[]).join('\n');
             editor.elements.config.value=pretty(metadata);
           }else editor.elements.config.value=pretty(config);
+          showCatalogFields(editor);
           page.dataset.dirty='true';
           form.closest('dialog')?.close();
           editor.scrollIntoView({block:'start'});
@@ -3577,6 +3866,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
           }
           if (generate && result.passed && result.config) {
             editor.value=pretty(result.config);
+            showCatalogFields(editor.form);
             page.dataset.dirty='true';
           }
           host.textContent=(result.records_requiring_kv_template > 0
@@ -3820,7 +4110,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     source.onerror=()=>{if(!state.user)return;state.streamMode='reconnecting';el('stream-state').innerHTML='<i></i>Reconnecting · recovery active';state.streamFailures++;source.close();state.streamSource=null;pollCanonicalSnapshot('event stream interrupted');if(state.streamReconnectTimer)clearTimeout(state.streamReconnectTimer);const delay=Math.min(1000*(2**Math.min(state.streamFailures-1,5)),30000);state.streamReconnectTimer=setTimeout(()=>{state.streamReconnectTimer=null;if(state.user)connectStream();},delay);renderSyncSubscriber({force:true});};
   }
 
-  async function signOut(notify=true){state.sampleHistoryEnabled=false;inFlightReads.clear();state.navigationHistory=[];if(state.socket){state.socket.onclose=null;state.socket.close();state.socket=null;}if(state.streamSource){state.streamSource.close();state.streamSource=null;}if(state.streamPollTimer){clearInterval(state.streamPollTimer);state.streamPollTimer=null;}if(state.streamReconnectTimer){clearTimeout(state.streamReconnectTimer);state.streamReconnectTimer=null;}state.sync.pollController?.abort();state.user=null;if(notify){try{await api('/auth/logout',{method:'POST',body:{}});}catch{}}state.csrf='';state.lastAssurance=null;state.quarantineDiagnosis=null;state.gprsManual=null;state.blockBoard=null;state.blockSeed='';state.qrwReplayAcceptedIds=[];state.gprsSamples=[];state.gprsPreview=null;state.qrwFields=[];state.nfiRaw='';state.nfiCorpus='';state.nfiService='auto';state.nfiScopePattern='';state.nfiGlobalScope=false;state.nfiEditId='';state.nfiName='';state.nfiVersion='';state.nfiParser=null;state.nfiCases=[];state.nfiProfiles=[];state.nfiDesired=null;state.aiSelectedProviderId='';state.aiProviderTemplates=[];state.nfiMappingPriority=0;state.nfiSenseMode='';state.nfiExpert=false;state.nfiGuideStep=undefined;state.nfiCandidateValidated=null;state.nfiPreviewed=false;clearTimeout(nfiLiveTimer);nfiAnalysisController?.abort();qrwControllerPreview=null;state.controllerNotifications=[];state.notifications=[];renderNotificationBell();sessionStorage.removeItem('nli.qrw.mapping-draft');sessionStorage.removeItem('nli.qrw.selected-record');state.live=[];state.polling=false;state.sync={snapshot:null,history:[],browserAppliedAt:0,browserDelayMs:null,lastReceivedAt:0,pollInFlight:false,pollController:null,pollFailures:0,rejectedUpdates:0,connectionStartedAt:0,resyncing:false,renderedSignature:null,renderScheduled:false};el('login-form').querySelector('[name=password]').value='';el('app-view').hidden=true;el('auth-view').hidden=false;}
+  async function signOut(notify=true){state.sampleHistoryEnabled=false;inFlightReads.clear();state.navigationHistory=[];if(state.socket){state.socket.onclose=null;state.socket.close();state.socket=null;}if(state.streamSource){state.streamSource.close();state.streamSource=null;}if(state.streamPollTimer){clearInterval(state.streamPollTimer);state.streamPollTimer=null;}if(state.streamReconnectTimer){clearTimeout(state.streamReconnectTimer);state.streamReconnectTimer=null;}state.sync.pollController?.abort();state.user=null;favoriteRequest++;favoriteSaving=false;if(notify){try{await api('/auth/logout',{method:'POST',body:{}});}catch{}}state.csrf='';state.lastAssurance=null;state.quarantineDiagnosis=null;state.gprsManual=null;state.blockBoard=null;state.blockSeed='';state.qrwReplayAcceptedIds=[];state.gprsSamples=[];state.gprsPreview=null;state.qrwFields=[];state.nfiRaw='';state.nfiCorpus='';state.nfiService='auto';state.nfiScopePattern='';state.nfiGlobalScope=false;state.nfiEditId='';state.nfiName='';state.nfiVersion='';state.nfiParser=null;state.nfiCases=[];state.nfiProfiles=[];state.nfiDesired=null;state.aiSelectedProviderId='';state.aiProviderTemplates=[];state.nfiMappingPriority=0;state.nfiSenseMode='';state.nfiExpert=false;state.nfiGuideStep=undefined;state.nfiCandidateValidated=null;state.nfiPreviewed=false;clearTimeout(nfiLiveTimer);nfiAnalysisController?.abort();qrwControllerPreview=null;state.controllerNotifications=[];state.notifications=[];renderNotificationBell();sessionStorage.removeItem('nli.qrw.mapping-draft');sessionStorage.removeItem('nli.qrw.selected-record');state.live=[];state.polling=false;state.sync={snapshot:null,history:[],browserAppliedAt:0,browserDelayMs:null,lastReceivedAt:0,pollInFlight:false,pollController:null,pollFailures:0,rejectedUpdates:0,connectionStartedAt:0,resyncing:false,renderedSignature:null,renderScheduled:false};el('login-form').querySelector('[name=password]').value='';el('app-view').hidden=true;el('auth-view').hidden=false;}
   let browserHeartbeatRetryAt = 0;
   let browserHeartbeatDelay = 5000;
   async function sendBrowserHeartbeat(){
@@ -3839,7 +4129,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       state.browserHeartbeatInFlight=false;
     }
   }
-  async function boot(user){state.user=user;buildNav();el('identity-name').textContent=user.username;el('identity-role').textContent=user.role;el('auth-view').hidden=true;el('app-view').hidden=false;await ensureCSRF();refreshApprovalBadge();await refreshNotificationBell();sendBrowserHeartbeat();await connectStream();await navigate(location.hash.slice(1)||'operations');}
+  async function boot(user){state.user=user;favoriteWorkspaces=new Set();favoritesLoaded=false;buildNav();updateFavoriteButton();refreshFavorites();el('identity-name').textContent=user.username;el('identity-role').textContent=user.role;el('auth-view').hidden=true;el('app-view').hidden=false;await ensureCSRF();refreshApprovalBadge();await refreshNotificationBell();sendBrowserHeartbeat();await connectStream();await navigate(location.hash.slice(1)||'operations');}
 
   el('login-form').addEventListener('submit',async event=>{event.preventDefault();if(!state.controllerReady){showPreviewOnly(CONTROLLER_REQUIRED);return;}const data=formObject(event.currentTarget);el('login-error').textContent='';try{await api('/auth/login',{method:'POST',body:data});const principal=await api('/auth/me');await boot(principal);}catch(error){el('login-error').textContent=error.message;}});
   el('retry-controller').addEventListener('click',checkController);
@@ -3890,6 +4180,8 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     if(target.name==='all_eligible'){const form=target.form,targets=form.elements.targets,offline=form.elements.include_offline;targets.disabled=target.checked;offline.disabled=!target.checked;if(!target.checked)offline.checked=false;if(target.checked)targets.value='';}
     if(target.name==='client_target'||target.id==='input-select-all'){const selected=[...page.querySelectorAll('[name=client_target]:checked')].map(input=>input.value),targets=page.querySelector('#input-rollout-form [name=targets]'),all=page.querySelector('#input-select-all'),allEligible=page.querySelector('#input-rollout-form [name=all_eligible]');if(allEligible?.checked){allEligible.checked=false;allEligible.dispatchEvent(new Event('change',{bubbles:true}));}if(targets){targets.disabled=false;targets.value=selected.join(', ');}if(all){const boxes=[...page.querySelectorAll('[name=client_target]')];all.checked=boxes.length>0&&boxes.every(input=>input.checked);all.indeterminate=boxes.some(input=>input.checked)&&!all.checked;}}
   });
+  el('workspace-favorite').addEventListener('click',toggleWorkspaceFavorite);
+  window.addEventListener('focus',refreshFavorites);
   el('nav').addEventListener('click',event=>{const button=event.target.closest('[data-page]');if(button){if(state.page===button.dataset.page||location.hash.slice(1)===button.dataset.page)navigate(button.dataset.page);else location.hash=button.dataset.page;}});
   page.addEventListener('submit',async event=>{event.preventDefault();const button=event.submitter,inlineReplay=['gprs-replay-form','quarantine-reprocess-form'].includes(event.target.id);if(button)button.disabled=true;const progress=inlineReplay?null:notify('Processing request…','progress');try{await submit(event.target);}catch(error){if(inlineReplay)setReplayStatus(event.target,replayGateMessage(error)||`Replay request was not accepted: ${error.message}. Live telemetry remains active.`,'warn');else{progress.fail(error.message);toast(error.message,true);}}finally{if(button)button.disabled=false;}});
   page.addEventListener('input',()=>{for(const host of page.querySelectorAll('[data-ai-mapping-host]')){if(host.aiProposal&&mappingAIRaw(host)!==host.aiProposal.raw){host.querySelector('[data-ai-mapping-proposal]').hidden=true;host.querySelector('[data-ai-mapping-status]').textContent='Raw evidence changed; request a fresh AI proposal before import.';}}});

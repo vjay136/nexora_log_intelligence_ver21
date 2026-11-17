@@ -256,6 +256,56 @@ func (s *Server) listParserSyncDocuments(ctx context.Context, collection, state 
 	return documents, nil
 }
 
+func priorActiveAssetRevision(doc metastore.Document) int {
+	var payload struct {
+		Revision int `json:"previous_active_revision"`
+	}
+	if json.Unmarshal(doc.Payload, &payload) != nil || payload.Revision <= 0 || payload.Revision >= doc.Revision {
+		return 0
+	}
+	return payload.Revision
+}
+
+// Resolve the immutable publication while a successor is being edited or reviewed.
+func (s *Server) effectiveParserAsset(ctx context.Context, doc metastore.Document) (metastore.Document, error) {
+	if doc.Deleted {
+		return metastore.Document{}, nil
+	}
+	if doc.State == "active" || (doc.Collection == "parser-packs" && doc.State == "published") {
+		return doc, nil
+	}
+	if doc.Collection == "parser-packs" || doc.State == "revoked" {
+		return metastore.Document{}, nil
+	}
+	revision := priorActiveAssetRevision(doc)
+	if revision == 0 {
+		return metastore.Document{}, nil
+	}
+	prior, err := s.metadata.Get(ctx, doc.Collection, doc.ID, revision)
+	if err != nil || prior.State != "active" || prior.Deleted {
+		return metastore.Document{}, fmt.Errorf("published revision %s/%s r%d is unavailable", doc.Collection, doc.ID, revision)
+	}
+	return prior, nil
+}
+
+func (s *Server) listEffectiveParserAssets(ctx context.Context, collection string) ([]metastore.Document, error) {
+	docs, err := s.listParserSyncDocuments(ctx, collection, "", parserSyncTargetLimit)
+	if err != nil {
+		return nil, err
+	}
+	active := docs[:0]
+	for _, doc := range docs {
+		published, err := s.effectiveParserAsset(ctx, doc)
+		if err != nil {
+			return nil, err
+		}
+		if published.Revision > 0 {
+			active = append(active, published)
+		}
+	}
+	return active, nil
+}
+
 // Keep Fleet Sync and replay on the same acknowledgement contract.
 func parserBundleAcknowledged(state map[string]any, hash string) bool {
 	return hash != "" &&
@@ -282,7 +332,7 @@ func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle
 		results := make(chan collectionRead, 1)
 		reads[index] = results
 		go func(collection string, results chan<- collectionRead) {
-			documents, err := s.listParserSyncDocuments(readContext, collection, "", parserSyncTargetLimit)
+			documents, err := s.listEffectiveParserAssets(readContext, collection)
 			results <- collectionRead{documents: documents, err: err}
 		}(collection, results)
 	}
@@ -449,11 +499,18 @@ const (
 	largeKVMinimumRelease       = "22.12.0-0"
 	taggedMailMinimumRelease    = "22.14.0-0"
 	liveTemplateMinimumRelease  = "22.16.1-0"
+	flatTemplateMinimumRelease  = "22.19.1-0"
 )
 
 // Inspect native stage content so imported packs cannot bypass the release
 // requirement by omitting their informational minimum_client_release metadata.
 func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
+	minimum := ""
+	requireVersion := func(version string) {
+		if minimum == "" || !parserClientSupportsKVRelease(minimum, version) {
+			minimum = version
+		}
+	}
 	for _, asset := range bundle.Assets {
 		if asset.AssetClass != "templates" {
 			continue
@@ -463,11 +520,10 @@ func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
 		}
 		if json.Unmarshal(asset.Payload, &payload) == nil {
 			if _, err := fieldmapping.ComposeTemplates(payload.Config, nil); err == nil {
-				return liveTemplateMinimumRelease
+				requireVersion(liveTemplateMinimumRelease)
 			}
 		}
 	}
-	minimum := ""
 	for _, asset := range bundle.Assets {
 		if asset.AssetClass != "parser-packs" {
 			continue
@@ -489,22 +545,19 @@ func parserBundleMinimumKVRelease(bundle parserAssetBundle) string {
 					continue
 				}
 				for _, field := range stage.Config.Fields {
-					if taggedMailTemplateField(field) {
-						return taggedMailMinimumRelease
-					}
-					if field.UsesLargeKV() {
-						minimum = largeKVMinimumRelease
-						continue
-					}
-					if minimum == largeKVMinimumRelease {
-						continue
-					}
-					if field.UsesAdvancedKV() {
-						minimum = advancedKVMinimumRelease
-					} else if len(field.KVInputEdits) > 0 && minimum != advancedKVMinimumRelease {
-						minimum = kvInputEditsMinimumRelease
-					} else if len(field.KeyValueEdits) > 0 && minimum == "" {
-						minimum = kvOutputEditsMinimumRelease
+					switch {
+					case field.KVHeaderPattern != "" && field.OutputPolicy == "flatten":
+						return flatTemplateMinimumRelease
+					case taggedMailTemplateField(field):
+						requireVersion(taggedMailMinimumRelease)
+					case field.UsesLargeKV():
+						requireVersion(largeKVMinimumRelease)
+					case field.UsesAdvancedKV():
+						requireVersion(advancedKVMinimumRelease)
+					case len(field.KVInputEdits) > 0:
+						requireVersion(kvInputEditsMinimumRelease)
+					case len(field.KeyValueEdits) > 0:
+						requireVersion(kvOutputEditsMinimumRelease)
 					}
 				}
 			}
@@ -1090,15 +1143,17 @@ func (s *Server) handleParserAssetTransition(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		state = "active"
+		delete(payload, "previous_active_revision")
 		payload["published_by"] = principal.Username
 		payload["published_at"] = time.Now().UTC()
 	case "revoke":
-		if collection != "known-keys" || (state != "active" && state != "revoked") {
+		if collection != "known-keys" || (state != "active" && state != "revoked" && state != "discarded") {
 			jsonError(w, "only active known-key assets can be revoked", http.StatusConflict)
 			return
 		}
-		if state == "active" {
+		if state != "revoked" {
 			state = "revoked"
+			delete(payload, "previous_active_revision")
 			payload["revoked_by"] = principal.Username
 			payload["revoked_at"] = time.Now().UTC()
 		}

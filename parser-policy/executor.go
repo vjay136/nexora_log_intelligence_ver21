@@ -182,6 +182,79 @@ func (e *ParserPackExecutor) MatchesKVHeader(ruleID, stageID, input string) bool
 	return plan != nil && plan.MatchesKVHeader(input)
 }
 
+// ExecuteProduction projects legacy composed templates to the current event
+// shape after the signed parser's original contract has validated the input.
+func (e *ParserPackExecutor) ExecuteProduction(request *ExecutionRequest) (*ExecutionResult, error) {
+	result, err := e.Execute(request)
+	if err != nil || result == nil || result.Quarantined || result.EventPayload == nil {
+		return result, err
+	}
+	const wrapper = "kv_pair"
+	tail, wrapped := result.EventPayload.Fields[wrapper].(map[string]any)
+	if !wrapped || len(tail) == 0 {
+		return result, nil
+	}
+	meta := result.ParseTelemetry
+	for i := range meta.OrderedAttempts {
+		attempt := &meta.OrderedAttempts[i]
+		if attempt.ParserID != result.ParserID {
+			continue
+		}
+		for j := range attempt.StageResults {
+			stage := &attempt.StageResults[j]
+			plan := e.mappingPlans[result.RuleID+"/"+stage.StageID]
+			if plan == nil || !plan.LegacyTemplateKVWrapper() || !plan.MatchesKVHeader(request.Input) {
+				continue
+			}
+			if !flattenLegacyTemplateKV(result.EventPayload, meta, tail) {
+				const code = "incomplete_structured_tail"
+				stage.Outcome, stage.ErrorCode = telemetry.StageOutcomeFailed, code
+				attempt.Outcome, attempt.FailureReason, attempt.FieldsEmitted = telemetry.AttemptOutcomeQuarantined, code, 0
+				meta.FieldEvidence, meta.InputFieldCount, meta.SourceFieldCount, meta.OutputFieldCount = nil, 0, 0, 0
+				return e.quarantinedResult(meta, time.Now(), code), nil
+			}
+			added := len(tail) - 1
+			stage.FieldsAdded += added
+			attempt.FieldsEmitted = len(result.EventPayload.Fields)
+			return result, nil
+		}
+	}
+	return result, nil
+}
+
+func flattenLegacyTemplateKV(payload *telemetry.EventPayload, meta *telemetry.ParseTelemetry, tail map[string]any) bool {
+	const wrapper = "kv_pair"
+	evidence := make([]telemetry.FieldEvidence, 0, len(meta.FieldEvidence))
+	observed := make(map[string]bool, len(tail))
+	for _, field := range meta.FieldEvidence {
+		if field.Field == wrapper {
+			continue
+		}
+		if key, child := strings.CutPrefix(field.Field, wrapper+"."); child {
+			if _, found := tail[key]; found && field.Source {
+				field.Field = key
+				observed[key] = true
+			}
+		}
+		evidence = append(evidence, field)
+	}
+	for key := range tail {
+		_, collision := payload.Fields[key]
+		if !observed[key] || !fieldmapping.IsTemplateKVOutputKey(key) || collision && key != wrapper {
+			return false
+		}
+	}
+	delete(payload.Fields, wrapper)
+	for key, value := range tail {
+		payload.Fields[key] = value
+	}
+	meta.FieldEvidence = evidence
+	meta.InputFieldCount += len(tail) - 1
+	meta.SourceFieldCount += len(tail) - 1
+	meta.OutputFieldCount = len(payload.Fields)
+	return true
+}
+
 func (e *ParserPackExecutor) Execute(request *ExecutionRequest) (*ExecutionResult, error) {
 	started := time.Now()
 	if !e.compiled {

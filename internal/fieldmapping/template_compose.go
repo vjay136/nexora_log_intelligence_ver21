@@ -24,6 +24,11 @@ type HeaderTemplateLimits struct {
 	TimeoutMS     int `json:"timeout_ms,omitempty"`
 }
 
+// IsTemplateKVOutputKey checks a key that the selected KV grammar has already recognized.
+func IsTemplateKVOutputKey(key string) bool {
+	return key != "" && key != "raw" && key != "_raw"
+}
+
 func ComposeTemplates(header HeaderTemplate, profile *mixedkv.Config) (Plan, error) {
 	plan := Plan{Version: 1}
 	if header.Engine != "" && header.Engine != "re2" || len(header.Pattern) > MaxRegexBytes ||
@@ -64,7 +69,7 @@ func ComposeTemplates(header HeaderTemplate, profile *mixedkv.Config) (Plan, err
 	}
 	if profile == nil {
 		plan.Fields = append(plan.Fields, Field{
-			Name: "kv_pair", Type: "object", Method: "kv_all", Policy: "optional",
+			Name: "kv_pair", Type: "object", Method: "kv_all", Policy: "optional", OutputPolicy: "flatten",
 			KVProfile: "auto", KVHeaderPattern: header.Pattern,
 			KeyOptions: KeyOptions{RequireComplete: true},
 		})
@@ -93,7 +98,7 @@ func ComposeTemplates(header HeaderTemplate, profile *mixedkv.Config) (Plan, err
 		policy = "reject"
 	}
 	tail := Field{
-		Name: "kv_pair", Type: "object", Method: "kv_all", Policy: "optional", KVProfile: "configured",
+		Name: "kv_pair", Type: "object", Method: "kv_all", Policy: "optional", OutputPolicy: "flatten", KVProfile: "configured",
 		KVHeaderPattern: header.Pattern, KVLiteralBoundaries: true, KVMaxPairs: kv.MaxFields,
 		KVBareField: kv.BareField, KVEmptyKeyField: kv.EmptyKeyField, DuplicatePolicy: policy,
 		KVPairSeparators: kv.PairSeparators, KVQuotes: kv.QuoteCharacters, KVEscape: kv.EscapeCharacter,
@@ -106,4 +111,25 @@ func ComposeTemplates(header HeaderTemplate, profile *mixedkv.Config) (Plan, err
 		tail.KVBrackets = &kv.BracketPairs
 	}
 	return Plan{Version: 1, Fields: append(plan.Fields, tail)}, nil
+}
+
+// LegacyTemplateKVWrapper identifies the old generated mapping shape. Authored
+// object mappings without the complete, shared header selector retain their shape.
+func (c *Compiled) LegacyTemplateKVWrapper() bool {
+	if len(c.fields) < 2 {
+		return false
+	}
+	tail := c.fields[len(c.fields)-1].field
+	if tail.Name != "kv_pair" || tail.Method != "kv_all" || tail.Type != "object" ||
+		tail.KVHeaderPattern == "" || !tail.RequireComplete || tail.OutputPolicy != "" ||
+		len(tail.Operations) != 0 || len(tail.KeyValueEdits) != 0 || tail.KVNestedObjects {
+		return false
+	}
+	for _, capture := range c.fields[:len(c.fields)-1] {
+		f := capture.field
+		if f.Method != "regex" || f.Source != tail.KVHeaderPattern || f.Part == "" {
+			return false
+		}
+	}
+	return true
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## v22.19.1-0
+
+- Flatten template-derived KV fields into the parsed event, preserving valid source names.
+- Save workspace Favorites per account and role.
+- Add Known Key Catalog quick entry and editable parser-configuration revisions that preserve the active revision during review.
+- Show confirmed remote delivery counts and support one-client, selected-client, and online-fleet endpoint rollouts.
+
 ## v22.18.1-0
 
 - Resolve conflicting KV profiles through complete automatic extraction and load published known keys in template runtime.

@@ -512,6 +512,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("/api/v1/auth/logout", guard(middleware.PermissionSystemHealth, s.handleLogout))
 	s.mux.HandleFunc("/api/v1/auth/me", guard(middleware.PermissionSystemHealth, s.handleMe))
+	s.mux.HandleFunc("/api/v1/auth/workspace-favorites", guard(middleware.PermissionSystemHealth, s.handleWorkspaceFavorites))
 	s.mux.HandleFunc("/api/v1/auth/csrf", guard(middleware.PermissionSystemHealth, s.handleCSRF))
 	s.mux.HandleFunc("/api/v1/node/register", s.handleNodeRegister)
 	s.mux.HandleFunc("/api/v1/node/heartbeat", s.handleNodeHeartbeat)
@@ -862,13 +863,19 @@ func (s *Server) handleNodeHeartbeat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	metrics := &fleet.NodeMetrics{Received: request.Metrics.Received, Parsed: request.Metrics.Parsed, Quarantined: request.Metrics.Quarantined, Errors: request.Metrics.Errors, ParseRate: request.Metrics.ParseRate, ParseLatencyMs: request.Metrics.ParseLatencyMs, CPUPercent: request.Metrics.CPUPercent, MemoryBytes: request.Metrics.MemoryBytes, MemoryPercent: request.Metrics.MemoryPercent, Load1: request.Metrics.Load1, Load5: request.Metrics.Load5, Load15: request.Metrics.Load15, HostMetricsAvailable: request.Metrics.HostMetricsAvailable, UPESMetricsAvailable: request.Metrics.UPESMetricsAvailable, UPESUniqueFailureSignatures: request.Metrics.UPESUniqueFailureSignatures, UPESObservedFailures: request.Metrics.UPESObservedFailures, UPESDiscoveryQueued: request.Metrics.UPESDiscoveryQueued, UPESDiscoveryDropped: request.Metrics.UPESDiscoveryDropped, UPESDiscoveryPending: request.Metrics.UPESDiscoveryPending}
+	for _, delivery := range []*protocol.DeliveryMetrics{request.Metrics.LokiDelivery, request.Metrics.ClickHouseDelivery} {
+		if delivery != nil && (delivery.ActiveWriters > 1024 || delivery.Delivered > 1<<60 || delivery.FailedAttempts > 1<<60) {
+			jsonError(w, "heartbeat delivery metrics exceed supported bounds", http.StatusBadRequest)
+			return
+		}
+	}
+	metrics := &fleet.NodeMetrics{LokiDelivery: request.Metrics.LokiDelivery, ClickHouseDelivery: request.Metrics.ClickHouseDelivery, Received: request.Metrics.Received, Parsed: request.Metrics.Parsed, Quarantined: request.Metrics.Quarantined, Errors: request.Metrics.Errors, ParseRate: request.Metrics.ParseRate, ParseLatencyMs: request.Metrics.ParseLatencyMs, CPUPercent: request.Metrics.CPUPercent, MemoryBytes: request.Metrics.MemoryBytes, MemoryPercent: request.Metrics.MemoryPercent, Load1: request.Metrics.Load1, Load5: request.Metrics.Load5, Load15: request.Metrics.Load15, HostMetricsAvailable: request.Metrics.HostMetricsAvailable, UPESMetricsAvailable: request.Metrics.UPESMetricsAvailable, UPESUniqueFailureSignatures: request.Metrics.UPESUniqueFailureSignatures, UPESObservedFailures: request.Metrics.UPESObservedFailures, UPESDiscoveryQueued: request.Metrics.UPESDiscoveryQueued, UPESDiscoveryDropped: request.Metrics.UPESDiscoveryDropped, UPESDiscoveryPending: request.Metrics.UPESDiscoveryPending}
 	if err := s.fleet.UpdateHeartbeat(request.NodeID, request.Version, request.ConfigHash, request.Health, request.Issues, parsers, metrics); err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	s.updateSyncFromHeartbeat(request)
-	jsonOK(w, map[string]string{"status": "ok"})
+	jsonOK(w, protocol.HeartbeatResponse{Status: "ok", DeliveryMetricsSupported: true})
 }
 
 func (s *Server) handleNodeStreamTelemetry(w http.ResponseWriter, r *http.Request) {
