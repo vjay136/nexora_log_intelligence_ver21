@@ -4188,7 +4188,13 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   });
   el('workspace-favorite').addEventListener('click',toggleWorkspaceFavorite);
   window.addEventListener('focus',refreshFavorites);
-  el('nav').addEventListener('click',event=>{const button=event.target.closest('[data-page]');if(button){if(state.page===button.dataset.page||location.hash.slice(1)===button.dataset.page)navigate(button.dataset.page);else location.hash=button.dataset.page;}});
+  el('nav').addEventListener('click', event => {
+    const button = event.target.closest('[data-page]');
+    if (!button) return;
+    const id = button.dataset.page;
+    if (location.hash.slice(1) !== id) history.pushState(null, '', `#${id}`);
+    navigate(id);
+  });
   page.addEventListener('submit',async event=>{event.preventDefault();const button=event.submitter,inlineReplay=['gprs-replay-form','quarantine-reprocess-form'].includes(event.target.id);if(button)button.disabled=true;const progress=inlineReplay?null:notify('Processing request…','progress');try{await submit(event.target);}catch(error){if(inlineReplay)setReplayStatus(event.target,replayGateMessage(error)||`Replay request was not accepted: ${error.message}. Live telemetry remains active.`,'warn');else{progress.fail(error.message);toast(error.message,true);}}finally{if(button)button.disabled=false;}});
   page.addEventListener('input',()=>{for(const host of page.querySelectorAll('[data-ai-mapping-host]')){if(host.aiProposal&&mappingAIRaw(host)!==host.aiProposal.raw){host.querySelector('[data-ai-mapping-proposal]').hidden=true;host.querySelector('[data-ai-mapping-status]').textContent='Raw evidence changed; request a fresh AI proposal before import.';}}});
   page.addEventListener('reset',event=>{

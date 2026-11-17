@@ -550,6 +550,7 @@ test('AI model order and exclusive default can be saved independently',async({pa
 
 async function mockController(page, { role = 'admin', healthIdentity = 'v21', upesSnapshot = null, assurancePassed = true, nupireCandidates = [], quarantineRaw = 'exact raw source line', qrwParsers = [], qrwRecords = null, qrwSyncAssets = null, navigationCounts = null, managedParsers = [], controllerNotifications = [], rolloutSeed = [], rolloutApprovalFailure = null, replayFailure = null, replayPending = false } = {}) {
   const observed = [];
+  const favorites = new Set();
   const cases = [];
   const uploads = [];
   const assuranceRequests = [];
@@ -619,6 +620,15 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
     if (path === '/api/v1/field-mapping') return fulfill({engine:'native-field-mapping-v1',profile_count:0,profiles:[],methods:['position','key_value','delimiter','character'],operations:['split','merge','replace'],limits:{max_fields:128,max_operations:16,max_input_bytes:1048576}});
     if (path === '/api/v1/parser-packs/deleted') return fulfill({deleted_parsers:[],count:0});
     if (path === '/api/v1/parser-sync/runtime') return fulfill({controller:{status:'unavailable',parsers:[]},clients:[]});
+    if (path === '/api/v1/auth/workspace-favorites') {
+      if (!authenticated) return fulfill({ error: 'unauthorized' }, 401);
+      if (request.method() === 'PUT') {
+        const { workspace, starred } = request.postDataJSON();
+        if (starred) favorites.add(workspace);
+        else favorites.delete(workspace);
+      }
+      return fulfill({ favorites: [...favorites] });
+    }
     if (path === '/api/v1/auth/csrf') return fulfill({ csrf_token: 'browser-test-csrf' });
     if (path === '/api/v1/auth/logout') { authenticated = false; return fulfill({ status: 'ok' }); }
     if (path === '/api/v1/nupire/snapshot') return fulfill({ candidates: nupireCandidates, count: nupireCandidates.length, evolution_state: 'available' });
@@ -2325,11 +2335,18 @@ test('published endpoint profile requests a revision-bound single-client canary 
     { type: 'file', path_template: '/var/log/nli/output/auto_quarantine_{hour_utc}.jsonl', routes: ['quarantine', 'unknown'], durable_raw: true },
   ] } } };
   mock.outputProfiles.push(profile);
+  await page.route('**/api/v1/fleet', route => route.fulfill({json: [
+    {id:'node-1',hostname:'mail-node-1',status:'online',metrics:{loki_delivery:{active_writers:1,delivered:42,failed_attempts:1}}},
+    {id:'node-2',hostname:'mail-node-2',status:'offline',metrics:{loki_delivery:{active_writers:1,delivered:10,failed_attempts:0}}},
+  ]}));
   await login(page);
   await page.getByTestId('nav-outputs').click();
   await page.getByRole('tab', { name: 'Live & rollback' }).click();
   const form = page.locator('#output-rollout-form');
   await expect(page.getByRole('heading', {name:'Remote delivery status'})).toBeVisible();
+  const delivery = page.locator('#endpoint-delivery-status');
+  await expect(delivery).toContainText('1 enabled / 1 reporting / 1 online clients');
+  await expect(delivery.getByRole('row').filter({hasText:'Grafana Loki'}).filter({hasText:'mail-node-1'})).toContainText('42');
   await form.locator('[name=profile_id]').selectOption({label:'Remote delivery · r4'});
   await expect(form.locator('[name=scope]')).toHaveValue('canary');
   await form.locator('[name=canary_node]').selectOption('node-1');
