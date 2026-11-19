@@ -102,13 +102,14 @@ type SyncAggregate struct {
 }
 
 type SyncSnapshot struct {
-	SchemaVersion    string                `json:"schema_version"`
-	Revision         uint64                `json:"revision"`
-	GeneratedAt      time.Time             `json:"generated_at"`
-	TargetIntervalMS int64                 `json:"target_interval_ms"`
-	Aggregate        SyncAggregate         `json:"aggregate"`
-	Sources          []StreamFileTelemetry `json:"sources"`
-	Diagnostics      SyncDiagnostics       `json:"diagnostics"`
+	ControllerInstanceID string                `json:"controller_instance_id,omitempty"`
+	SchemaVersion        string                `json:"schema_version"`
+	Revision             uint64                `json:"revision"`
+	GeneratedAt          time.Time             `json:"generated_at"`
+	TargetIntervalMS     int64                 `json:"target_interval_ms"`
+	Aggregate            SyncAggregate         `json:"aggregate"`
+	Sources              []StreamFileTelemetry `json:"sources"`
+	Diagnostics          SyncDiagnostics       `json:"diagnostics"`
 }
 
 type SyncIngestResult struct {

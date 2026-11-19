@@ -10,6 +10,7 @@ Usage:
   sudo bash install-controller-ver22.sh --quickstart [--rpm /path/to/nli_controller_agent_ver22.rpm]
   sudo bash install-controller-ver22.sh --automatic [--rpm /path/to/nli_controller_agent_ver22.rpm]
   sudo bash install-controller-ver22.sh --mode 3|9 [--rpm /path/to/nli_controller_agent_ver22.rpm]
+  sudo bash install-controller-ver22.sh --mode 11 [--rpm /path/to/nli_controller_agent_ver22.rpm]
   sudo bash install-controller-ver22.sh --mode 10 [--rpm /path/to/nli_controller_agent_ver22.rpm]
   sudo bash install-controller-ver22.sh --rotate-enrollment [--rpm /path/to/rpm]
   sudo bash install-controller-ver22.sh --verify-only [--rpm /path/to/rpm]
@@ -93,8 +94,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --mode)
-      [[ $# -ge 2 ]] || fail '--mode requires a deployment mode from 1 through 10'
-      [[ $2 =~ ^([1-9]|10)$ ]] || fail '--mode must be between 1 and 10'
+      [[ $# -ge 2 ]] || fail '--mode requires a deployment mode from 1 through 11'
+      [[ $2 =~ ^([1-9]|10|11)$ ]] || fail '--mode must be between 1 and 11'
       deployment_mode=$2
       shift 2
       ;;

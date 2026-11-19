@@ -193,4 +193,12 @@ require("normal uninstall preserves this shared SELinux setting" in docs and
 require("Requires:       python3 curl openssl hostname iproute" in spec,
         "controller RPM must provide the setup preflight dependencies, including ss")
 
+require("11) Stable IP TLS" in setup and "^([1-9]|10|11)$" in installer,
+        "installer must expose stable IP TLS as option 11")
+require("$selected_mode != 11" in setup and "mode 11 requires a stable IPv4 address" in setup,
+        "IP TLS must validate a usable IP and bypass automatic DNS identities")
+for name in ("nli-controller-agent.service", "nli-client-control.service", "nli-agent.service"):
+    unit = (root / "packaging/systemd" / name).read_text()
+    require("StartLimitIntervalSec=0" in unit and "Restart=on-failure" in unit and "WantedBy=multi-user.target" in unit,
+            f"{name} must retry after network startup failures and support boot activation")
 print("controller edge installer contract tests: PASS")

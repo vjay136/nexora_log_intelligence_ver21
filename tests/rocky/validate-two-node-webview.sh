@@ -165,16 +165,44 @@ rotated_status=$(docker exec "$client" bash -c '
 ')
 [[ $rotated_status == 201 ]] || { echo "two-node acceptance: rotated enrollment token returned HTTP $rotated_status" >&2; exit 1; }
 
+# Reboot both hosts without reenrollment or setup. Preserve TLS trust and identity.
+client_token_before=$(docker exec "$client" sha256sum /var/lib/nli-control-client/node.token | awk '{print $1}')
+client_config_before=$(docker exec "$client" sha256sum /etc/nli/nli.json | awk '{print $1}')
+docker exec "$controller" systemctl is-enabled --quiet nli-controller-agent.service
+docker exec "$client" systemctl is-enabled --quiet nli-agent.service
+docker exec "$client" systemctl is-enabled --quiet nli-client-control.service
+restart_epoch=$(date +%s)
+docker restart "$controller" "$client" >/dev/null
+wait_for_systemd "$controller"
+wait_for_systemd "$client"
+for attempt in $(seq 1 60); do
+  if docker exec "$client" curl --fail --silent --show-error --max-time 3 --cacert /etc/nli/controller-ca.crt https://controller:12382/api/v1/health >/dev/null 2>&1; then break; fi
+  sleep 1
+done
+docker exec "$client" curl --fail --silent --show-error --max-time 3 --cacert /etc/nli/controller-ca.crt https://controller:12382/api/v1/health >/dev/null
+docker exec "$controller" systemctl is-active --quiet nli-controller-agent.service
+docker exec "$client" systemctl is-active --quiet nli-agent.service
+docker exec "$client" systemctl is-active --quiet nli-client-control.service
+[[ $client_token_before == "$(docker exec "$client" sha256sum /var/lib/nli-control-client/node.token | awk '{print $1}')" ]] || { echo 'node restart changed the enrolled client identity' >&2; exit 1; }
+[[ $client_config_before == "$(docker exec "$client" sha256sum /etc/nli/nli.json | awk '{print $1}')" ]] || { echo 'node restart changed client configuration' >&2; exit 1; }
+[[ $ca_before_rotation == "$(docker exec "$controller" sha256sum /var/lib/nli-controller/tls/ca.crt | awk '{print $1}')" ]] || { echo 'node restart changed controller TLS trust' >&2; exit 1; }
+
 # Prove the separately installed client appears online through the authenticated controller API.
-docker exec -e NLI_TEST_ADMIN_PASSWORD="$admin_password" "$controller" bash -c '
+docker exec -e NLI_TEST_ADMIN_PASSWORD="$admin_password" -e NLI_TEST_RESTART_EPOCH="$restart_epoch" "$controller" bash -c '
   set -e
   curl --fail --silent --show-error --cacert /var/lib/nli-controller/tls/ca.crt \
     --resolve controller:12382:127.0.0.1 -c /tmp/nli.cookies -H "Content-Type: application/json" \
     -d "{\"username\":\"admin\",\"password\":\"${NLI_TEST_ADMIN_PASSWORD}\"}" \
     https://controller:12382/api/v1/auth/login >/dev/null
-  curl --fail --silent --show-error --cacert /var/lib/nli-controller/tls/ca.crt \
-    --resolve controller:12382:127.0.0.1 -b /tmp/nli.cookies \
-    https://controller:12382/api/v1/fleet >/tmp/fleet.json
+  for attempt in $(seq 1 60); do
+    curl --fail --silent --show-error --cacert /var/lib/nli-controller/tls/ca.crt \
+      --resolve controller:12382:127.0.0.1 -b /tmp/nli.cookies \
+      https://controller:12382/api/v1/fleet >/tmp/fleet.json
+    if python3 -c "import datetime,json,os; nodes=json.load(open(\"/tmp/fleet.json\")); nodes=nodes if isinstance(nodes,list) else nodes.get(\"nodes\",[]); assert any(n.get(\"hostname\")==\"client\" and n.get(\"status\")==\"online\" and datetime.datetime.fromisoformat(n[\"last_seen\"].replace(\"Z\",\"+00:00\")).timestamp() >= int(os.environ[\"NLI_TEST_RESTART_EPOCH\"]) for n in nodes)"; then exit 0; fi
+    sleep 1
+  done
+  echo "client did not send a fresh heartbeat after host restart" >&2
+  exit 1
 '
 docker exec -i "$controller" python3 - <<'PY'
 import json, pathlib
@@ -272,5 +300,19 @@ docker exec -e NLI_SETUP_MODE=8 -e NLI_SETUP_ENDPOINT=fallback-controller \
 docker exec "$fallback_controller" test -s /var/lib/nli-controller/tls/ca.key
 docker exec "$fallback_controller" test -s /var/lib/nli-controller/tls/server.crt
 docker exec "$fallback_controller" grep -Eq '^NLI_CONTROLLER_CA_BASE64=.{100,}$' /bootstrap/fallback-bootstrap.env
+
+# Mode 11 uses only the selected stable IP and loopback IP SANs, with no DNS.
+ip_only_endpoint=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$fallback_controller")
+fallback_ca_before=$(docker exec "$fallback_controller" sha256sum /var/lib/nli-controller/tls/ca.crt | awk '{print $1}')
+docker exec -e NLI_SETUP_MODE=11 -e NLI_SETUP_ENDPOINT="$ip_only_endpoint" \
+  -e NLI_SETUP_STORAGE_PROVIDER=local -e NLI_SETUP_QUARANTINE_RAW_RETENTION=false \
+  -e NLI_CLIENT_BOOTSTRAP_FILE=/bootstrap/ip-only-bootstrap.env \
+  "$fallback_controller" /usr/sbin/nli-controller-setup
+docker exec "$fallback_controller" openssl x509 -in /var/lib/nli-controller/tls/server.crt -noout -checkip "$ip_only_endpoint"
+docker exec "$fallback_controller" bash -c '! openssl x509 -in /var/lib/nli-controller/tls/server.crt -noout -ext subjectAltName | grep -q "DNS:"'
+[[ $fallback_ca_before == "$(docker exec "$fallback_controller" sha256sum /var/lib/nli-controller/tls/ca.crt | awk '{print $1}')" ]] || { echo 'mode 11 replacement changed existing CA trust' >&2; exit 1; }
+docker exec "$fallback_controller" grep -Fxq "NLI_CONTROLLER_URL=https://${ip_only_endpoint}:12382" /bootstrap/ip-only-bootstrap.env
+docker exec "$client" bash -c 'sed -n "s/^NLI_CONTROLLER_CA_BASE64=//p" /bootstrap/ip-only-bootstrap.env | base64 -d > /tmp/ip-only-ca.crt'
+docker exec "$client" curl --fail --silent --show-error --cacert /tmp/ip-only-ca.crt "https://${ip_only_endpoint}:12382/api/v1/health" >/dev/null
 
 echo 'two-node TLS, automatic TLS discovery/fallback, and packaged WebView acceptance: PASS (Rocky Linux 10.2)'

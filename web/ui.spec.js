@@ -5,7 +5,7 @@ import { contrast as designContrast } from './design-engine.js';
 // These browser regressions verify frontend behavior independently of network
 // and database availability. e2e.spec.js separately exercises a real controller.
 const origin = 'http://127.0.0.1:4176';
-const tabs = ['sample-history', 'header-templates', 'kv-templates', 'operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'latency', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'ai-privacy', 'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'communications', 'notifications', 'ai'];
+const tabs = ['sample-history', 'header-templates', 'kv-templates', 'operations', 'monitoring', 'streams', 'sync-fabric', 'nhle-monitor', 'napi-monitor', 'nal-monitor', 'assurance', 'quarantine-wizard', 'upes', 'parser-workspace', 'nupire', 'api-monitor', 'latency', 'field-integrity', 'fleet', 'parser-sync', 'clients', 'controller', 'ai-privacy', 'parsers', 'reference-ai', 'building-blocks', 'field-mapping', 'migration', 'input-paths', 'kv', 'static', 'projection', 'studio', 'regex', 'knownkeys', 'semantic', 'engine-network', 'engine-url', 'engine-email', 'engine-subject', 'outputs', 'metadata', 'unknowns', 'drift', 'performance', 'rollouts', 'artifacts', 'security', 'system', 'disaster-recovery', 'communications', 'notifications', 'ai'];
 const assets = Object.fromEntries(await Promise.all(['index.html', 'app.js', 'styles.css', 'design-engine.js', 'design-engine.css', 'nli-mark.svg', 'nexora-logo-v21.png', 'login-banner-v22.jpg', 'nexora-poster-v21.png'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
 
 test('login inventory comes from the webapp and controller health', async ({page}) => {
@@ -620,6 +620,7 @@ async function mockController(page, { role = 'admin', healthIdentity = 'v21', up
     if (path === '/api/v1/field-mapping') return fulfill({engine:'native-field-mapping-v1',profile_count:0,profiles:[],methods:['position','key_value','delimiter','character'],operations:['split','merge','replace'],limits:{max_fields:128,max_operations:16,max_input_bytes:1048576}});
     if (path === '/api/v1/parser-packs/deleted') return fulfill({deleted_parsers:[],count:0});
     if (path === '/api/v1/parser-sync/runtime') return fulfill({controller:{status:'unavailable',parsers:[]},clients:[]});
+    if (path === '/api/v1/recovery') return fulfill({storage_mode:'supabase',status:{},checkpoints:[],host_capsules:[],controller_state:'/var/lib/nli-controller',controller_config:'/etc/nli',controller_parser_assets:'/var/lib/nli-controller/parser-assets',catalog_export:'/var/lib/nli-controller/recovery/catalog.json',client_parser_assets:'/var/lib/nli/parser-assets',client_parsers:'/etc/nli/parsers',identity_dependencies:[]});
     if (path === '/api/v1/auth/workspace-favorites') {
       if (!authenticated) return fulfill({ error: 'unauthorized' }, 401);
       if (request.method() === 'PUT') {
@@ -2028,6 +2029,64 @@ test('live dashboard renders controller metrics, client filter, pipeline timing 
   await expect(page.locator('[data-monitoring-panel=parsers]')).toContainText('Source workers');
 });
 
+test('login detects the controller returning after an unavailable startup', async ({ page }) => {
+  await page.clock.install();
+  await mockController(page);
+  let probes = 0;
+  await page.route('**/api/v1/health', route => {
+    probes++;
+    return route.fulfill(probes === 1
+      ? {status:503,json:{error:'Controller is restarting'}}
+      : {headers:{'x-nli-controller':'v21'},json:{service:'nli-controller-agent',api_version:'v1'}});
+  });
+  await page.goto(origin);
+  await expect(page.locator('#login-form button[type=submit]')).toBeDisabled();
+  await expect(page.locator('#standalone-hint')).toContainText('Controller is restarting');
+  await page.clock.fastForward(2100);
+  await expect(page.getByRole('button',{name:'Sign in securely'})).toBeEnabled();
+  expect(probes).toBe(2);
+});
+
+test('a middleware CSRF rejection refreshes the token and retries a favorite once', async ({ page }) => {
+  await mockController(page);
+  let writes = 0, tokens = 0;
+  await page.route('**/api/v1/auth/csrf', route => route.fulfill({json:{csrf_token:`token-${++tokens}`}}));
+  await page.route('**/api/v1/auth/workspace-favorites', route => {
+    if (route.request().method() === 'GET') return route.fulfill({json:{favorites:[]}});
+    writes++;
+    return writes === 1
+      ? route.fulfill({status:403,json:{error:'CSRF token required or invalid'}})
+      : route.fulfill({json:{favorites:['operations']}});
+  });
+  await login(page);
+  await page.locator('#workspace-favorite').click();
+  await expect(page.getByTestId('favorite-operations')).toBeVisible();
+  expect(writes).toBe(2);
+  expect(tokens).toBeGreaterThan(1);
+});
+
+test('controller restart accepts a fresh revision sequence and rejects delayed prior snapshots', async ({ page }) => {
+  await mockController(page);
+  await page.addInitScript(() => {
+    class RestartEventSource extends EventTarget {
+      constructor() { super(); window.__restartSource = this; }
+      close() {}
+      emit(data) { this.dispatchEvent(new MessageEvent('sync_snapshot', {data:JSON.stringify(data)})); }
+    }
+    window.EventSource = RestartEventSource;
+  });
+  await login(page);
+  await page.getByTestId('nav-streams').click();
+  const snapshot = await page.evaluate(async () => (await fetch('/api/v1/sync/snapshot')).json());
+  const source = {...snapshot.sources[0],node_id:'after-restart',source:'/var/log/restarted.log'};
+  await page.evaluate(snapshot => window.__restartSource.emit({...snapshot,controller_instance_id:'prior-process',revision:700}), snapshot);
+  await page.evaluate(({snapshot,source}) => window.__restartSource.emit({...snapshot,controller_instance_id:'new-process',revision:0,sources:[source]}), {snapshot,source});
+  await expect(page.locator('#stream-live-table')).toContainText('after-restart');
+  await page.evaluate(snapshot => window.__restartSource.emit({...snapshot,controller_instance_id:'prior-process',revision:701}), snapshot);
+  await expect(page.locator('#stream-live-table')).toContainText('after-restart');
+  await expect(page.locator('#stream-live-table')).not.toContainText('/var/log/mail.log');
+});
+
 test('canonical SSE reconnect resumes from the last accepted revision without legacy polling', async ({ page }) => {
   await page.clock.install();
   await mockController(page);
@@ -2941,4 +3000,72 @@ test('Ver22 replay requires the controller acknowledgement even when the hashes 
   await page.getByRole('button', { name: '9 · Verify replay result', exact: true }).click();
   await expect(page.locator('#qrw-verification')).toContainText('waiting');
   await expect(page.locator('[data-wizard-step="9"]')).toHaveAttribute('data-step-complete', 'false');
+});
+
+
+test('client management filters inventory and submits only selected drifted clients for approval', async ({page}) => {
+  const mock = await mockController(page);
+  await page.route('**/api/v1/fleet/sync', route=>route.fulfill({json:{nodes:[
+    {node:{id:'node-a',hostname:'mail-a',status:'online',metrics:{}},sync:{asset_drifted:true}},
+    {node:{id:'node-b',hostname:'mail-b',status:'offline',metrics:{}},sync:{asset_drifted:false}},
+  ]}}));
+  await login(page);
+  await page.getByTestId('nav-clients').click();
+  await page.getByLabel('Find a client',{exact:true}).fill('mail-a');
+  await expect(page.locator('#client-filter-count')).toHaveText('1 of 2 enrolled clients');
+  await expect(page.locator('[data-client-row]:visible')).toHaveCount(1);
+  await page.getByRole('button',{name:'Select parser drift',exact:true}).click();
+  const form=page.locator('#client-action-form');
+  await expect(form.locator('[name=targets]')).toHaveValues(['node-a']);
+  await form.getByRole('button',{name:'Request approval',exact:true}).click();
+  await expect.poll(()=>mock.rolloutSaves.length).toBe(1);
+  expect(mock.rolloutSaves[0]).toMatchObject({type:'restart',target_nodes:['node-a']});
+  await expect(page.getByRole('heading',{name:'Recent client operations',exact:true})).toBeVisible();
+});
+
+test('manual mapping composes exact saved header and KV revisions and rejects stale import', async ({page}) => {
+  await mockController(page);
+  await page.route('**/api/v1/config/templates',route=>route.fulfill({json:{items:[{id:'manual-header',revision:4,state:'active',payload:{name:'Manual header'}}]}}));
+  let requested;
+  const plan={version:1,fields:[{name:'event',method:'regex',source:'^(?P<event>mail) +',part:'event',type:'string',policy:'required'},
+    {name:'kv_pair',method:'kv_all',type:'object',policy:'optional',output_policy:'flatten',kv_header_pattern:'^(?P<event>mail) +',kv_profile:'auto',require_complete:true}]};
+  await page.route('**/api/v1/field-mapping/template-compose',route=>{requested=route.request().postDataJSON();return route.fulfill({json:{passed:true,failed:0,total:1,scope_pattern:'^(?P<event>mail) +',plan,examples:[{header_end_byte:5,header_source:'mail ',kv_source:'status=failed',actual:{event:'mail',status:'failed'}}],failures:[]}});});
+  await login(page);
+  await page.getByTestId('nav-field-mapping').click();
+  await page.locator('#nfi-raw').fill('mail status=failed');
+  await page.getByText('Separate header and KV with saved templates',{exact:true}).click();
+  await page.getByRole('button',{name:'Load saved template choices',exact:true}).click();
+  await page.getByLabel('Mapping header template',{exact:true}).selectOption(JSON.stringify({id:'manual-header',revision:4}));
+  await page.getByRole('button',{name:'Verify header and KV together',exact:true}).click();
+  await expect(page.locator('#mapping-template-evidence')).toContainText('header_end_byte');
+  expect(requested).toEqual({header:{id:'manual-header',revision:4},samples:['mail status=failed']});
+  await page.locator('#nfi-raw').fill('mail status=changed');
+  await page.getByRole('button',{name:'Import verified fields',exact:true}).click();
+  await expect(page.locator('#toast-region')).toContainText('Verify this exact raw record');
+  await expect(page.locator('[data-qrw-row]')).toHaveCount(0);
+  await page.getByRole('button',{name:'Verify header and KV together',exact:true}).click();
+  await page.getByRole('button',{name:'Import verified fields',exact:true}).click();
+  await expect(page.locator('[data-qrw-row]')).toHaveCount(2);
+  await expect(page.getByLabel('Desired JSON field name 1',{exact:true})).toHaveValue('event');
+  await expect(page.locator('[data-qrw-row]').last().getByLabel('Output policy 2',{exact:true})).toHaveValue('flatten');
+});
+
+test('Disaster Recovery checkpoints and stages reviewed catalog recovery with explicit host dependencies', async ({page}) => {
+ await mockController(page);
+ const observed=[];
+ await page.route('**/api/v1/recovery',route=>route.fulfill({json:{storage_mode:'supabase',status:{last_success:'2026-11-19T12:00:00Z'},checkpoints:[{id:'catalog-test',created_at:'2026-11-19T12:00:00Z',sha256:'verified-content',documents:3}],host_capsules:[],controller_state:'/var/lib/nli-controller',controller_config:'/etc/nli',controller_parser_assets:'/var/lib/nli-controller/parser-assets',catalog_export:'/var/lib/nli-controller/recovery/catalog.json',client_parser_assets:'/var/lib/nli/parser-assets',client_parsers:'/etc/nli/parsers',identity_dependencies:['users.json and TLS trust']}}));
+ for(const action of ['checkpoint','restore','resync']) await page.route('**/api/v1/recovery/'+action,route=>{observed.push({action,body:route.request().postDataJSON()});return route.fulfill({json:action==='restore'?{staged:['known-keys/custom'],review_required:true}:action==='resync'?{bundle_hash:'verified-bundle',rollout_proposal:{id:'proposal-test'}}:{id:'catalog-test',state:'complete'}});});
+ await login(page);
+ await page.getByTestId('nav-disaster-recovery').click();
+ await expect(page.locator('#page').getByRole('heading',{name:'Disaster Recovery',exact:true})).toBeVisible();
+ await expect(page.getByText('/var/lib/nli-controller/recovery/catalog.json',{exact:true})).toBeVisible();
+ await expect(page.locator('#page')).toContainText('recovery-backup --confirm-stopped');
+ await page.getByRole('button',{name:'Create checkpoint',exact:true}).click();
+ await expect(page.locator('#disaster-result')).toContainText('catalog-test');
+ page.once('dialog',dialog=>dialog.accept());
+ await page.getByRole('button',{name:'Stage recovery drafts',exact:true}).click();
+ await expect(page.locator('#disaster-result')).toContainText('review_required');
+ await page.getByRole('button',{name:'Recover controller assets and request fleet sync',exact:true}).click();
+ await expect(page.locator('#disaster-result')).toContainText('proposal-test');
+ expect(observed).toEqual([{action:'checkpoint',body:{}},{action:'restore',body:{checkpoint:'catalog-test'}},{action:'resync',body:{}}]);
 });

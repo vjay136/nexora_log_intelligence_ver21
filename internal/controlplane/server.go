@@ -40,6 +40,7 @@ import (
 )
 
 type Config struct {
+	RecoveryConfigDir                string   `json:"recovery_config_dir,omitempty"`
 	ListenAddress                    string   `json:"listen_address"`
 	StateDir                         string   `json:"state_dir"`
 	WebDir                           string   `json:"web_dir"`
@@ -142,6 +143,12 @@ type Server struct {
 	fieldSenseOnce           sync.Once
 	fieldSense               *fieldSenseAdmission
 	parserMutationMu         sync.Mutex
+	recoveryStatusMu         sync.Mutex
+	recoveryLastAttempt      time.Time
+	recoveryLastSuccess      time.Time
+	recoveryLastError        string
+	recoveryCancel           context.CancelFunc
+	recoveryDone             chan struct{}
 	parserMaterializeMu      sync.Mutex
 	automaticRuntimeMu       sync.Mutex
 	automaticRuntime         *automaticRuntimeSnapshot
@@ -275,10 +282,14 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s.startNotificationWorker()
+	s.startRecoveryCheckpoints()
 	return s, nil
 }
 
 func applyConfigDefaults(cfg *Config) {
+	if cfg.RecoveryConfigDir == "" {
+		cfg.RecoveryConfigDir = "/etc/nli"
+	}
 	if cfg.ListenAddress == "" {
 		cfg.ListenAddress = "127.0.0.1:12382"
 	}
@@ -456,6 +467,10 @@ func openArtifactBlobStore(cfg Config) (metastore.BlobStore, error) {
 
 func (s *Server) Mux() http.Handler { return s.security.Wrap(s.mux) }
 func (s *Server) Close() error {
+	if s.recoveryCancel != nil {
+		s.recoveryCancel()
+		<-s.recoveryDone
+	}
 	var errs []string
 	s.metricIngestMu.Lock()
 	if err := s.metricHistory.flush(); err != nil {
@@ -509,6 +524,8 @@ func (s *Server) registerRoutes() {
 	guard := func(permission string, handler http.HandlerFunc) http.HandlerFunc {
 		return s.security.Require(permission, handler)
 	}
+	s.mux.HandleFunc("/api/v1/recovery", s.handleDisasterRecovery)
+	s.mux.HandleFunc("/api/v1/recovery/", s.handleDisasterRecovery)
 	s.mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("/api/v1/auth/logout", guard(middleware.PermissionSystemHealth, s.handleLogout))
 	s.mux.HandleFunc("/api/v1/auth/me", guard(middleware.PermissionSystemHealth, s.handleMe))

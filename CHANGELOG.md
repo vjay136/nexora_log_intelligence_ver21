@@ -1,5 +1,14 @@
 # Changelog
 
+## v22.20.1-0
+
+- Add protected catalog checkpoints, encrypted offline controller identity recovery, and an administrative Disaster Recovery workspace.
+- Add stable-IP TLS installation option 11, persistent service restart retries and jittered client reconnection.
+- Expand client inventory controls and shared mapping with exact saved header/KV composition and source boundaries.
+
+- Recover browser synchronization when the controller restarts and its telemetry revision resets.
+- Retry controller discovery and refresh expired CSRF protection on an explicit middleware rejection.
+
 ## v22.19.1-0
 
 - Flatten template-derived KV fields into the parsed event, preserving valid source names.

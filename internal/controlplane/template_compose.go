@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 
 	"nexora.local/nli-v20/internal/fieldmapping"
 	"nexora.local/nli-v20/internal/mixedkv"
@@ -103,6 +104,11 @@ func (s *Server) handleTemplateCompose(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	headerPattern, err := regexp.Compile(header.Pattern)
+	if err != nil {
+		jsonError(w, "header template pattern is invalid", http.StatusBadRequest)
+		return
+	}
 	examples, failures := []map[string]any{}, []map[string]any{}
 	failed := 0
 	for i, raw := range input.Samples {
@@ -119,7 +125,14 @@ func (s *Server) handleTemplateCompose(w http.ResponseWriter, r *http.Request) {
 				failures = append(failures, map[string]any{"line": i + 1, "error": err.Error()})
 			}
 		} else if len(examples) < maxTemplateComposeDetails {
-			examples = append(examples, map[string]any{"line": i + 1, "actual": orderedMappingValues(result)})
+			boundary := headerPattern.FindStringIndex(raw)
+			example := map[string]any{"line": i + 1, "actual": orderedMappingValues(result)}
+			if len(boundary) == 2 && boundary[0] == 0 {
+				example["header_end_byte"] = boundary[1]
+				example["header_source"] = raw[:boundary[1]]
+				example["kv_source"] = raw[boundary[1]:]
+			}
+			examples = append(examples, example)
 		}
 	}
 	jsonOK(w, map[string]any{

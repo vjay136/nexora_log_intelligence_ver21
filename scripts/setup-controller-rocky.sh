@@ -191,17 +191,21 @@ printf '  6) Corporate PKI certificate + direct HTTPS (restricted networks)\n'
 printf '  7) Offline private TLS (generated private CA; no public DNS, ACME, or corporate PKI required)\n\n'
 printf '  8) Auto-detect a trusted server certificate/key; fall back to offline private TLS\n\n'
 printf '  9) Public DNS + Apache HTTP Server + ACME certificate (automated)\n'
-printf ' 10) Temporary Cloudflare Quick Tunnel (testing only; no domain/account)\n\n'
+printf ' 10) Temporary Cloudflare Quick Tunnel (testing only; no domain/account)\n'
+printf ' 11) Stable IP TLS (no DNS names; generated private CA and verified client bootstrap)\n\n'
 mode=${NLI_SETUP_MODE:-}
 if [[ -z $mode ]]; then read -r -p 'Deployment mode [7]: ' mode; fi
 mode=${mode:-7}
-[[ $mode =~ ^([1-9]|10)$ ]] || fail 'deployment mode must be 1 through 10'
+[[ $mode =~ ^([1-9]|10|11)$ ]] || fail 'deployment mode must be 1 through 11'
 selected_mode=$mode
 offline_private_tls=false
 auto_server_tls=false
 found_server_cert=''
 found_server_key=''
-if [[ $mode == 7 ]]; then
+if [[ $mode == 11 ]]; then
+  # Reuse direct TLS with an IP-only identity set, retaining the selected mode.
+  mode=2
+elif [[ $mode == 7 ]]; then
   # Use the same tested generated-CA implementation while making the offline
   # enterprise path explicit to operators. No public DNS or external CA is used.
   mode=2
@@ -436,16 +440,35 @@ PY
 fi
 
 if [[ $mode == 2 ]]; then
-  default_endpoint=$(first_discovered_identity)
-  default_endpoint=${default_endpoint:-$(hostname -f 2>/dev/null || hostname)}
   endpoint=${NLI_SETUP_ENDPOINT:-$endpoint}
-  [[ -n $endpoint ]] || read -r -p "Controller DNS name or private IP [$default_endpoint]: " endpoint
-  endpoint=${endpoint:-$default_endpoint}
+  if [[ $selected_mode == 11 ]]; then
+    default_endpoint=$(hostname -I 2>/dev/null | python3 -c 'import ipaddress,sys; addresses=[ipaddress.ip_address(value) for value in sys.stdin.read().split()]; print(next((str(value) for value in addresses if value.version == 4 and not value.is_loopback and not value.is_link_local), ""))')
+    [[ -n ${NLI_SETUP_ENDPOINT:-} ]] || endpoint=''
+    [[ -n $endpoint ]] || read -r -p "Stable controller IPv4 address [$default_endpoint]: " endpoint
+    endpoint=${endpoint:-$default_endpoint}
+    python3 - "$endpoint" <<'PYIP'
+import ipaddress, sys
+try:
+    address = ipaddress.IPv4Address(sys.argv[1])
+except ValueError:
+    raise SystemExit("mode 11 requires a stable IPv4 address")
+if address.is_loopback or address.is_link_local or address.is_unspecified or address.is_multicast:
+    raise SystemExit("mode 11 requires a reachable unicast IPv4 address")
+PYIP
+    [[ $? == 0 ]] || fail 'mode 11 requires a reachable stable IPv4 address'
+    [[ -z ${NLI_SETUP_TLS_IDENTITIES:-} ]] || fail 'mode 11 uses only IP identities; omit NLI_SETUP_TLS_IDENTITIES'
+    info 'IP-only TLS selected; reserve this address or use an Elastic IP, and allow the controller port from authorized clients'
+  else
+    default_endpoint=$(first_discovered_identity)
+    default_endpoint=${default_endpoint:-$(hostname -f 2>/dev/null || hostname)}
+    [[ -n $endpoint ]] || read -r -p "Controller DNS name or private IP [$default_endpoint]: " endpoint
+    endpoint=${endpoint:-$default_endpoint}
+  fi
   [[ $endpoint =~ ^[A-Za-z0-9.-]+$ ]] || fail 'controller endpoint may contain only DNS-name or IPv4 characters'
   [[ $endpoint != *.example.com && $endpoint != nli-controller.example.com ]] || fail 'documentation placeholder host is not allowed'
 
   additional_tls_identities=${NLI_SETUP_TLS_IDENTITIES:-}
-  if [[ -z $additional_tls_identities ]]; then
+  if [[ -z $additional_tls_identities && $selected_mode != 11 ]]; then
     if ! read -r -p 'Additional controller DNS names or IPs for TLS, comma separated [automatic host identities only]: ' additional_tls_identities; then
       additional_tls_identities=''
       info 'optional TLS identity input ended; using the automatic controller identities'
@@ -481,16 +504,18 @@ PY
     tls_sans+=("$san_type:$candidate")
   }
   add_tls_identity "$endpoint"
-  add_tls_identity 'localhost'
+  if [[ $selected_mode != 11 ]]; then add_tls_identity 'localhost'; fi
   add_tls_identity '127.0.0.1'
   add_tls_identity '::1'
-  add_tls_identity "$(hostname 2>/dev/null || true)"
-  add_tls_identity "$(hostname -s 2>/dev/null || true)"
-  add_tls_identity "$(hostname -f 2>/dev/null || true)"
-  while read -r detected_identity; do add_tls_identity "$detected_identity"; done < <(hostname -I 2>/dev/null | tr ' ' '\n' | sed '/^$/d' || true)
-  while IFS= read -r detected_identity; do add_tls_identity "$detected_identity"; done < <(discover_host_identities)
-  IFS=',' read -r -a requested_tls_identities <<<"$additional_tls_identities"
-  for requested_identity in "${requested_tls_identities[@]:-}"; do add_tls_identity "$requested_identity"; done
+  if [[ $selected_mode != 11 ]]; then
+    add_tls_identity "$(hostname 2>/dev/null || true)"
+    add_tls_identity "$(hostname -s 2>/dev/null || true)"
+    add_tls_identity "$(hostname -f 2>/dev/null || true)"
+    while read -r detected_identity; do add_tls_identity "$detected_identity"; done < <(hostname -I 2>/dev/null | tr ' ' '\n' | sed '/^$/d' || true)
+    while IFS= read -r detected_identity; do add_tls_identity "$detected_identity"; done < <(discover_host_identities)
+    IFS=',' read -r -a requested_tls_identities <<<"$additional_tls_identities"
+    for requested_identity in "${requested_tls_identities[@]:-}"; do add_tls_identity "$requested_identity"; done
+  fi
   san=$(IFS=,; printf '%s' "${tls_sans[*]}")
 
   tls_dir="$STATE_DIR/tls"
@@ -504,6 +529,9 @@ PY
   if [[ ! -s $ca_key || ! -s $ca_cert || ! -s $tls_key || ! -s $tls_cert ]]; then
     generate_tls=true
   else
+    if [[ $selected_mode == 11 ]] && openssl x509 -in "$tls_cert" -noout -ext subjectAltName | grep -q 'DNS:'; then
+      generate_tls=true
+    fi
     for tls_identity in "${tls_identities[@]}"; do
       if python3 - "$tls_identity" <<'PY' >/dev/null 2>&1
 import ipaddress, sys
@@ -1495,7 +1523,7 @@ elif [[ $previous_selinux_changed == true ]]; then
   selinux_manifest_managed=true
 fi
 case $selected_mode in
-  2|6|7|8)
+  2|6|7|8|11)
     edge_listeners=("${PORT}/tcp")
     ;;
   3)

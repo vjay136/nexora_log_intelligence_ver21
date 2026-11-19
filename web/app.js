@@ -53,6 +53,7 @@
     ['CONTROLLER MANAGEMENT', 'api-monitor', 'API Monitor', '⌁'],
     ['CONTROLLER MANAGEMENT', 'latency', 'Latency', '◷'],
     ['CONTROLLER MANAGEMENT', 'system', 'System Health & Storage', '✦'],
+    ['CONTROLLER MANAGEMENT', 'disaster-recovery', 'Disaster Recovery', '⟳'],
     ['CONTROLLER MANAGEMENT', 'communications', 'Status of All Communication', '⇄'],
     ['CONTROLLER MANAGEMENT', 'security', 'Users, RBAC & Audit', '◆'],
   ];
@@ -136,6 +137,13 @@
     'recovery-prepare-replay': 'rollout:trigger',
     'nupire-transition': 'parsers:manage',
     'catalog-add-alias': 'parsers:manage',
+    'client-select-scope': 'rollout:trigger',
+    'client-select-one': 'rollout:trigger',
+    'client-export-inventory': 'fleet:read',
+    'mapping-template-load': 'parsers:read',
+    'mapping-template-preview': 'assurance:run',
+    'mapping-template-apply': 'assurance:run',
+    'template-from-mapping': 'assurance:run',
   };
   const can = permission => !permission || state.user?.role === 'admin' || (state.user?.permissions || []).includes(permission);
   function actionPermission(button) {
@@ -494,7 +502,19 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     if(status)status.textContent=exclusions.length?`Grammar applied. Named mappings retain ${exclusions.join(', ')}. Preview is running.`:'Grammar applied. Preview is running.';
   }
   function renderQRWFieldRows(){return (state.qrwFields||[]).map((field,index)=>`<tr data-qrw-row="${esc(field.id)}"><td><span class="drag-handle">${index+1}</span></td><td><input data-qrw-key="name" value="${esc(field.name)}" aria-label="Desired JSON field name ${index+1}"><input data-qrw-key="label" value="${esc(field.label)}" aria-label="Display label ${index+1}"><details><summary>Description and example</summary><input data-qrw-key="description" value="${esc(field.description||'')}" aria-label="Description ${index+1}"><input data-qrw-key="example" value="${esc(field.example||'')}" aria-label="Example ${index+1}"></details></td><td><select data-qrw-key="type" aria-label="Data type ${index+1}">${QRW_TYPES.map(value=>qrwOption(value,field.type)).join('')}</select><select data-qrw-key="policy" aria-label="Presence policy ${index+1}">${QRW_POLICIES.map(value=>qrwOption(value,field.policy)).join('')}</select><select data-qrw-key="null_policy" aria-label="Null and missing policy ${index+1}">${['omit','preserve_null','reject'].map(value=>qrwOption(value,field.null_policy)).join('')}</select></td><td><select data-qrw-key="method" aria-label="Extraction method ${index+1}">${QRW_METHODS.map(value=>qrwOption(value,field.method)).join('')}</select><input data-qrw-key="source" value="${esc(field.source)}" aria-label="Source token key or group ${index+1}" placeholder="${field.method==='derived'?'earlier_field,other_field':field.method==='delimiter'?'token number or raw':field.method==='json_path'?'$.field[0].name':field.method==='regex'?'RE2 pattern':field.method==='key_value'?'key name':'1-based start position'}">${['position','character','byte','line','word','token','kv_all','kv_eol'].includes(field.method)?`<input data-qrw-key="source_end" value="${esc(field.source_end||'')}" aria-label="Inclusive end token ${index+1}" placeholder="inclusive end (optional)"><small>${field.method==='position'?'Positions are 1-based; end token is inclusive.':'Unicode characters, bytes, and lines use 1-based inclusive ranges.'}</small>`:''}${['delimiter','regex','regex_all','regex_groups'].includes(field.method)?`<div class="inline-fields"><input data-qrw-key="delimiter" value="${esc(field.delimiter)}" aria-label="Delimiter ${index+1}" maxlength="32"><input data-qrw-key="part" value="${esc(field.part)}" aria-label="Delimiter part ${index+1}" inputmode="numeric"></div>`:''}${field.method==='delimiter'?`<label class="confirm-mapping"><input type="checkbox" data-qrw-key="quote_aware" ${field.quote_aware===false?'':'checked'}> Respect quoted delimiters</label><label class="confirm-mapping"><input type="checkbox" data-qrw-key="confirmed" ${field.confirmed?'checked':''}> Confirm delimiter interpretation</label>`:''}${['key_value','kv_all','kv_eol'].includes(field.method)?`<small>Quoted and nested values are protected automatically; empty pair values are preserved.</small>${renderKVGrammar(field)}<label>Pair separators<input data-qrw-key="pair_delimiters" value="${esc((field.pair_delimiters??':;,').replaceAll('\t','\\t').replaceAll('\r','\\r').replaceAll('\n','\\n'))}" maxlength="32"></label><label>Duplicate keys<select data-qrw-key="duplicate_policy">${['reject','first','last','array'].map(value=>qrwOption(value,field.duplicate_policy)).join('')}</select></label>`:''}${['kv_all','kv_eol'].includes(field.method)?'<p class="hint" title="A start position of 9 extracts every key/value after the eighth whitespace token through EOL when Key value EOL is selected. Advanced All key values can explicitly use a multiline range. Flatten emits keys at the JSON root; include emits an object under the field name. Complete coverage rejects unparsed text and duplicate output keys.">ⓘ Dynamic KV: start position → EOL (line ending). Set unit, assignment separators and flatten in Advanced parameters. Example: status=failed:reason=notneeded → status, reason.</p>':''}${field.method==='derived'?`<label>Join separator<input data-qrw-key="join_separator" value="${esc(field.join_separator??' ')}"></label>`:''}${renderFieldSenseParameters(field)}${renderQRWOperations(field)}</td><td><select data-qrw-key="transform" aria-label="Transformation ${index+1}">${['none','trim','lowercase','uppercase'].map(value=>qrwOption(value,field.transform)).join('')}</select><label>Output<select data-qrw-key="output_policy" aria-label="Output policy ${index+1}" title="Include the field, omit it from JSON, or use it only in a later mapping. KV rows can also flatten their keys.">${(isKVTail(field)?['include','flatten','omit','intermediate']:['include','omit','intermediate']).map(value=>qrwOption(value,field.output_policy||'include')).join('')}</select></label><details class="nfi-field-options"><summary>Defaults, timestamps and validation</summary><input data-qrw-key="timestamp_format" value="${esc(field.timestamp_format)}" aria-label="Timestamp format ${index+1}" placeholder="Go time layout / epoch format"><select data-qrw-key="timezone" aria-label="Timezone policy ${index+1}">${['preserve','utc','configured'].map(value=>qrwOption(value,field.timezone)).join('')}</select><input data-qrw-key="timezone_name" value="${esc(field.timezone_name||'')}" aria-label="Configured IANA timezone ${index+1}" placeholder="IANA zone, e.g. Asia/Kolkata"><input data-qrw-key="default_value" value="${esc(field.default_value)}" aria-label="Explicit default ${index+1}" placeholder="explicit default or constant only"><input data-qrw-key="validation" value="${esc(field.validation)}" aria-label="Validation rule ${index+1}" placeholder="min=0,max=65535,one_of=a|b"></details></td><td><code data-qrw-preview>${esc(field.preview===''&&field.status==='mapped'?'(empty string)':field.preview||'Unresolved')}</code><small data-qrw-evidence>${esc(field.evidence)}</small><span class="mapping-status" data-qrw-status>${badge(field.status)} ${esc(field.confidence)}</span></td><td>${isKVTail(field)?`<button type="button" class="secondary small" data-action="kv-inspect" data-id="${esc(field.id)}">Inspect KV grammar</button>`:''}<div class="nfi-suggestion-actions"><button type="button" class="secondary small" data-action="nfi-suggestion-accept" data-id="${esc(field.id)}">${field.accepted?'Accepted':'Accept suggestion'}</button><button type="button" class="secondary small" data-action="nfi-suggestion-edit" data-id="${esc(field.id)}">Edit</button><button type="button" class="secondary small" data-action="nfi-suggestion-regenerate" data-id="${esc(field.id)}">Regenerate</button><button type="button" class="secondary small" data-action="qrw-field-delete" data-id="${esc(field.id)}">Reject suggestion</button></div><button type="button" class="secondary small" data-action="qrw-field-preview" data-id="${esc(field.id)}">Preview</button> <button type="button" class="secondary small" data-action="qrw-field-duplicate" data-id="${esc(field.id)}">Duplicate</button> <button type="button" class="secondary small" data-action="qrw-field-up" data-id="${esc(field.id)}" ${index===0?'disabled':''}>↑</button> <button type="button" class="secondary small" data-action="qrw-field-down" data-id="${esc(field.id)}" ${index===state.qrwFields.length-1?'disabled':''}>↓</button> <button type="button" class="danger small" data-action="qrw-field-delete" data-id="${esc(field.id)}">Delete</button></td></tr>`).join('');}
-  function renderQRWFieldEditor(){const standalone=state.page==='field-mapping';return `<section class="panel qrw-field-editor" data-qrw-panel="3 4">${renderFieldSenseGuide()}<section class="nfi-live-panel"><h4>Live JSON and source trace</h4><p id="nfi-live-state" role="status">Preview values here as you edit. Generate + validate checks the complete parser before review.</p><pre id="nfi-live-json">{}</pre><div id="nfi-live-trace"></div></section><dialog id="nfi-help-dialog"><div id="nfi-help-content"></div><button type="button" class="secondary" data-action="nfi-help-close">Close help</button></dialog><section id="kvie-inspector" class="nfi-kv-inspector" hidden></section><div class="section-head"><div><h3>${standalone?'FieldSense mapping workbench':'Steps 3–4 · Desired JSON fields and value mapping'}</h3><p>Choose source positions, split compound tokens, extract key/value pairs, and apply ordered operations. Every generated candidate carries the same native mapping plan into production.</p></div><div class="actions"><button type="button" class="secondary" data-action="qrw-suggest-fields">Suggest from raw log</button><button type="button" class="secondary" data-action="workspace-ai-auto" data-artifact="mapping" data-tab="Field mapping" data-suggest-mapping>Suggest Mappings with Nexora AI</button><button type="button" class="secondary" data-action="${standalone?'nfi-generate':'gprs-open-editor'}">${standalone?'Generate candidate':'5 · Auto-populate complete parser'}</button><button type="button" class="secondary" data-action="qrw-add-field">Add Custom Field</button><button type="button" class="secondary" data-action="block-from-mapping">Build with manual field controls</button><button type="button" class="secondary" data-action="workspace-ai-open" data-mode="fix" data-tab="Field mapping">Fix with Nexora AI</button><button type="button" class="secondary" data-action="qrw-add-kv-tail" title="Extract every key/value from a chosen 1-based position to EOL, including future key names. Choose assignment and pair separators, or inspect the existing tail.">Add dynamic KV tail</button><button type="button" class="secondary" data-action="qrw-add-advanced-kv-tail" title="Use explicit pair boundaries and optionally preserve segments that have no assignment">Add advanced dynamic KV tail</button><button type="button" class="primary" data-action="qrw-generate-validate" title="Generate one complete candidate from every mapped static field and configured key/value extractor, run native mapping and full parser validation, and keep saving/review inside this workspace.">Generate + validate complete parser pack</button><button type="button" class="secondary" data-action="qrw-test-fields">Test all fields</button><button type="button" class="primary" data-action="qrw-controller-preview">Preview mapping</button><button type="button" class="secondary" data-action="nfi-cancel-analysis">Cancel analysis</button><button type="button" class="secondary" data-action="qrw-save-draft">Save mapping draft</button><button type="button" class="secondary" data-action="qrw-export-plan">Export mapping</button></div></div><details class="nfi-scope"><summary>Parser service scope and safe matching</summary><p>A reviewed service-scoped NFI parser overrides matching built-in formats only for that service. Wildcard mappings remain fallback parsers unless an operator explicitly approves a global override with a bounded RE2 match condition.</p><label>Service scope · auto or comma-separated services<input id="nfi-service" value="${esc(state.nfiService||state.quarantineDiagnosis?.record?.service||'auto')}" placeholder="auto, smtp, imapserv, or a custom service"></label><label>Mapping priority · 0–1000<input id="nfi-mapping-priority" type="number" min="0" max="1000" value="${Number(state.nfiMappingPriority)||0}"></label><label>Optional RE2 record match condition<input id="nfi-scope-pattern" value="${esc(state.nfiScopePattern||'')}" maxlength="1024" placeholder="e.g. ^[0-9]{8} .* smtp "></label><label><input id="nfi-global-scope" type="checkbox" ${state.nfiGlobalScope?'checked':''}> Allow reviewed global override (requires match pattern)</label></details>
+  function renderMappingTemplateControls() {
+    return `<details class="nfi-template-composition"><summary>Separate header and KV with saved templates</summary><p>Choose the exact header revision and a KV grammar, verify the current raw record, then import the combined fields into this workbench. Rename header fields or edit dynamic key aliases after import.</p><div class="actions"><button type="button" class="secondary" data-action="mapping-template-load">Load saved template choices</button><button type="button" class="secondary" data-action="template-from-mapping" data-kind="header-templates">Create header template from this record</button><button type="button" class="secondary" data-action="template-from-mapping" data-kind="kv-templates">Create KV template from this record</button></div><div id="mapping-template-choices"></div><pre id="mapping-template-evidence" class="json-output" role="status" hidden></pre></details>`;
+  }
+  function mappingTemplateOptions(documents, global=false) {
+    const fallback = global ? '<option value="">Global AutoSense · built in</option>' : '<option value="">Choose a header revision</option>';
+    return fallback + documents.filter(doc=>doc.id && Number(doc.revision)>0 && doc.state!=='revoked').flatMap(doc=>{
+      const option=(revision,status)=>`<option value="${esc(JSON.stringify({id:doc.id,revision}))}">${esc(doc.payload?.name||doc.id)} · r${revision} · ${esc(status||'saved')}</option>`;
+      const options=doc.state==='discarded'?[]:[option(Number(doc.revision),doc.state)];
+      if(Number(doc.payload?.previous_active_revision)>0)options.push(option(Number(doc.payload.previous_active_revision),'active'));
+      return options;
+    }).join('');
+  }
+  function renderQRWFieldEditor(){const standalone=state.page==='field-mapping';return `<section class="panel qrw-field-editor" data-qrw-panel="3 4">${renderFieldSenseGuide()}${renderMappingTemplateControls()}<section class="nfi-live-panel"><h4>Live JSON and source trace</h4><p id="nfi-live-state" role="status">Preview values here as you edit. Generate + validate checks the complete parser before review.</p><pre id="nfi-live-json">{}</pre><div id="nfi-live-trace"></div></section><dialog id="nfi-help-dialog"><div id="nfi-help-content"></div><button type="button" class="secondary" data-action="nfi-help-close">Close help</button></dialog><section id="kvie-inspector" class="nfi-kv-inspector" hidden></section><div class="section-head"><div><h3>${standalone?'FieldSense mapping workbench':'Steps 3–4 · Desired JSON fields and value mapping'}</h3><p>Choose source positions, split compound tokens, extract key/value pairs, and apply ordered operations. Every generated candidate carries the same native mapping plan into production.</p></div><div class="actions"><button type="button" class="secondary" data-action="qrw-suggest-fields">Suggest from raw log</button><button type="button" class="secondary" data-action="workspace-ai-auto" data-artifact="mapping" data-tab="Field mapping" data-suggest-mapping>Suggest Mappings with Nexora AI</button><button type="button" class="secondary" data-action="${standalone?'nfi-generate':'gprs-open-editor'}">${standalone?'Generate candidate':'5 · Auto-populate complete parser'}</button><button type="button" class="secondary" data-action="qrw-add-field">Add Custom Field</button><button type="button" class="secondary" data-action="block-from-mapping">Build with manual field controls</button><button type="button" class="secondary" data-action="workspace-ai-open" data-mode="fix" data-tab="Field mapping">Fix with Nexora AI</button><button type="button" class="secondary" data-action="qrw-add-kv-tail" title="Extract every key/value from a chosen 1-based position to EOL, including future key names. Choose assignment and pair separators, or inspect the existing tail.">Add dynamic KV tail</button><button type="button" class="secondary" data-action="qrw-add-advanced-kv-tail" title="Use explicit pair boundaries and optionally preserve segments that have no assignment">Add advanced dynamic KV tail</button><button type="button" class="primary" data-action="qrw-generate-validate" title="Generate one complete candidate from every mapped static field and configured key/value extractor, run native mapping and full parser validation, and keep saving/review inside this workspace.">Generate + validate complete parser pack</button><button type="button" class="secondary" data-action="qrw-test-fields">Test all fields</button><button type="button" class="primary" data-action="qrw-controller-preview">Preview mapping</button><button type="button" class="secondary" data-action="nfi-cancel-analysis">Cancel analysis</button><button type="button" class="secondary" data-action="qrw-save-draft">Save mapping draft</button><button type="button" class="secondary" data-action="qrw-export-plan">Export mapping</button></div></div><details class="nfi-scope"><summary>Parser service scope and safe matching</summary><p>A reviewed service-scoped NFI parser overrides matching built-in formats only for that service. Wildcard mappings remain fallback parsers unless an operator explicitly approves a global override with a bounded RE2 match condition.</p><label>Service scope · auto or comma-separated services<input id="nfi-service" value="${esc(state.nfiService||state.quarantineDiagnosis?.record?.service||'auto')}" placeholder="auto, smtp, imapserv, or a custom service"></label><label>Mapping priority · 0–1000<input id="nfi-mapping-priority" type="number" min="0" max="1000" value="${Number(state.nfiMappingPriority)||0}"></label><label>Optional RE2 record match condition<input id="nfi-scope-pattern" value="${esc(state.nfiScopePattern||'')}" maxlength="1024" placeholder="e.g. ^[0-9]{8} .* smtp "></label><label><input id="nfi-global-scope" type="checkbox" ${state.nfiGlobalScope?'checked':''}> Allow reviewed global override (requires match pattern)</label></details>
 <details id="nfi-runtime-evidence" class="nfi-import" hidden><summary>Automatic parser pool and observed field evidence</summary><p>Approved built-in and published add-on parsers are considered together. Suggestions do not activate or replace a parser. Only one selected parsing result is emitted for each input occurrence.</p><button class="secondary small" type="button" data-action="nfi-use-runtime-fields" hidden>Add observed fields from the existing parser</button><p class="hint">Source-byte suggestions describe this sample. Validate their ranges against representative records before approval.</p><pre id="nfi-runtime-evidence-json" class="json-output"></pre></details><div id="nfi-inspector-host">${qrwRawInspector(state.page==='field-mapping'?(state.nfiRaw||''):(state.lastAssurance?.request?.raw||qrwRaw()))}</div><details class="nfi-import"><summary>Import or edit a mapping plan</summary><label>Mapping plan JSON<textarea id="nfi-plan-import" rows="5" placeholder='{"version":1,"fields":[]}'></textarea></label><button class="secondary" type="button" data-action="qrw-import-plan">Import mapping</button></details><div class="table-wrap"><table class="qrw-field-table"><thead><tr><th>#</th><th>Name / label</th><th>Type / policy</th><th>Extraction and ordered operations</th><th>Transform / validation</th><th>Preview / evidence</th><th>Actions</th></tr></thead><tbody id="qrw-field-rows">${renderQRWFieldRows()||'<tr><td colspan="7"><div class="empty-state">Inspect or paste raw evidence, then suggest mappings or select individual tokens.</div></td></tr>'}</tbody></table></div><div id="qrw-field-status" role="status" class="callout">Local values are provisional until verified against the controller runtime. No parser is activated here.</div><pre id="nfi-controller-result" class="json-output" hidden></pre><details class="nfi-import" id="nfi-ai-help"><summary>Optional configured AI help · review only</summary><p>The controller masks failed log evidence and sensitive expected values before an explicitly requested AI review. Native parsing and mapping remain first. Provider keys never enter this browser or parser bundles.</p><div class="actions"><button type="button" class="secondary" data-action="nfi-ai-status">Check configured Nexora AI readiness</button><button type="button" class="secondary" data-action="nfi-ai-help">Ask configured Nexora AI for review-only help</button></div><div id="nfi-ai-status" class="json-output" role="status"></div><div id="nfi-ai-proposals">${state.aiProposals?.length?renderAIProposalQueue(state.aiProposals,state.lastAssurance?.result):''}</div></details>${standalone?'':`<div class="wizard-navigation"><button type="button" class="secondary qrw-back-button" data-action="qrw-navigate" data-step="2">2 · Back to evidence</button><button type="button" class="primary qrw-next-button" data-action="qrw-navigate" data-step="5">5 · Generate parser candidate</button></div>`}</section>`;}
 
   function setupQRWStepPanels(root=page){
@@ -1421,6 +1441,10 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     catch (error) { recordAPI(path, method, null, performance.now() - started, error.message); throw error; }
     const contentType = response.headers.get('content-type') || '';
     const data = contentType.includes('application/json') ? await response.json().catch(() => ({})) : {};
+    if (response.status === 403 && /CSRF token required or invalid/i.test(data.error || '') && !options.csrfRetried) {
+      state.csrf = '';
+      return requestAPI(path, {...options, csrfRetried:true});
+    }
     const latency=performance.now()-started;
     const degraded=data?.snapshot_stale===true||path.split('?')[0]==='/admin/ai-provider'&&['degraded','unavailable','encryption_unavailable'].includes(data?.store_status);
     const standby=response.ok&&data.provider_routing==='standby'&&typeof data.provider_id==='string'
@@ -1501,8 +1525,11 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     }
     return health;
   }
+  let controllerRetryTimer = null;
+  let controllerRetryDelay = 2000;
   async function checkController() {
     if (state.controllerCheckInFlight) return;
+    clearTimeout(controllerRetryTimer);
     state.controllerCheckInFlight = true;
     setControllerChecking();
     try {
@@ -1512,6 +1539,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         el(id).textContent=Number.isSafeInteger(count)&&count>=0?String(count):'—';
       }
       enableLogin();
+      controllerRetryDelay = 2000;
       // An anonymous session is expected on the login page. Probe it directly
       // so a normal 401 cannot call api()'s session-expiry handler and erase
       // credentials that an operator entered while controller checks finished.
@@ -1529,6 +1557,10 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
       showPreviewOnly(error.name === 'AbortError' ? 'Controller verification timed out. Open the URL served by nli-controller-agent.' : error.message);
     } finally {
       state.controllerCheckInFlight = false;
+      if (!state.controllerReady && !state.user) {
+        controllerRetryTimer = setTimeout(checkController, controllerRetryDelay);
+        controllerRetryDelay = Math.min(30000, controllerRetryDelay * 2);
+      }
     }
   }
 
@@ -1730,6 +1762,27 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   function acceptSyncSnapshot(raw,{incremental=false,eventType='sync_snapshot',force=false}={}) {
     const incoming=raw?.snapshot||raw;if(!incoming||typeof incoming!=='object')return false;
     if(incoming.schema_version&&incoming.schema_version!==SYNC_SCHEMA){state.sync.rejectedUpdates++;return false;}
+    const incomingInstance = incoming.controller_instance_id;
+    const currentInstance = state.sync.snapshot?.controller_instance_id;
+    if (incomingInstance && state.sync.retiredInstances?.has(incomingInstance)) {
+      state.sync.rejectedUpdates++;
+      return false;
+    }
+    if (incomingInstance && currentInstance && incomingInstance !== currentInstance) {
+      if (incremental) {
+        state.sync.rejectedUpdates++;
+        requestSyncResnapshot('controller restarted');
+        return false;
+      }
+      state.sync.retiredInstances ||= new Set();
+      state.sync.retiredInstances.add(currentInstance);
+      state.sync.snapshot = null;
+      state.sync.history = [];
+      state.sync.renderedSignature = null;
+      state.streamLastEventId = '';
+      inFlightReads.clear();
+      state.csrf = '';
+    }
     let heartbeat=false;
     if(incremental){
       const current=state.sync.snapshot||{schema_version:SYNC_SCHEMA,revision:0,sources:[],aggregate:{},diagnostics:{},subsystems:{}};
@@ -2925,21 +2978,52 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     return panel('Recent client operations','Approval, command delivery, and results reported by enrolled clients.',`<div class="actions"><button type="button" class="secondary" data-action="fleet-refresh">Refresh status</button><button type="button" class="secondary" data-action="fleet-open" data-value="rollouts">Open approvals &amp; rollouts</button></div>${table(['Operation','Status','Targets','Results','Details'],rows,'No client operations have been recorded.')}`);
   }
 
+  let clientManagementSnapshot = null;
+  let clientManagementFilter = '';
+  function clientInventoryRows(items, stale = false) {
+    return items.map(({node={},sync={}}) => {
+      const m = node.metrics || {};
+      const details = {node_id:node.id,version:node.version,last_seen:node.last_seen,issues:node.issues || [],sync};
+      return `<tr data-client-row data-client-search="${esc([node.id,node.hostname,node.ip,node.status,...(node.issues||[])].join(' ').toLowerCase())}"><td><b>${esc(node.hostname||node.id)}</b><br><small class="mono">${esc(node.id)} · ${esc(node.ip||'—')}</small><br><small>${esc([node.os,node.arch,node.version].filter(Boolean).join(' / '))}</small></td><td>${badge(node.status||'unknown')}<br><small>nli-agent: ${esc(agentMetricsLabel(sync))}</small><br><small>${time(node.last_seen)}</small>${(node.issues||[]).length?`<p>${esc(node.issues.join(' · '))}</p>`:''}</td><td>${renderReportedInputs(sync)}</td><td>${number(m.logs_received)} in · ${number(m.logs_parsed)} parsed<br><small>${number(m.logs_quarantined)} quarantined · ${Number(m.parse_rate_pct||0).toFixed(2)}%</small></td><td>${(node.parsers||[]).map(parser=>`${esc(parser.id)} v${esc(parser.version)}`).join('<br>')||'—'}<br>${badge(sync.asset_drifted?'parser drift':sync.active_asset_bundle_hash?'bundle reported':'bundle unknown')}<details><summary>Runtime and sync details</summary><pre class="json-output">${esc(pretty(details))}</pre></details></td><td><button type="button" class="secondary small" data-action="client-select-one" data-id="${esc(node.id)}" ${stale?'disabled':''}>Select for action</button></td></tr>`;
+    });
+  }
+  function filterClientInventory() {
+    const query = clientManagementFilter.trim().toLowerCase();
+    let visible = 0;
+    for (const row of page.querySelectorAll('[data-client-row]')) {
+      row.hidden = query !== '' && !row.dataset.clientSearch.includes(query);
+      if (!row.hidden) visible++;
+    }
+    const count = el('client-filter-count');
+    if (count) count.textContent = `${visible} of ${clientManagementSnapshot?.nodes?.length || 0} enrolled clients`;
+  }
   async function loadClientManagement() {
-    const [data,jobs]=await Promise.all([api('/fleet/sync',{allowStale:true}),api('/rollouts',{allowStale:true}).catch(error=>({error:error.message}))]);
-    const items=data.nodes||[];
-    const inventory=table(['Client','Agent service / heartbeat','Log sources','Throughput','Active parsers'],items.map(({node={},sync={}})=>{
-      const m=node.metrics||{};
-      return `<tr><td><b>${esc(node.hostname||node.id)}</b><br><small class="mono">${esc(node.id)} · ${esc(node.ip||'—')}</small><br><small>${esc([node.os,node.arch,node.version].filter(Boolean).join(' / '))}</small></td><td>${badge(node.status||'unknown')}<br><small>nli-agent: ${esc(agentMetricsLabel(sync))}</small><br><small>${time(node.last_seen)}</small></td><td>${renderReportedInputs(sync)}</td><td>${number(m.logs_received)} in · ${number(m.logs_parsed)} parsed<br><small>${number(m.logs_quarantined)} quarantined · ${Number(m.parse_rate_pct||0).toFixed(2)}%</small></td><td>${(node.parsers||[]).map(parser=>`${esc(parser.id)} v${esc(parser.version)}`).join('<br>')||'—'}<br><small>${badge(sync.asset_drifted?'parser drift':sync.active_asset_bundle_hash?'bundle reported':'bundle unknown')}</small></td></tr>`;
-    }),'No client has checked in yet.');
-    const options=items.map(({node})=>`<option value="${esc(node.id)}">${esc(node.hostname||node.id)} · ${esc(node.status||'unknown')}</option>`).join('');
-    const controls=`<form id="client-action-form" class="form-grid">
+    const [data,jobs] = await Promise.all([api('/fleet/sync',{allowStale:true}),api('/rollouts',{allowStale:true}).catch(error=>({error:error.message}))]);
+    if (state.page !== 'clients') return;
+    clientManagementSnapshot = data;
+    const items = data.nodes || [];
+    const inventory = table(['Client','Agent service / heartbeat','Log sources','Throughput','Active parsers','Actions'],clientInventoryRows(items,data.snapshot_stale===true),'No client has checked in yet.');
+    const options = items.map(({node})=>`<option value="${esc(node.id)}">${esc(node.hostname||node.id)} · ${esc(node.status||'unknown')}</option>`).join('');
+    const controls = `<form id="client-action-form" class="form-grid">
       <label class="field">Action<select name="type"><option value="restart">Restart parsing agent</option><option value="parser_sync">Synchronize published parser bundle</option></select></label>
       <label class="field">Scope<select name="scope"><option value="selected">Selected clients</option><option value="all">All eligible clients for this action</option></select></label>
       <label class="field wide">Selected clients<select name="targets" multiple size="6">${options}</select><span class="hint">Select one or more clients. Restarts for offline clients wait for check-in. Parser bundle delivery uses the verified fleet rollout policy.</span></label>
+      <div class="actions wide"><button type="button" class="secondary" data-action="client-select-scope" data-value="online">Select online</button><button type="button" class="secondary" data-action="client-select-scope" data-value="drifted">Select parser drift</button><button type="button" class="secondary" data-action="client-select-scope" data-value="visible">Select visible</button><button type="button" class="secondary" data-action="client-select-scope" data-value="none">Clear selection</button></div>
       <button class="primary" type="submit" ${items.length?'':'disabled'}>Request approval</button>
-    </form><div class="actions"><button type="button" class="secondary" data-action="fleet-open" data-value="input-paths">Manage input paths</button><button type="button" class="secondary" data-action="fleet-open" data-value="parsers">Manage published parser packs</button><button type="button" class="secondary" data-action="fleet-open" data-value="parser-sync">View parser bundle delivery</button></div>`;
-    renderPage('clients',staleSnapshotWarning(data)+panel('Client agent inventory','Last reported runtime information from enrolled clients.',inventory)+panel('Request a client action','Operations are approval-gated and scoped to enrolled client IDs.',data.snapshot_stale?'Refresh the fleet snapshot to select current targets.':controls)+(data.snapshot_stale?'':renderManagedFileForm(items))+staleSnapshotWarning(jobs)+(jobs.error?`<div class="callout warn">Client operation status unavailable: ${esc(jobs.error)}</div>`:renderFleetJobs(jobs)));
+      <p id="client-action-selection" class="hint" role="status">No clients selected. Requests create an approval proposal. Completion appears in Recent client operations after the client reports its result.</p>
+    </form><div class="actions"><button type="button" class="secondary" data-action="fleet-open" data-value="input-paths">Manage input paths</button><button type="button" class="secondary" data-action="fleet-open" data-value="outputs">Manage output endpoints</button><button type="button" class="secondary" data-action="fleet-open" data-value="parsers">Manage published parser packs</button><button type="button" class="secondary" data-action="fleet-open" data-value="parser-sync">View parser bundle delivery</button></div>`;
+    const online = items.filter(({node={}})=>['online','degraded'].includes(node.status)).length;
+    const drifted = items.filter(({sync={}})=>sync.asset_drifted).length;
+    const tools = `<div class="form-grid"><label class="field wide">Find a client<input id="client-inventory-filter" type="search" value="${esc(clientManagementFilter)}" placeholder="Client name, ID, IP, status or reported issue"></label><div class="actions wide"><button type="button" class="secondary" data-action="fleet-refresh">Refresh client status</button><button type="button" class="secondary" data-action="client-export-inventory">Download inventory JSON</button><span id="client-filter-count" role="status"></span></div></div>`;
+    renderPage('clients',staleSnapshotWarning(data)+`<div class="grid cols-3">${card('Enrolled clients',number(items.length),'Controller registry')}${card('Online / degraded',number(online),'Most recent heartbeat state')}${card('Parser drift',number(drifted),'Compare exact bundle acknowledgement')}</div>`+panel('Client agent inventory','Last reported runtime information from enrolled clients.',tools+inventory)+panel('Request a client action','Operations are approval-gated and scoped to enrolled client IDs.',data.snapshot_stale?'Refresh the fleet snapshot to select current targets.':controls)+(data.snapshot_stale?'':renderManagedFileForm(items))+staleSnapshotWarning(jobs)+(jobs.error?`<div class="callout warn">Client operation status unavailable: ${esc(jobs.error)}</div>`:renderFleetJobs(jobs)));
+    filterClientInventory();
+  }
+  function updateClientSelection() {
+    const form = el('client-action-form');
+    if (!form) return;
+    const selected = [...form.elements.targets.selectedOptions].map(option=>option.value);
+    const status = el('client-action-selection');
+    if (status) status.textContent = `${selected.length} client(s) selected. An independent approval is required before commands are delivered.`;
   }
   let nfiAnalysisController;
   async function nfiAnalysisRequest(path,body){nfiAnalysisController?.abort();const controller=new AbortController();nfiAnalysisController=controller;try{return await api(path,{method:'POST',body,signal:controller.signal});}finally{if(nfiAnalysisController===controller)nfiAnalysisController=null;}}
@@ -3109,7 +3193,26 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     page.insertAdjacentHTML('afterbegin','<div class="dashboard-intro"><div><p class="eyebrow">UPES recovery · governed parser lifecycle</p><h1>Quarantine Resolution Wizard</h1><p>Resolve retained parsing failures in one nine-stage workspace while the current production parser remains authoritative.</p></div></div>');
     page.dataset.page='quarantine-wizard';setupQRWStepPanels(gprs||page);
   }
-  const LOADERS = { 'sample-history':loadSampleHistory, 'header-templates':()=>loadConfig('header-templates'), 'kv-templates':()=>loadConfig('kv-templates'), 'reference-ai':loadReferenceAI, 'building-blocks':loadBuildingBlocks, 'field-mapping':loadFieldMapping, operations:loadOperations, monitoring:async()=>renderMonitoring(), 'sync-fabric':async()=>renderSyncFabric(), 'nhle-monitor':async()=>renderSubsystemPage('nhle-monitor'), 'napi-monitor':async()=>renderSubsystemPage('napi-monitor'), 'nal-monitor':async()=>renderSubsystemPage('nal-monitor'), upes:loadUPES, nupire:loadNupire, assurance:loadAssurance, 'quarantine-wizard':loadQuarantineWizard, 'parser-workspace':loadParserWorkspace, 'field-integrity':loadFieldIntegrity, fleet:loadFleet, 'parser-sync':loadParserSync, clients:loadClientManagement, controller:loadControllerManagement, parsers:loadParsers, migration:loadMigration, 'input-paths':loadInputPaths, kv:()=>loadConfig('kv'), static:()=>loadConfig('static'), projection:()=>loadConfig('projection'), studio:()=>loadConfig('studio'), regex:()=>loadConfig('regex'), knownkeys:()=>loadConfig('knownkeys'), semantic:()=>loadConfig('semantic'), 'engine-network':()=>loadDomainEngine('engine-network'), 'engine-url':()=>loadDomainEngine('engine-url'), 'engine-email':()=>loadDomainEngine('engine-email'), 'engine-subject':()=>loadDomainEngine('engine-subject'), outputs:loadOutputEngine, metadata:loadMetadata, streams:loadStreams, unknowns:loadUnknowns, 'controller-gateway':loadControllerGateway, 'ai-privacy':loadAIPrivacy, 'api-monitor':loadAPIMonitor, latency:loadLatency, drift:loadDrift, performance:loadPerformance, rollouts:loadRollouts, artifacts:loadArtifacts, security:loadSecurity, system:loadSystem, communications:loadCommunicationStatus, notifications:loadNotifications, ai:loadAIProvider };
+  async function loadDisasterRecovery() {
+    if (state.user?.role !== 'admin') {
+      renderPage('disaster-recovery', panel('Disaster Recovery', 'Administrator access is required to inspect protected recovery configuration.', '<p>Ask an administrator to inspect checkpoints and recovery dependencies.</p>'));
+      return;
+    }
+    const data = await api('/recovery');
+    const rows = (data.checkpoints || []).map(item => `<tr><td>${time(item.created_at)}</td><td>${number(item.documents)}</td><td class="mono">${esc(item.sha256)}</td><td><button class="secondary small" data-action="disaster-stage" data-id="${esc(item.id)}">Stage recovery drafts</button></td></tr>`);
+    renderPage('disaster-recovery', panel('Disaster Recovery', 'The protected metadata store retains each published revision. Checkpoints preserve a verified catalog view that can be staged for review after loss or an incorrect change.',
+      `<p>Storage mode <b>${esc(data.storage_mode)}</b>. Supabase deployments checkpoint published configuration every five minutes. Last successful automatic/manual check ${time(data.status?.last_success)}.${data.status?.last_error ? ` Current checkpoint error ${esc(data.status.last_error)}.` : ''} Create a checkpoint before planned maintenance.</p><div class="actions"><button class="primary" data-action="disaster-checkpoint">Create checkpoint</button><button class="secondary" data-action="disaster-resync">Recover controller assets and request fleet sync</button><button class="secondary" data-action="disaster-refresh">Refresh status</button></div><pre class="json-output" id="disaster-result" role="status" hidden></pre>`) +
+      panel('Catalog checkpoints', 'Includes published parser packs, header templates, KV templates, known keys, parsing policies and active input/output profiles. Restoring stages drafts with their original IDs for normal review and publication. Existing conflicting drafts and active parser packs are reported for manual repair.', rows.length ? table(['Created', 'Documents', 'Content SHA256', 'Actions'], rows) : empty('No completed catalog checkpoint is available.')) +
+      panel('Encrypted controller identity capsule', 'Create this export as root while the controller is stopped. It includes the private CA and server TLS keys, configuration, accounts, enrollment identity and rollout state. Keep its passphrase in a separate protected location.',
+      `<pre class="json-output">sudo systemctl stop nli-controller-agent
+sudo nli-controller-agent recovery-backup --confirm-stopped --passphrase-file /root/nli-recovery.passphrase --output /root/nli-controller.json.enc
+sudo systemctl start nli-controller-agent</pre><p>Create a mode 0600 passphrase file containing at least 16 characters before running the command. Import the encrypted export below to retain it in the protected metadata store. The server stores its ciphertext and SHA256 without receiving its passphrase.</p><label class="field">Encrypted capsule file (up to 6 MiB)<input id="disaster-capsule-file" type="file" accept=".enc,.json"></label><button type="button" class="primary" data-action="disaster-import-capsule">Import encrypted capsule</button>${(data.host_capsules||[]).length ? table(['Stored','Encrypted bytes','SHA256','Actions'],data.host_capsules.map(item=>`<tr><td>${time(item.created_at)}</td><td>${number(item.bytes)}</td><td class="mono">${esc(item.sha256)}</td><td><button class="secondary small" data-action="disaster-download-capsule" data-id="${esc(item.id)}">Download encrypted capsule</button></td></tr>`)) : empty('No encrypted controller identity capsule is stored.')}<details><summary>Restore onto a replacement controller</summary><p>Install the same or newer controller RPM. Use the original state and configuration paths. Stop the controller, download the capsule, and copy the protected passphrase file from your separate recovery location.</p><pre class="json-output">sudo systemctl stop nli-controller-agent
+sudo nli-controller-agent recovery-restore --confirm-stopped --capsule /root/nli-controller.json.enc --passphrase-file /root/nli-recovery.passphrase
+sudo systemctl start nli-controller-agent</pre><p>Restore access to the same Supabase project, keep the controller address reachable, then use Recover controller assets and request fleet sync. Client node tokens continue to match the recovered fleet identity. Custom external certificate paths and reverse-proxy/tunnel services require their own host backup.</p></details>`) +
+      panel('Runtime files and identity dependencies', 'These paths distinguish the live parser inventory, local catalog export and protected machine identity. Preserve identity and encryption keys using your organization’s protected host backup before replacing a controller.',
+      `<dl><dt>Controller state</dt><dd class="mono">${esc(data.controller_state)}</dd><dt>Controller configuration</dt><dd class="mono">${esc(data.controller_config)}</dd><dt>Controller parser assets</dt><dd class="mono">${esc(data.controller_parser_assets)}</dd><dt>Catalog export</dt><dd class="mono">${esc(data.catalog_export)}</dd><dt>Client parser assets</dt><dd class="mono">${esc(data.client_parser_assets)}</dd><dt>Client parsers</dt><dd class="mono">${esc(data.client_parsers)}</dd></dl><ul>${(data.identity_dependencies||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ul><p>Fleet synchronization uses the existing exact bundle hash and rollout approval. A replacement host must first have the same project credentials and recovered host identity, or enroll replacement clients through the normal setup flow.</p>`));
+  }
+  const LOADERS = { 'disaster-recovery':loadDisasterRecovery, 'sample-history':loadSampleHistory, 'header-templates':()=>loadConfig('header-templates'), 'kv-templates':()=>loadConfig('kv-templates'), 'reference-ai':loadReferenceAI, 'building-blocks':loadBuildingBlocks, 'field-mapping':loadFieldMapping, operations:loadOperations, monitoring:async()=>renderMonitoring(), 'sync-fabric':async()=>renderSyncFabric(), 'nhle-monitor':async()=>renderSubsystemPage('nhle-monitor'), 'napi-monitor':async()=>renderSubsystemPage('napi-monitor'), 'nal-monitor':async()=>renderSubsystemPage('nal-monitor'), upes:loadUPES, nupire:loadNupire, assurance:loadAssurance, 'quarantine-wizard':loadQuarantineWizard, 'parser-workspace':loadParserWorkspace, 'field-integrity':loadFieldIntegrity, fleet:loadFleet, 'parser-sync':loadParserSync, clients:loadClientManagement, controller:loadControllerManagement, parsers:loadParsers, migration:loadMigration, 'input-paths':loadInputPaths, kv:()=>loadConfig('kv'), static:()=>loadConfig('static'), projection:()=>loadConfig('projection'), studio:()=>loadConfig('studio'), regex:()=>loadConfig('regex'), knownkeys:()=>loadConfig('knownkeys'), semantic:()=>loadConfig('semantic'), 'engine-network':()=>loadDomainEngine('engine-network'), 'engine-url':()=>loadDomainEngine('engine-url'), 'engine-email':()=>loadDomainEngine('engine-email'), 'engine-subject':()=>loadDomainEngine('engine-subject'), outputs:loadOutputEngine, metadata:loadMetadata, streams:loadStreams, unknowns:loadUnknowns, 'controller-gateway':loadControllerGateway, 'ai-privacy':loadAIPrivacy, 'api-monitor':loadAPIMonitor, latency:loadLatency, drift:loadDrift, performance:loadPerformance, rollouts:loadRollouts, artifacts:loadArtifacts, security:loadSecurity, system:loadSystem, communications:loadCommunicationStatus, notifications:loadNotifications, ai:loadAIProvider };
 
   async function loadUPES(){
     const canonical=state.sync.snapshot||{},upes=canonical.subsystems?.upes;
@@ -3319,10 +3422,61 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
           else progress.fail([acknowledgement?.error,acknowledgement?.next_action].filter(Boolean).join(' · ')||'The origin client has not acknowledged this bundle yet.');
         }else progress.done([result.message||'Parser sync state verified',result.blocking_code,result.next_action].filter(Boolean).join(' · '));if(target==='quarantine-wizard')state.qrwStep=8;await navigate(target);if(target==='assurance')page.querySelector('[data-assurance-tab=gprs]')?.click();}catch(error){progress.fail(error.message);throw error;}break; }
       case 'parser-sync-retry': { const target=['quarantine-wizard','assurance','field-mapping'].includes(state.page)?state.page:'parser-sync',body={asset_class:button.dataset.class,asset_id:id};if(button.dataset.node)body.node_ids=[button.dataset.node];const progress=notify('Creating an approval-gated parser rollout proposal…','progress');try{const result=await api('/parser-sync/retry',{method:'POST',body});notify(result.message||`Rollout proposal ${result.proposal_id||result.id||'created'}; independent approval is still required.`);if(target==='quarantine-wizard')state.qrwStep=8;await navigate(target);if(target==='assurance')page.querySelector('[data-assurance-tab=gprs]')?.click();}catch(error){progress.fail(error.message);throw error;}break; }
+      case 'client-export-inventory': {
+        if (!clientManagementSnapshot) throw new Error('Refresh client inventory first.');
+        downloadJSON('nli-client-inventory.json',{downloaded_at:new Date().toISOString(),...clientManagementSnapshot});
+        break;
+      }
+      case 'client-select-one':
+      case 'client-select-scope': {
+        const form = el('client-action-form');
+        if (!form || clientManagementSnapshot?.snapshot_stale) throw new Error('Refresh the current client inventory before choosing an action.');
+        const visible = new Set([...page.querySelectorAll('[data-client-row]:not([hidden]) [data-action="client-select-one"]')].map(node=>node.dataset.id));
+        const byID = new Map((clientManagementSnapshot.nodes||[]).map(item=>[item.node.id,item]));
+        for (const option of form.elements.targets.options) {
+          const item = byID.get(option.value);
+          option.selected = button.dataset.action === 'client-select-one' ? option.value === id : value === 'online' ? ['online','degraded'].includes(item?.node.status) : value === 'drifted' ? item?.sync?.asset_drifted === true : value === 'visible' && visible.has(option.value);
+        }
+        form.elements.scope.value = 'selected';
+        updateClientSelection();
+        if (button.dataset.action === 'client-select-one') form.scrollIntoView({behavior:'smooth',block:'center'});
+        break;
+      }
       case 'fleet-focus': applyFleetFocus(Number(button.dataset.value));break;
       case 'fleet-refresh': await navigate(state.page);break;
       case 'fleet-open': await navigate(button.dataset.value);break;
       case 'parser-sync-rollout-propose': {const target=['quarantine-wizard','assurance','field-mapping'].includes(state.page)?state.page:'parser-sync',targetMode=button.dataset.targetMode,originNode=button.dataset.originNode||'',bundleHash=state.assuranceSyncBundle?.desired_hash;if(!bundleHash)throw new Error('The current published parser bundle hash is unavailable. Refresh the wizard before proposing a rollout.');if(!['origin','all_eligible','selected'].includes(targetMode))throw new Error('Choose a supported rollout target scope');if(['origin','selected'].includes(targetMode)&&!originNode)throw new Error('Choose a client before proposing targeted delivery');const body={target_mode:targetMode,origin_node_id:originNode,node_ids:targetMode==='selected'?[originNode]:[],bundle_hash:bundleHash};const progress=notify(`Creating ${targetMode==='origin'?'origin client':'all eligible client'} rollout proposal…`,'progress');try{const result=await api('/parser-sync/rollout',{method:'POST',body}),proposal=result.proposal||{},proposalId=proposal.id||result.proposal_id||'created';state.qrwStep=8;notify(`Parser rollout proposal ${proposalId} is ${proposal.state||'pending_approval'}. No client receives this bundle until an independent reviewer approves it.`);await navigate(target);if(target==='assurance')page.querySelector('[data-assurance-tab=gprs]')?.click();}catch(error){progress.fail(error.message);throw error;}break; }
+      case 'disaster-import-capsule': {
+        const file = el('disaster-capsule-file')?.files?.[0];
+        if (!file || file.size > 6*1024*1024) throw new Error('Select an encrypted controller capsule up to 6 MiB.');
+        const capsule = parseJSON(await file.text(), 'Encrypted recovery capsule');
+        await api('/recovery/capsule',{method:'POST',body:{capsule}});
+        await navigate('disaster-recovery');
+        toast('Encrypted controller identity capsule stored. Keep its passphrase separately.');
+        break;
+      }
+      case 'disaster-download-capsule': {
+        const response = await fetchWithTimeout('/api/v1/recovery/capsule/'+encodeURIComponent(id),{credentials:'same-origin'},55000);
+        if (!response.ok) throw new Error('Encrypted capsule download failed ('+response.status+').');
+        const object = URL.createObjectURL(await response.blob());
+        const link = document.createElement('a');link.href=object;link.download='nli-controller-'+id+'.json.enc';link.click();setTimeout(()=>URL.revokeObjectURL(object),1000);
+        break;
+      }
+      case 'disaster-refresh': await navigate('disaster-recovery'); break;
+      case 'disaster-checkpoint':
+      case 'disaster-resync':
+      case 'disaster-stage': {
+        if (state.user?.role !== 'admin') throw new Error('Administrator access required.');
+        const action = button.dataset.action;
+        if (action === 'disaster-stage' && !confirm('Stage this checkpoint as recovery drafts for review? Conflicting drafts will be reported.')) break;
+        const route = action === 'disaster-checkpoint' ? 'checkpoint' : action === 'disaster-resync' ? 'resync' : 'restore';
+        const result = await api('/recovery/' + route, {method:'POST', body:action === 'disaster-stage' ? {checkpoint:id} : {}});
+        await navigate('disaster-recovery');
+        const output = el('disaster-result');
+        if (output) { output.textContent=pretty(result); output.hidden=false; }
+        toast(action === 'disaster-resync' ? 'Controller assets recovered. Review the fleet proposal in Approvals & Rollouts.' : action === 'disaster-stage' ? 'Recovery drafts staged. Review the report and publish each approved replacement.' : 'Catalog checkpoint stored and exported.');
+        break;
+      }
       case 'recovery-open-helper': { state.qrwStep=5;const helperTab=page.querySelector('[data-assurance-tab=gprs]');if(helperTab)helperTab.click();setupQRWStepPanels();const form=page.querySelector('#gprs-parser-helper-form');form?.scrollIntoView({behavior:'smooth',block:'start'});form?.elements.samples?.focus();break; }
       case 'recovery-prepare-replay': { await navigate('unknowns');const form=page.querySelector('#quarantine-reprocess-form');if(!form)throw new Error('Replay form is unavailable');form.elements.record_ids.value=id;form.elements.node_id.value=button.dataset.node||'';form.scrollIntoView({behavior:'smooth',block:'center'});form.elements.record_ids.focus();toast('Replay form prepared after the origin client acknowledged the published parser bundle');break; }
       case 'assurance-tab': { const key=button.dataset.assuranceTab;page.querySelectorAll('[data-assurance-panel]').forEach(section=>section.hidden=section.dataset.assurancePanel!==key);page.querySelectorAll('[role=tab][data-assurance-tab]').forEach(tab=>{const active=tab===button;tab.classList.toggle('active',active);tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;});break; }
@@ -3882,6 +4036,77 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
         } finally {button.disabled=false;}
         break;
       }
+      case 'template-from-mapping': {
+        const raw = qrwRaw();
+        if (!raw.trim()) throw new Error('Load a raw record into the mapping workbench first.');
+        await navigate(button.dataset.kind);
+        const input = el('template-composition-sample');
+        if (input && state.page === button.dataset.kind) {
+          input.value = raw;
+          input.dispatchEvent(new Event('input',{bubbles:true}));
+        }
+        break;
+      }
+      case 'mapping-template-load': {
+        const host = el('mapping-template-choices');
+        if (!host) throw new Error('Mapping workbench is unavailable.');
+        host.textContent = 'Loading saved header and KV revisions…';
+        const [headers, grammars] = await Promise.all([api('/config/templates'),api('/config/kv')]);
+        if (!host.isConnected) break;
+        host.innerHTML = `<div class="form-grid"><label class="field">Mapping header template<select id="mapping-header-template" aria-label="Mapping header template">${mappingTemplateOptions(headers.items||[])}</select></label><label class="field">Mapping KV template<select id="mapping-kv-template" aria-label="Mapping KV template">${mappingTemplateOptions(grammars.items||[],true)}</select></label><div class="actions wide"><button type="button" class="primary" data-action="mapping-template-preview">Verify header and KV together</button><button type="button" class="secondary" data-action="mapping-template-apply" disabled>Import verified fields</button></div></div>`;
+        const output = el('mapping-template-evidence');
+        output.hidden = true;
+        output.verifiedMapping = null;
+        applyPermissions();
+        break;
+      }
+      case 'mapping-template-preview': {
+        const header = el('mapping-header-template')?.value;
+        const kv = el('mapping-kv-template')?.value || '';
+        const raw = qrwRaw();
+        if (!header || !raw.trim()) throw new Error('Select a saved header revision and load one raw record.');
+        const host = el('mapping-template-evidence');
+        const importButton = page.querySelector('[data-action="mapping-template-apply"]');
+        host.hidden = false;
+        host.verifiedMapping = null;
+        importButton.disabled = true;
+        host.textContent = 'Checking complete header and KV coverage…';
+        const signature = JSON.stringify({raw,header,kv});
+        const result = await api('/field-mapping/template-compose',{method:'POST',body:{header:JSON.parse(header),kv:kv?JSON.parse(kv):undefined,samples:[raw]}});
+        if (!host.isConnected) break;
+        if (signature !== JSON.stringify({raw:qrwRaw(),header:el('mapping-header-template').value,kv:el('mapping-kv-template').value})) {
+          host.textContent = 'The raw record or template selection changed. Verify the current inputs.';
+          break;
+        }
+        const headerFields=(result.plan?.fields||[]).filter(field=>!field.kv_header_pattern).map(field=>field.name);
+        host.textContent = pretty({passed:result.passed,header_fields:headerFields,kv_grammar:kv?JSON.parse(kv):'Global AutoSense',examples:result.examples,failures:result.failures});
+        if (result.passed === true && result.failed === 0 && result.plan?.fields?.length) {
+          host.verifiedMapping = {signature,result,raw};
+          importButton.disabled = !can('assurance:run');
+        }
+        break;
+      }
+      case 'mapping-template-apply': {
+        const host = el('mapping-template-evidence');
+        const verified = host?.verifiedMapping;
+        const signature = JSON.stringify({raw:qrwRaw(),header:el('mapping-header-template')?.value,kv:el('mapping-kv-template')?.value||''});
+        if (!verified || signature !== verified.signature) throw new Error('Verify this exact raw record and template selection before import.');
+        if (state.qrwFields.length && !confirm('Replace the current editable mapping fields with this verified header and KV plan?')) break;
+        state.qrwFields = verified.result.plan.fields.map(field=>qrwField(field.kv_header_pattern?{...field,source:'raw'}:field));
+        state.nfiScopePattern = new TextEncoder().encode(verified.result.scope_pattern||'').length<=1024 ? verified.result.scope_pattern||'' : '';
+        state.nfiGlobalScope = false;
+        state.nfiSenseMode = 'manual';
+        state.nfiParser = null;
+        state.nfiCandidateValidated = null;
+        qrwControllerPreview = null;
+        el('qrw-field-rows').innerHTML = renderQRWFieldRows();
+        if (el('nfi-scope-pattern')) el('nfi-scope-pattern').value = state.nfiScopePattern;
+        if (el('nfi-global-scope')) el('nfi-global-scope').checked = false;
+        page.dataset.dirty = 'true';
+        nfiScheduleLive();
+        toast('Verified header fields and complete KV extractor imported. Review names and aliases, then preview the current mapping.');
+        break;
+      }
       case 'template-preview-saved': {
         const header = el('template-header').value, kv = el('template-kv').value;
         const raw = el('template-composition-sample').value;
@@ -4139,6 +4364,8 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
 
   el('login-form').addEventListener('submit',async event=>{event.preventDefault();if(!state.controllerReady){showPreviewOnly(CONTROLLER_REQUIRED);return;}const data=formObject(event.currentTarget);el('login-error').textContent='';try{await api('/auth/login',{method:'POST',body:data});const principal=await api('/auth/me');await boot(principal);}catch(error){el('login-error').textContent=error.message;}});
   el('retry-controller').addEventListener('click',checkController);
+  page.addEventListener('input', event => {if(event.target.id==='client-inventory-filter'){clientManagementFilter=event.target.value;filterClientInventory();}});
+  page.addEventListener('change', event => {if(event.target.closest('#client-action-form'))updateClientSelection();});
   page.addEventListener('input',event=>{page.dataset.dirty='true';if(event.target.matches('#input-profile-form [name=config]')){try{const config=parseJSON(event.target.value,'Input definitions JSON');el('input-path-list').innerHTML=table(['Log path','Family','Status and actions'],inputPathRows(config),'No paths configured.');}catch{}}});
   page.addEventListener('focusout',event=>{if(!event.target.matches('select'))return;setTimeout(()=>{if(state.sync.pendingRender&&!(page.contains(document.activeElement)&&document.activeElement.matches?.('select'))){state.sync.pendingRender=false;renderSyncSubscriber({force:true});}},0);});
   page.addEventListener('change',event=>{

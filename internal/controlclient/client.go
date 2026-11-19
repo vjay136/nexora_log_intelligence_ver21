@@ -331,13 +331,19 @@ func (c *Client) Run(ctx context.Context) error {
 	if interval <= 0 {
 		interval = time.Duration(c.cfg.PollSeconds) * time.Second
 	}
+	failures := 0
 	for {
+		next := interval + telemetryJitter(interval/5)
 		if err := c.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(os.Stderr, "nli-client-control: %v\n", err)
+			failures++
+			streamReady.Store(false)
+			next = controlRetryDelay(interval, failures)
+			fmt.Fprintf(os.Stderr, "nli-client-control: sync pending; retry in %s: %v\n", next.Round(time.Millisecond), err)
 		} else {
+			failures = 0
 			streamReady.Store(true)
 		}
-		timer := time.NewTimer(interval)
+		timer := time.NewTimer(next)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
@@ -382,6 +388,17 @@ func telemetryRetryDelay(interval time.Duration, failures int) time.Duration {
 	// Add up to one publication interval of jitter so a recovered controller is
 	// not hit by every enrolled client in the same scheduler tick.
 	return delay + telemetryJitter(interval)
+}
+
+// Keep retries bounded and spread recovered fleets across scheduler ticks.
+func controlRetryDelay(interval time.Duration, failures int) time.Duration {
+	base := min(interval, 2*time.Second)
+	if base <= 0 {
+		base = time.Second
+	}
+	shift := max(0, min(failures-1, 5))
+	delay := min(base*time.Duration(1<<shift), 30*time.Second)
+	return delay + telemetryJitter(delay/5)
 }
 
 // RunOnce sends one heartbeat and applies at most one leased command.

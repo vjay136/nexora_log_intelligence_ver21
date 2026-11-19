@@ -1141,3 +1141,71 @@ func TestReplayCommandTargetsRecordsAndReturnsPerRecordSummary(t *testing.T) {
 		t.Fatalf("replay did not pass selected ids/path: path=%s ids=%v", executor.replayPath, executor.replayIDs)
 	}
 }
+
+func TestControlRetryDelayBoundedAcrossControllerOutage(t *testing.T) {
+	for _, interval := range []time.Duration{time.Millisecond, time.Second, 30 * time.Second} {
+		for _, failures := range []int{1, 2, 6, 100} {
+			delay := controlRetryDelay(interval, failures)
+			if delay < interval && failures == 1 && interval <= 2*time.Second || delay <= 0 || delay > 36*time.Second {
+				t.Fatalf("invalid delay %s for interval %s and %d failures", delay, interval, failures)
+			}
+		}
+	}
+}
+
+func TestEnrolledClientReconnectsAfterControllerRestart(t *testing.T) {
+	root := t.TempDir()
+	config := Config{
+		ControllerURL: "http://127.0.0.1:12382", AllowInsecureHTTP: true,
+		NodeTokenFile: filepath.Join(root, "node.token"), InstallIDFile: filepath.Join(root, "install.id"),
+		JournalFile: filepath.Join(root, "journal.json"), AgentConfigPath: filepath.Join(root, "nli.json"),
+		ParserDir: filepath.Join(root, "parsers"), PackageSpoolDir: filepath.Join(root, "packages"),
+		MetricsURL: "http://127.0.0.1:1/metrics", PollSeconds: 5,
+	}
+	const token = "saved-node-token-12345678901234567890"
+	if err := os.WriteFile(config.NodeTokenFile, []byte(token+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := New(config, &fakeExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.pollInterval = 5 * time.Millisecond
+	var heartbeats atomic.Int32
+	complete := make(chan struct{})
+	var finish sync.Once
+	client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("request lost persisted node credential")
+		}
+		status, body := http.StatusOK, "{}"
+		switch request.URL.Path {
+		case "/api/v1/node/heartbeat":
+			if heartbeats.Add(1) == 1 {
+				return nil, errors.New("controller restarting")
+			}
+		case "/api/v1/node/commands/next":
+			status, body = http.StatusNoContent, ""
+			finish.Do(func() { close(complete) })
+		default:
+			return nil, fmt.Errorf("unexpected reenrollment or path: %s", request.URL.Path)
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- client.Run(ctx) }()
+	select {
+	case <-complete:
+	case <-ctx.Done():
+		t.Fatal("enrolled client did not reconnect after controller restart")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if heartbeats.Load() < 2 {
+		t.Fatal("the heartbeat was not retried")
+	}
+}

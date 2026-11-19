@@ -3,6 +3,8 @@ Description=Nexora Log Intelligence - Main Controller
 After=network-online.target
 Wants=network-online.target
 
+StartLimitIntervalSec=0
+
 [Service]
 Type=simple
 User=nli

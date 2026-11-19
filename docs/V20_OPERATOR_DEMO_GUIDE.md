@@ -149,3 +149,10 @@ Use **Reference based help & Fix > Ask NLI AI** for a central prompt. Choose the
 ### Latency
 
 Open **Controller Management → Latency** (`latency`) to compare recent workspace load times and the slowest requests observed in your browser session. Use **API Monitor** to run fresh endpoint probes.
+
+
+### Disaster Recovery (`disaster-recovery`)
+
+Administrators can checkpoint the published catalog, stage verified recovery drafts, rebuild the controller’s parser assets, and request an approval-gated fleet resynchronization. Supabase mode retains catalog checkpoints every five minutes. The page displays exact runtime paths, last checkpoint status, and the protected files needed when replacing a controller.
+
+For full controller identity recovery, stop the service and run `nli-controller-agent recovery-backup --confirm-stopped --passphrase-file /root/nli-recovery.passphrase --output /root/nli-controller.json.enc` as root. The passphrase file must be mode 0600 and contain at least 16 characters. Restart the service and import the encrypted capsule on this page (remote import is limited to 6 MiB; retain larger capsules securely offline). Keep the passphrase separately. Restore with `recovery-restore --confirm-stopped --capsule /root/nli-controller.json.enc --passphrase-file /root/nli-recovery.passphrase` on a stopped controller installed at the same paths. The capsule includes `/etc/nli` and the allowlisted controller identity, audit, encryption key, TLS and rollout files. The Supabase project retains metadata, templates and parser history. External TLS paths, reverse proxies and tunnel services need their own host backup.

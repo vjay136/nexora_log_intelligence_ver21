@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -26,6 +27,7 @@ type TelemetryController struct{ store *eventstore.Store }
 
 // StreamHub publishes bounded latest-state updates to non-blocking subscribers.
 type StreamHub struct {
+	instanceID                                                  string
 	mu                                                          sync.Mutex
 	next                                                        uint64
 	latest                                                      map[string]telemetry.StreamFileTelemetry
@@ -57,7 +59,7 @@ func NewStreamHub(maxSubscribers int) *StreamHub {
 	if maxSubscribers < 1 {
 		maxSubscribers = 64
 	}
-	return &StreamHub{latest: map[string]telemetry.StreamFileTelemetry{}, subs: map[uint64]chan telemetry.StreamFileTelemetry{}, max: maxSubscribers, maxSources: 10000, nodes: map[string]syncNodeState{}, issues: map[string]telemetry.SyncIssue{}, target: time.Second, liveAfter: 2 * time.Second, delayedAfter: 5 * time.Second, staleAfter: 15 * time.Second}
+	return &StreamHub{instanceID: rand.Text(), latest: map[string]telemetry.StreamFileTelemetry{}, subs: map[uint64]chan telemetry.StreamFileTelemetry{}, max: maxSubscribers, maxSources: 10000, nodes: map[string]syncNodeState{}, issues: map[string]telemetry.SyncIssue{}, target: time.Second, liveAfter: 2 * time.Second, delayedAfter: 5 * time.Second, staleAfter: 15 * time.Second}
 }
 
 func (h *StreamHub) Publish(sample telemetry.StreamFileTelemetry) {
@@ -366,7 +368,7 @@ func (h *StreamHub) CanonicalSnapshot() telemetry.SyncSnapshot {
 	sources := h.snapshotLocked(now)
 	aggregate := h.aggregateFromSourcesLocked(sources)
 	diagnostics := h.diagnosticsLocked(sources)
-	return telemetry.SyncSnapshot{SchemaVersion: telemetry.SyncSchemaVersion, Revision: h.revision.Load(), GeneratedAt: now, TargetIntervalMS: h.target.Milliseconds(), Aggregate: aggregate, Sources: sources, Diagnostics: diagnostics}
+	return telemetry.SyncSnapshot{ControllerInstanceID: h.instanceID, SchemaVersion: telemetry.SyncSchemaVersion, Revision: h.revision.Load(), GeneratedAt: now, TargetIntervalMS: h.target.Milliseconds(), Aggregate: aggregate, Sources: sources, Diagnostics: diagnostics}
 }
 
 func (h *StreamHub) aggregateFromSourcesLocked(sources []telemetry.StreamFileTelemetry) telemetry.SyncAggregate {
@@ -664,12 +666,12 @@ func (h *StreamHub) serveCanonicalSSE(w http.ResponseWriter, r *http.Request, ev
 				nhle["read_lines_per_second"] = sample.CanonicalAggregate.ReadLinesPerSecond
 				nhle["normalized_per_second"] = sample.CanonicalAggregate.NormalizedPerSecond
 			}
-			envelope := map[string]any{"schema_version": telemetry.SyncSchemaVersion, "revision": sample.CanonicalRevision, "emitted_at": time.Now().UTC(), "kind": "source", "source": sample, "aggregate": sample.CanonicalAggregate, "diagnostics": sample.CanonicalDiagnostics, "subsystems": map[string]any{"nhle": nhle}, "resync_required": sample.ResyncRequired}
+			envelope := map[string]any{"controller_instance_id": h.instanceID, "schema_version": telemetry.SyncSchemaVersion, "revision": sample.CanonicalRevision, "emitted_at": time.Now().UTC(), "kind": "source", "source": sample, "aggregate": sample.CanonicalAggregate, "diagnostics": sample.CanonicalDiagnostics, "subsystems": map[string]any{"nhle": nhle}, "resync_required": sample.ResyncRequired}
 			if !writeSSE(stream, flusher, enc, strconv.FormatUint(h.sequence.Add(1), 10), "sync_delta", envelope) {
 				return
 			}
 			if sample.Critical {
-				critical := map[string]any{"schema_version": telemetry.SyncSchemaVersion, "revision": h.revision.Load(), "emitted_at": time.Now().UTC(), "kind": "critical", "node_id": sample.NodeID, "source": sample.Source, "diagnostic_codes": sample.DiagnosticCodes, "raw_payload_retained": false}
+				critical := map[string]any{"controller_instance_id": h.instanceID, "schema_version": telemetry.SyncSchemaVersion, "revision": h.revision.Load(), "emitted_at": time.Now().UTC(), "kind": "critical", "node_id": sample.NodeID, "source": sample.Source, "diagnostic_codes": sample.DiagnosticCodes, "raw_payload_retained": false}
 				if !writeSSE(stream, flusher, enc, strconv.FormatUint(h.sequence.Add(1), 10), "sync_critical", critical) {
 					return
 				}

@@ -3,6 +3,8 @@ Description=Nexora Log Intelligence - Client Agent
 After=network-online.target local-fs.target
 Wants=network-online.target
 
+StartLimitIntervalSec=0
+
 [Service]
 Type=simple
 User=nli

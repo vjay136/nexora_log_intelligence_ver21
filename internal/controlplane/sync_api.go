@@ -72,17 +72,18 @@ func (s *Server) canonicalSyncSnapshot(parent context.Context) map[string]any {
 		clientMetrics = append(clientMetrics, map[string]any{"node_id": node.ID, "hostname": node.Hostname, "updated_at": metric.UpdatedAt, "cpu_percent": metric.CPUPercent, "memory_bytes": metric.MemoryBytes, "memory_percent": metric.MemoryPercent, "load_1m": metric.Load1, "load_5m": metric.Load5, "load_15m": metric.Load15})
 	}
 	return map[string]any{
-		"schema_version":     snapshot.SchemaVersion,
-		"revision":           snapshot.Revision,
-		"generated_at":       snapshot.GeneratedAt,
-		"target_interval_ms": snapshot.TargetIntervalMS,
-		"aggregate":          snapshot.Aggregate,
-		"sources":            snapshot.Sources,
-		"diagnostics":        snapshot.Diagnostics,
-		"subsystems":         s.subsystemSyncSnapshot(ctx, snapshot),
-		"controller":         controller,
-		"infrastructure":     map[string]any{"clients": clientMetrics},
-		"storage":            map[string]any{"status": storageStatus, "diagnostic": storageError, "quarantine_status": quarantineStatus, "audit_chain": auditStatus},
+		"controller_instance_id": snapshot.ControllerInstanceID,
+		"schema_version":         snapshot.SchemaVersion,
+		"revision":               snapshot.Revision,
+		"generated_at":           snapshot.GeneratedAt,
+		"target_interval_ms":     snapshot.TargetIntervalMS,
+		"aggregate":              snapshot.Aggregate,
+		"sources":                snapshot.Sources,
+		"diagnostics":            snapshot.Diagnostics,
+		"subsystems":             s.subsystemSyncSnapshot(ctx, snapshot),
+		"controller":             controller,
+		"infrastructure":         map[string]any{"clients": clientMetrics},
+		"storage":                map[string]any{"status": storageStatus, "diagnostic": storageError, "quarantine_status": quarantineStatus, "audit_chain": auditStatus},
 	}
 }
 

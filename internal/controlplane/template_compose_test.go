@@ -59,6 +59,11 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 		t.Fatalf("combined preview did not emit flat KV values in source order: %s", data)
 	}
 	examples := body["examples"].([]any)
+	boundary := examples[1].(map[string]any)
+	if boundary["header_source"] != smtp+" " || boundary["kv_source"] != "status=failed;reason=not needed" || boundary["header_end_byte"] != float64(len(smtp)+1) {
+		t.Fatalf("wrong header and KV source separation: %v", boundary)
+	}
+
 	if header := examples[0].(map[string]any)["actual"].(map[string]any); len(header) != 9 || header["event"] != "SieveRuleMsg" {
 		t.Fatalf("header-only record returned unexpected values: %v", header)
 	}
