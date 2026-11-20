@@ -7,6 +7,7 @@ import (
 	"nexora.local/nli-v20/internal/auditlog"
 	metastore "nexora.local/nli-v20/internal/store"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -37,28 +38,38 @@ func TestPersistedMetadataFailureRetriesAreGroupedWithoutLosingAudit(t *testing.
 	}
 }
 
-type rejectedControllerStore struct{ metastore.Store }
+type rejectedControllerStore struct {
+	metastore.Store
+	denied atomic.Bool
+}
 
-func (s rejectedControllerStore) List(context.Context, string, metastore.Query) ([]metastore.Document, error) {
+func (s *rejectedControllerStore) List(ctx context.Context, collection string, query metastore.Query) ([]metastore.Document, error) {
+	if !s.denied.Load() {
+		return s.Store.List(ctx, collection, query)
+	}
 	return nil, &metastore.RPCError{Function: "nli_list_documents", Status: 401, Code: "42501", Message: "NLI controller authentication failed"}
 }
-func (s rejectedControllerStore) Put(context.Context, metastore.Document) (metastore.Document, error) {
+func (s *rejectedControllerStore) Put(ctx context.Context, doc metastore.Document) (metastore.Document, error) {
+	if !s.denied.Load() {
+		return s.Store.Put(ctx, doc)
+	}
 	return metastore.Document{}, &metastore.RPCError{Function: "nli_put_document", Status: 401, Code: "42501", Message: "NLI controller authentication failed"}
 }
 
 func TestReportedCatalogAPIsDistinguishBackendAuthenticationAndRecover(t *testing.T) {
 	f := newAPIFixture(t)
-	store := f.server.metadata
+	store := &rejectedControllerStore{Store: f.server.metadata}
+	f.server.metadata = store
 	paths := []string{"/api/v1/artifacts", "/api/v1/assurance/parsers", "/api/v1/config/kv", "/api/v1/config/templates", "/api/v1/rollouts", "/api/v1/assurance/cases", "/api/v1/parser-sync", "/api/v1/parser-packs", "/api/v1/fleet/sync", "/api/v1/assurance/runs", "/api/v1/assurance/plans", "/api/v1/assurance/history", "/api/v1/assurance/ai-proposals"}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
-			f.server.metadata = rejectedControllerStore{store}
+			store.denied.Store(true)
 			response, body := f.request(http.MethodGet, path, nil)
 			value := decodeMap(t, body)
 			if response.StatusCode != http.StatusServiceUnavailable || value["backend_error"] != "metadata_authentication_failed" || value["action"] == nil {
 				t.Fatalf("backend failure mistaken for an empty catalog or login failure: %d %s", response.StatusCode, body)
 			}
-			f.server.metadata = store
+			store.denied.Store(false)
 			response, body = f.request(http.MethodGet, path, nil)
 			if response.StatusCode != http.StatusOK {
 				t.Fatalf("same login did not recover: %d %s", response.StatusCode, body)
@@ -69,7 +80,8 @@ func TestReportedCatalogAPIsDistinguishBackendAuthenticationAndRecover(t *testin
 
 func TestNotificationActionsRecoverAfterControllerAuthenticationRepair(t *testing.T) {
 	f := newAPIFixture(t)
-	store := f.server.metadata
+	store := &rejectedControllerStore{Store: f.server.metadata}
+	f.server.metadata = store
 	response, body := f.request(http.MethodGet, "/api/v1/notifications", nil)
 	if response.StatusCode != http.StatusOK {
 		t.Fatal(string(body))
@@ -80,12 +92,12 @@ func TestNotificationActionsRecoverAfterControllerAuthenticationRepair(t *testin
 	}
 	id := items[0].(map[string]any)["id"].(string)
 	path := "/api/v1/notifications/" + id
-	f.server.metadata = rejectedControllerStore{store}
+	store.denied.Store(true)
 	response, body = f.request(http.MethodPost, path, map[string]any{"action": "read"})
 	if response.StatusCode != 503 || decodeMap(t, body)["backend_error"] != "metadata_authentication_failed" {
 		t.Fatalf("%d %s", response.StatusCode, body)
 	}
-	f.server.metadata = store
+	store.denied.Store(false)
 	for _, action := range []string{"read", "unread", "snooze", "dismissed"} {
 		response, body = f.request(http.MethodPost, path, map[string]any{"action": action, "snooze_minutes": 5})
 		if response.StatusCode != 200 {

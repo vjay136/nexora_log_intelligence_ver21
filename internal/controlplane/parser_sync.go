@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"nexora.local/nli-v20/internal/bundlehistory"
@@ -327,12 +328,15 @@ func (s *Server) buildActiveParserBundle(ctx context.Context) (parserAssetBundle
 		err       error
 	}
 	readContext, cancel := context.WithCancel(ctx)
-	defer cancel()
+	var readWorkers sync.WaitGroup
+	defer func() { cancel(); readWorkers.Wait() }()
 	reads := make([]chan collectionRead, len(parserAssetCollections))
 	for index, collection := range parserAssetCollections {
 		results := make(chan collectionRead, 1)
 		reads[index] = results
+		readWorkers.Add(1)
 		go func(collection string, results chan<- collectionRead) {
+			defer readWorkers.Done()
 			documents, err := s.listEffectiveParserAssets(readContext, collection)
 			results <- collectionRead{documents: documents, err: err}
 		}(collection, results)
