@@ -65,7 +65,7 @@ func (s *Server) handleAssuranceRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		docs, err := s.metadata.List(r.Context(), "assurance-runs", metastore.Query{Limit: limit})
 		if err != nil {
-			jsonError(w, "Assurance runs unavailable", 503)
+			replyMetadataFailure(w, "Assurance runs unavailable", err)
 			return
 		}
 		runs := make([]any, 0, len(docs))

@@ -182,7 +182,7 @@ func (s *Server) handleParserPacks(w http.ResponseWriter, r *http.Request) {
 		}
 		items, err := listParserDocuments(r.WithContext(ctx), s.metadata)
 		if err != nil {
-			replyMetadataUnavailable(w, r, snapshot, "parser catalog unavailable")
+			replyMetadataUnavailable(w, r, snapshot, "parser catalog unavailable", err)
 			return
 		}
 		replyMetadataCurrent(w, snapshot, started, map[string]any{"parser_packs": items, "count": len(items)})
@@ -489,7 +489,7 @@ func (s *Server) handleConfiguration(w http.ResponseWriter, r *http.Request, col
 	case http.MethodGet:
 		items, err := listDocuments(r, s.metadata, collection)
 		if err != nil {
-			jsonError(w, "configuration unavailable", http.StatusServiceUnavailable)
+			replyMetadataFailure(w, "configuration unavailable", err)
 			return
 		}
 		jsonOK(w, map[string]any{"items": items, "count": len(items)})
@@ -918,7 +918,7 @@ func (s *Server) handleMigrationReports(w http.ResponseWriter, r *http.Request) 
 	}
 	items, err := listDocuments(r, s.metadata, "migration-reports")
 	if err != nil {
-		jsonError(w, "migration reports unavailable", http.StatusServiceUnavailable)
+		replyMetadataFailure(w, "migration reports unavailable", err)
 		return
 	}
 	jsonOK(w, map[string]any{"reports": items, "count": len(items)})
@@ -944,7 +944,7 @@ func (s *Server) handleAIProposals(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := listDocuments(r, s.metadata, "ai-proposals")
 	if err != nil {
-		jsonError(w, "AI proposal memory unavailable", http.StatusServiceUnavailable)
+		replyMetadataFailure(w, "AI proposal memory unavailable", err)
 		return
 	}
 	jsonOK(w, map[string]any{"proposals": items, "count": len(items), "raw_samples_retained": false})
@@ -1302,7 +1302,7 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := listDocuments(r, s.metadata, "artifacts")
 	if err != nil {
-		jsonError(w, "artifact catalog unavailable", http.StatusServiceUnavailable)
+		replyMetadataFailure(w, "artifact catalog unavailable", err)
 		return
 	}
 	jsonOK(w, map[string]any{"artifacts": items, "count": len(items), "signing_keys_configured": len(s.artifactKeys)})
@@ -1485,7 +1485,7 @@ func (s *Server) handleRollouts(w http.ResponseWriter, r *http.Request) {
 		}
 		proposals, err := listDocuments(r.WithContext(ctx), s.metadata, "rollout-proposals")
 		if err != nil {
-			replyMetadataUnavailable(w, r, snapshot, "rollout catalog unavailable")
+			replyMetadataUnavailable(w, r, snapshot, "rollout catalog unavailable", err)
 			return
 		}
 		pendingCount := 0
@@ -1499,7 +1499,7 @@ func (s *Server) handleRollouts(w http.ResponseWriter, r *http.Request) {
 		} else {
 			pending, countErr := s.metadata.List(ctx, "rollout-proposals", metastore.Query{State: "pending_approval", Limit: 1000, RolloutSummary: true})
 			if countErr != nil {
-				replyMetadataUnavailable(w, r, snapshot, "rollout approval count unavailable")
+				replyMetadataUnavailable(w, r, snapshot, "rollout approval count unavailable", countErr)
 				return
 			}
 			pendingCount = len(pending)
@@ -1897,7 +1897,7 @@ func (s *Server) handleFleetSync(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	documents, err := s.listParserSyncDocuments(ctx, "fleet-sync", "", parserSyncTargetLimit)
 	if err != nil {
-		replyMetadataUnavailable(w, r, &s.fleetSyncView, "fleet reconciliation status unavailable")
+		replyMetadataUnavailable(w, r, &s.fleetSyncView, "fleet reconciliation status unavailable", err)
 		return
 	}
 	byID := map[string]any{}

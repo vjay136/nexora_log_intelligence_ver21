@@ -1230,6 +1230,8 @@ func storageDiagnostic(message string) string {
 	switch {
 	case strings.TrimSpace(message) == "":
 		return "ok"
+	case strings.Contains(message, "controller authentication failed"), strings.Contains(message, "(42501)"):
+		return "controller_secret_mismatch_or_rpc_permission"
 	case strings.Contains(message, "http 401"):
 		return "invalid_public_api_key"
 	case strings.Contains(message, "http 403"), strings.Contains(message, "controller authentication failed"):

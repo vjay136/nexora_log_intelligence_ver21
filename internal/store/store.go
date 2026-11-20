@@ -451,7 +451,7 @@ func (s *supabaseStore) call(ctx context.Context, function string, args any, out
 		if len(message) > 1024 {
 			message = message[:1024]
 		}
-		lastErr = fmt.Errorf("Supabase %s failed with HTTP %d: %s", function, resp.StatusCode, message)
+		lastErr = &RPCError{Function: function, Status: resp.StatusCode, Code: envelope.Code, Message: message}
 		transient := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
 		if transient && attempt+1 < maxAttempts && ctx.Err() == nil {
 			if err := waitForStoreRetry(ctx, attempt); err != nil {

@@ -127,4 +127,31 @@ select public.nli_get_document('parser-trash','archive-r9',1)->'payload'->>'rest
 SQL
 [[ $(tr '\n' ' ' <"$scratch/r9-result") == '1 1 t t t ' ]] || { echo 'KVIE/recovery persistence contract failed' >&2; exit 1; }
 
+# A second host must not claim an initialized project with its generated secret.
+# Check the whole transaction, persisted revisions, singleton ownership, and RPC
+# authentication instead of merely checking that the bootstrap emits an error.
+other_secret='nli-different-controller-secret-0123456789abcdef'
+other_digest=$(printf '%s' "$other_secret" | sha256sum | awk '{print $1}')
+sed "s/__NLI_CONTROLLER_SECRET_SHA256__/$other_digest/" "$ROOT/supabase/nli_schema.sql" >"$scratch/other-controller-schema.sql"
+ownership_snapshot_sql="select md5(jsonb_build_object('settings',(select jsonb_agg(to_jsonb(s) order by singleton) from public.nli_controller_settings s),'documents',(select jsonb_agg(to_jsonb(d) order by collection,document_id,revision) from public.nli_documents d),'buckets',(select jsonb_agg(to_jsonb(b) order by id) from storage.buckets b))::text);"
+before_ownership=$(docker exec "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres -c "$ownership_snapshot_sql")
+if docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres <"$scratch/other-controller-schema.sql" >"$scratch/ownership-error" 2>&1; then
+  echo 'Supabase bootstrap replaced an existing controller ownership secret' >&2
+  exit 1
+fi
+grep -Fq 'controller secret does not match this project' "$scratch/ownership-error" || { echo 'Controller ownership mismatch did not explain the failure' >&2; cat "$scratch/ownership-error" >&2; exit 1; }
+grep -Fq 'Reuse NLI_SUPABASE_CONTROLLER_SECRET' "$scratch/ownership-error" || { echo 'Controller ownership error omitted the recovery instruction' >&2; exit 1; }
+after_ownership=$(docker exec "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres -c "$ownership_snapshot_sql")
+[[ $before_ownership == "$after_ownership" ]] || { echo 'Refused bootstrap changed existing settings, documents, or storage buckets' >&2; exit 1; }
+original_auth=$(docker exec "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres -c "set role anon; set request.headers = '{\"x-nli-controller-secret\":\"$secret\"}'; select public.nli_health()->>'status';")
+[[ $original_auth == 'ok' ]] || { echo 'Refused bootstrap revoked the original controller secret' >&2; exit 1; }
+if docker exec "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres -c "set role anon; set request.headers = '{\"x-nli-controller-secret\":\"$other_secret\"}'; select public.nli_health();" >/dev/null 2>&1; then
+  echo 'Refused bootstrap authorized the second controller secret' >&2
+  exit 1
+fi
+# The same secret can still reapply an upgrade after a refused bootstrap.
+docker exec -i "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U postgres <"$scratch/schema.sql" >/dev/null
+same_key_status=$(docker exec "$container" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -qAt -U postgres -c "set role anon; set request.headers = '{\"x-nli-controller-secret\":\"$secret\"}'; select public.nli_health()->>'status';")
+[[ $same_key_status == 'ok' ]] || { echo 'Same-secret bootstrap could not be reapplied' >&2; exit 1; }
+
 echo 'Supabase schema/RLS/RPC contract: PASS'

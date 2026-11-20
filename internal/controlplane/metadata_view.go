@@ -35,8 +35,12 @@ func replyMetadataCurrent(w http.ResponseWriter, view *recoverableMetadataView, 
 	jsonOK(w, value)
 }
 
-func replyMetadataUnavailable(w http.ResponseWriter, r *http.Request, view *recoverableMetadataView, message string) {
+func replyMetadataUnavailable(w http.ResponseWriter, r *http.Request, view *recoverableMetadataView, message string, failures ...error) {
 	w.Header().Set("Cache-Control", "no-store")
+	var failure error
+	if len(failures) > 0 {
+		failure = failures[0]
+	}
 	if view != nil && r.Context().Err() == nil {
 		view.mu.RLock()
 		value, at := view.value, view.at
@@ -48,9 +52,12 @@ func replyMetadataUnavailable(w http.ResponseWriter, r *http.Request, view *reco
 			}
 			stale["snapshot_stale"] = true
 			stale["snapshot_error"] = message
+			for key, value := range metadataFailureDetails(failure) {
+				stale[key] = value
+			}
 			jsonOK(w, stale)
 			return
 		}
 	}
-	jsonError(w, message, http.StatusServiceUnavailable)
+	replyMetadataFailure(w, message, failure)
 }

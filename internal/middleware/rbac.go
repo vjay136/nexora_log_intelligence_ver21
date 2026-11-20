@@ -334,7 +334,11 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 			if principal != nil {
 				actor, role = principal.Username, principal.Role
 			}
-			sm.audit(&SecurityContext{Username: actor, Role: role, RemoteIP: getRemoteIP(r), UserAgent: r.UserAgent()}, r.Method, r.URL.Path, capture.status < 400, fmt.Sprintf("status=%d duration_ms=%d request_id=%s", capture.status, time.Since(start).Milliseconds(), requestID))
+			detail := fmt.Sprintf("status=%d duration_ms=%d request_id=%s", capture.status, time.Since(start).Milliseconds(), requestID)
+			if capture.Header().Get("X-NLI-Backend-Error") == "metadata_authentication_failed" {
+				detail += " backend_error=metadata_authentication_failed"
+			}
+			sm.audit(&SecurityContext{Username: actor, Role: role, RemoteIP: getRemoteIP(r), UserAgent: r.UserAgent()}, r.Method, r.URL.Path, capture.status < 400, detail)
 		}
 	})
 }

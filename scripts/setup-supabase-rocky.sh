@@ -29,13 +29,18 @@ supabase_url=${supabase_url%/}
 
 auth_headers=()
 [[ $supabase_anon_key == sb_* ]] || auth_headers=(-H "Authorization: Bearer $supabase_anon_key")
-result=$(curl --fail --silent --show-error --max-time 15 \
+response=$(curl --silent --show-error --max-time 15 --write-out '\n%{http_code}' \
   -H 'Content-Type: application/json' \
   -H "apikey: $supabase_anon_key" \
   "${auth_headers[@]}" \
   -H "X-NLI-Controller-Secret: $supabase_controller_secret" \
-  -d '{}' "$supabase_url/rest/v1/rpc/nli_health") || \
-  fail 'protected Supabase RPC failed; run /root/nli-supabase-bootstrap.sql in the project SQL Editor'
+  -d '{}' "$supabase_url/rest/v1/rpc/nli_health") || fail 'protected Supabase RPC transport failed; check project reachability and retry'
+status=${response##*$'\n'}
+result=${response%$'\n'*}
+if [[ $status == 401 || $status == 403 ]]; then
+  fail 'Supabase rejected controller authentication (HTTP 401/403). Verify the project URL/public key and reuse the working controller NLI_SUPABASE_CONTROLLER_SECRET in /etc/nli/controller.env. Applying a bootstrap with a different secret is refused and cannot repair this mismatch.'
+fi
+[[ $status == 200 ]] || fail 'protected Supabase RPC failed; review the response and apply /root/nli-supabase-bootstrap.sql only for a missing or outdated schema using the existing controller secret'
 printf '%s' "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="ok" and d.get("schema_version")==1' || fail 'Supabase returned an incompatible NLI schema'
 
 for bucket in nli-assurance-fixtures nli-rollout-artifacts; do

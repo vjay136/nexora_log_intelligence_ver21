@@ -946,7 +946,7 @@ func (s *Server) handleAssuranceParsers(w http.ResponseWriter, r *http.Request) 
 		// Management correctly reports the same parser as published or blocked.
 		items, err := listParserDocuments(r, s.metadata)
 		if err != nil {
-			jsonError(w, "parser catalog unavailable", 503)
+			replyMetadataFailure(w, "parser catalog unavailable", err)
 			return
 		}
 		jsonOK(w, map[string]any{"parsers": items, "count": len(items)})
@@ -1342,7 +1342,7 @@ func (s *Server) handleAssuranceHistory(w http.ResponseWriter, r *http.Request) 
 	}
 	docs, err := s.metadata.List(r.Context(), "assurance-history", metastore.Query{Limit: 100})
 	if err != nil {
-		jsonError(w, "assurance history unavailable", 503)
+		replyMetadataFailure(w, "assurance history unavailable", err)
 		return
 	}
 	events := make([]map[string]any, 0, len(docs))
@@ -1364,7 +1364,7 @@ func (s *Server) handleAssurancePlans(w http.ResponseWriter, r *http.Request) {
 		}
 		docs, err := s.metadata.List(r.Context(), "assurance-plans", metastore.Query{Limit: 100})
 		if err != nil {
-			jsonError(w, "Assurance plans unavailable", http.StatusServiceUnavailable)
+			replyMetadataFailure(w, "Assurance plans unavailable", err)
 			return
 		}
 		plans := make([]map[string]any, 0, len(docs))

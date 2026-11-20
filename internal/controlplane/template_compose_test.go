@@ -138,7 +138,7 @@ func TestTemplateComposeExactRevisionsAndRuntimeParity(t *testing.T) {
 		{AssetClass: "parser-packs", Payload: json.RawMessage(`{"rules":[{"stages":[{"type":"mapping","config":{"fields":[{"kv_input_edits":[{}]}]}}]}]}`)},
 		{AssetClass: "parser-packs", Payload: encoded},
 	}}
-	if minimum := parserBundleMinimumKVRelease(bundle); minimum != flatTemplateMinimumRelease || parserClientSupportsKVRelease("22.18.1-0", minimum) || !parserClientSupportsKVRelease("22.19.1-0", minimum) {
+	if minimum := parserBundleMinimumKVRelease(bundle); minimum != flatTemplateMinimumRelease || parserClientSupportsKVRelease("22.18.1-0", minimum) || !parserClientSupportsKVRelease("22.20.1-0", minimum) {
 		t.Fatalf("advanced bundle should exclude prior clients: minimum %q", minimum)
 	}
 }

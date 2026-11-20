@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"nexora.local/nli-v20/internal/bundlehistory"
 	"nexora.local/nli-v20/internal/canonicaljson"
 	"nexora.local/nli-v20/internal/fieldmapping"
 	"nexora.local/nli-v20/internal/fleet"
@@ -440,6 +441,9 @@ func (s *Server) materializeParserBundle(bundle parserAssetBundle) (string, erro
 		return "", err
 	}
 	path := filepath.Join(dir, "bundle.json")
+	if err := bundlehistory.Preserve(dir, verifyHistoricalParserBundle); err != nil {
+		return "", fmt.Errorf("preserve previous parser generation: %w", err)
+	}
 	temp := path + ".staging"
 	file, err := os.OpenFile(temp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0640)
 	if err != nil {
@@ -1224,7 +1228,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	bundle, err := s.buildActiveParserBundle(ctx)
 	if err != nil {
-		replyMetadataUnavailable(w, r, &s.parserSyncView, "parser sync metadata unavailable")
+		replyMetadataUnavailable(w, r, &s.parserSyncView, "parser sync metadata unavailable", err)
 		return
 	}
 	controllerHash := ""
@@ -1243,7 +1247,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 	}
 	page, pageErr := s.listParserSyncDocuments(ctx, "fleet-sync", "", parserSyncTargetLimit)
 	if pageErr != nil {
-		replyMetadataUnavailable(w, r, &s.parserSyncView, "client parser acknowledgement telemetry unavailable")
+		replyMetadataUnavailable(w, r, &s.parserSyncView, "client parser acknowledgement telemetry unavailable", pageErr)
 		return
 	}
 	byNode := map[string]map[string]any{}
@@ -1304,7 +1308,7 @@ func (s *Server) listParserSync(w http.ResponseWriter, r *http.Request) {
 	var pendingProposal *metastore.Document
 	proposals, err := s.listParserSyncDocuments(ctx, "rollout-proposals", "pending_approval", parserSyncTargetLimit)
 	if err != nil {
-		replyMetadataUnavailable(w, r, &s.parserSyncView, "parser sync rollout approvals unavailable")
+		replyMetadataUnavailable(w, r, &s.parserSyncView, "parser sync rollout approvals unavailable", err)
 		return
 	}
 	for i := range proposals {
@@ -1364,4 +1368,29 @@ func rolloutSummary(item *rolloutRecord) any {
 		return map[string]any{"status": "not_started"}
 	}
 	return map[string]any{"id": item.ID, "status": item.Status, "total_nodes": item.TotalNodes, "done_nodes": item.DoneNodes, "failed_nodes": item.FailedNodes, "target_nodes": item.TargetNodes, "node_results": item.NodeResults}
+}
+
+func verifyHistoricalParserBundle(data []byte) (string, error) {
+	var bundle parserAssetBundle
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		return "", err
+	}
+	if bundle.SchemaVersion != 1 || len(bundle.Assets) > 10000 {
+		return "", errors.New("unsupported archived bundle")
+	}
+	for _, asset := range bundle.Assets {
+		payload, err := canonicaljson.Normalize(asset.Payload)
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256(payload)
+		if hex.EncodeToString(sum[:]) != asset.SHA256 {
+			return "", errors.New("archived asset digest mismatch")
+		}
+	}
+	hash, _, err := bundleDigest(bundle)
+	if err != nil || hash != bundle.BundleHash {
+		return "", errors.New("archived bundle digest mismatch")
+	}
+	return hash, nil
 }

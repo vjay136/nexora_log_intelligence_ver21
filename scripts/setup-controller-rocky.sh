@@ -164,8 +164,40 @@ first_discovered_identity() {
   printf '%s\n' "$fallback"
 }
 
-storage_provider=${NLI_SETUP_STORAGE_PROVIDER:-supabase}
+# Preserve the metadata backend of an initialized controller across TLS modes.
+# RPM defaults alone do not establish an existing installation.
+configured_metadata_provider=$(python3 - "$CONFIG" <<'PYMETADATA'
+import json, pathlib, sys
+try:
+    config = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, ValueError) as exc:
+    raise SystemExit(f"cannot inspect existing controller metadata configuration: {exc}")
+if not isinstance(config, dict):
+    raise SystemExit("existing controller configuration must be a JSON object")
+provider = config.get("storage_provider", "supabase")
+if provider not in ("local", "supabase"):
+    raise SystemExit("existing controller storage_provider must be local or supabase")
+print(provider)
+PYMETADATA
+) || fail 'existing controller metadata configuration is invalid; repair it before setup'
+existing_metadata_provider=''
+existing_enrollment_token=$(read_env NLI_ENROLLMENT_TOKEN)
+if [[ -s $STATE_DIR/users.json || ${#existing_enrollment_token} -ge 32 ]]; then
+  existing_metadata_provider=$configured_metadata_provider
+fi
+existing_enrollment_token=''
+metadata_backend_change_ack() {
+  [[ ${NLI_SETUP_ALLOW_METADATA_BACKEND_CHANGE:-0} == 1 ]] || fail "$1. Back up the current controller and metadata, restore or migrate to the intended backend, then explicitly set NLI_SETUP_ALLOW_METADATA_BACKEND_CHANGE=1 to configure that change. Setup does not copy metadata between backends."
+  info 'Explicit metadata backend change acknowledged; verify the restored catalog and fleet state before applying changes.'
+}
+default_local_metadata_for_new_controller() {
+  if [[ -z ${NLI_SETUP_STORAGE_PROVIDER:-} && -z $existing_metadata_provider ]]; then storage_provider=local; fi
+}
+storage_provider=${NLI_SETUP_STORAGE_PROVIDER:-${existing_metadata_provider:-supabase}}
 [[ $storage_provider == supabase || $storage_provider == local ]] || fail 'NLI_SETUP_STORAGE_PROVIDER must be supabase or local'
+if [[ -n $existing_metadata_provider && $storage_provider != "$existing_metadata_provider" ]]; then
+  metadata_backend_change_ack "Existing metadata provider is $existing_metadata_provider; requested provider is $storage_provider"
+fi
 supabase_url=''
 supabase_public_key=''
 supabase_controller_secret=''
@@ -210,10 +242,10 @@ elif [[ $mode == 7 ]]; then
   # enterprise path explicit to operators. No public DNS or external CA is used.
   mode=2
   offline_private_tls=true
-  if [[ -z ${NLI_SETUP_STORAGE_PROVIDER:-} ]]; then storage_provider=local; fi
+  default_local_metadata_for_new_controller
 elif [[ $mode == 8 ]]; then
   auto_server_tls=true
-  if [[ -z ${NLI_SETUP_STORAGE_PROVIDER:-} ]]; then storage_provider=local; fi
+  default_local_metadata_for_new_controller
 fi
 
 admin_password=''
@@ -435,7 +467,7 @@ PY
     info 'no eligible server certificate/key pair matched this identity; using generated offline private TLS'
     mode=2
     offline_private_tls=true
-    if [[ -z ${NLI_SETUP_STORAGE_PROVIDER:-} ]]; then storage_provider=local; fi
+    default_local_metadata_for_new_controller
   fi
 fi
 
@@ -727,7 +759,7 @@ if [[ $mode == 10 ]]; then
   listen_address="127.0.0.1:${PORT}"
   controller_url=''
   force_secure=true
-  if [[ -z ${NLI_SETUP_STORAGE_PROVIDER:-} ]]; then storage_provider=local; fi
+  default_local_metadata_for_new_controller
 fi
 
 if [[ $mode == 3 || $mode == 9 ]]; then
@@ -1156,10 +1188,14 @@ else
   storage_allow_insecure=false
 fi
 supabase_url=${supabase_url%/}
+if [[ -n $existing_metadata_provider && -n $current_supabase_url && $supabase_url != "${current_supabase_url%/}" ]]; then
+  metadata_backend_change_ack 'The selected Supabase project differs from the existing controller project'
+fi
 [[ $(LC_ALL=C printf '%s' "$supabase_public_key" | wc -c) -ge 32 ]] || fail 'Supabase publishable/public key is missing or too short'
 supabase_controller_secret=$(read_env NLI_SUPABASE_CONTROLLER_SECRET)
 if [[ $(LC_ALL=C printf '%s' "$supabase_controller_secret" | wc -c) -lt 32 ]]; then
   supabase_controller_secret=$(random_secret)
+  info 'Generated a controller secret for an uninitialized Supabase project. For an existing NLI project, reuse its existing NLI_SUPABASE_CONTROLLER_SECRET entry in /etc/nli/controller.env before running setup.'
 fi
 valid_env_secret "$supabase_controller_secret" || fail 'Supabase controller secret is not safe for a systemd EnvironmentFile'
 supabase_storage_secret=${NLI_SETUP_SUPABASE_SECRET_KEY:-$(read_env SUPABASE_SECRET_KEY)}
@@ -1194,7 +1230,8 @@ rendered = rendered.replace(
     "-- installation-specific copy at /root/nli-supabase-bootstrap.sql.",
     f"-- Generated installation-specific bootstrap for NLI {release[1]}.\n"
     "-- Run this COMPLETE generated file in this project's Supabase SQL Editor.\n"
-    "-- RPC schema version 1 preserves existing revisioned metadata."
+    "-- RPC schema version 1 preserves existing revisioned metadata.\n"
+    "-- If ownership validation fails, reuse the existing controller.env secret and regenerate this file."
 )
 if placeholder in rendered:
     raise SystemExit("Supabase bootstrap contains an unresolved placeholder")
@@ -1370,18 +1407,30 @@ wait_for_controller() {
   printf '%s' "$health_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("service")=="nli-controller-agent" and d.get("api_version")=="v1"' || fail 'health endpoint is not an NLI v21 controller'
 }
 
+supabase_auth_rejected=false
 verify_supabase() {
-  local result=''
-  result=$(curl --fail --silent --show-error --max-time 15 \
+  local response='' result='' status=''
+  supabase_auth_rejected=false
+  response=$(curl --silent --show-error --max-time 15 --write-out '\n%{http_code}' \
     -H 'Content-Type: application/json' \
     -H "apikey: $supabase_public_key" \
     -H "X-NLI-Controller-Secret: $supabase_controller_secret" \
     -d '{}' "$supabase_url/rest/v1/rpc/nli_health") || return 1
+  status=${response##*$'\n'}
+  result=${response%$'\n'*}
+  if [[ $status == 401 || $status == 403 ]]; then
+    supabase_auth_rejected=true
+    return 1
+  fi
+  [[ $status == 200 ]] || return 1
   printf '%s' "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="ok" and d.get("schema_version")==1'
 }
 
 if [[ $storage_provider == supabase ]]; then
 if ! verify_supabase; then
+  if [[ $supabase_auth_rejected == true ]]; then
+    fail 'Supabase rejected controller authentication (HTTP 401/403). Verify the project URL/public key and reuse the existing NLI_SUPABASE_CONTROLLER_SECRET from the working controller /etc/nli/controller.env. A bootstrap generated with a different secret will be refused; it cannot repair this credential mismatch.'
+  fi
   info 'Supabase RPC verification failed; the schema may be missing, credentials may be invalid, or the service may be unreachable.'
   info "Open the Supabase project SQL Editor, run the complete file $SUPABASE_BOOTSTRAP_FILE, then return here."
   info 'The generated SQL contains only a SHA-256 secret digest; it never contains the controller secret or admin password.'

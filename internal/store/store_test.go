@@ -14,6 +14,31 @@ import (
 	"time"
 )
 
+func TestSupabasePreservesDatabaseAuthenticationCodeWithoutRetrying(t *testing.T) {
+	calls := 0
+	const secret = "private-controller-secret-1234567890"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "42501", "message": "NLI controller authentication failed: " + secret})
+	}))
+	defer server.Close()
+	s, err := Open(Config{Provider: "supabase", SupabaseURL: server.URL, SupabaseAnonKey: "sb_publishable_test", SupabaseControllerSecret: []byte(secret), AllowInsecure: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_, err = s.List(context.Background(), "templates", Query{})
+	var rpc *RPCError
+	if !errors.As(err, &rpc) || rpc.Code != "42501" || rpc.Status != 401 || calls != 1 {
+		t.Fatalf("error classification/retries: %#v calls=%d", err, calls)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatal("controller secret exposed")
+	}
+}
+
 func TestLocalRevisionAndPurge(t *testing.T) {
 	storage, err := Open(Config{Provider: "local", LocalDir: filepath.Join(t.TempDir(), "metadata")})
 	if err != nil {

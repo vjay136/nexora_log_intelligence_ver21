@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"nexora.local/nli-v20/internal/agent"
+	"nexora.local/nli-v20/internal/bundlehistory"
 	"nexora.local/nli-v20/internal/canonicaljson"
 	"nexora.local/nli-v20/internal/engine"
 	"nexora.local/nli-v20/internal/familyprofile"
@@ -1104,6 +1105,11 @@ func (c *Client) applyAssetBundle(ctx context.Context, data []byte) (string, err
 		_ = os.RemoveAll(parserStaging)
 		return "", err
 	}
+	if err := bundlehistory.Preserve(c.cfg.AssetDir, verifyHistoricalAssetBundle); err != nil {
+		_ = os.RemoveAll(staging)
+		_ = os.RemoveAll(parserStaging)
+		return "", fmt.Errorf("preserve previous parser generation: %w", err)
+	}
 	_ = os.RemoveAll(backup)
 	_ = os.RemoveAll(parserBackup)
 	if _, err := os.Stat(c.cfg.AssetDir); err == nil {
@@ -1853,4 +1859,29 @@ func sanitizeVersion(version string) string {
 		return "unknown"
 	}
 	return out.String()
+}
+
+func verifyHistoricalAssetBundle(data []byte) (string, error) {
+	var bundle synchronizedAssetBundle
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		return "", err
+	}
+	if bundle.SchemaVersion != 1 || len(bundle.Assets) > 10000 {
+		return "", errors.New("unsupported archived bundle")
+	}
+	for _, asset := range bundle.Assets {
+		payload, err := canonicaljson.Normalize(asset.Payload)
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256(payload)
+		if hex.EncodeToString(sum[:]) != asset.SHA256 {
+			return "", errors.New("archived asset digest mismatch")
+		}
+	}
+	hash, err := synchronizedBundleHash(bundle)
+	if err != nil || hash != bundle.BundleHash {
+		return "", errors.New("archived bundle digest mismatch")
+	}
+	return hash, nil
 }

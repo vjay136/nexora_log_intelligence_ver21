@@ -149,7 +149,7 @@ func (s *Server) handleNotificationConfig(w http.ResponseWriter, r *http.Request
 		policy.UpdatedBy, policy.UpdatedAt = principal.Username, time.Now().UTC()
 		payload, _ := json.Marshal(policy)
 		if _, err := s.metadata.Put(r.Context(), metastore.Document{Collection: notificationConfigCollection, ID: "default", State: "active", Payload: payload, CreatedBy: principal.Username}); err != nil {
-			jsonError(w, "notification policy persistence failed", http.StatusServiceUnavailable)
+			replyMetadataFailure(w, "notification policy persistence failed", err)
 			return
 		}
 		s.auditAction(principal, "notification.policy.update", "notifications/default", "success", map[string]string{"channels": strings.Join(enabledChannelNames(policy), ",")})
@@ -196,6 +196,7 @@ func (s *Server) handleNotificationFeed(w http.ResponseWriter, r *http.Request) 
 	}
 	items := make([]map[string]any, 0, limit)
 	recentAuthoringFailures := make(map[string]time.Time)
+	recentBackendFailures := make(map[string]time.Time)
 	for _, event := range events {
 		resourceKey := strings.TrimSpace(strings.ToLower(event.Resource))
 		if isNotificationResolutionEvent(event) {
@@ -204,6 +205,12 @@ func (s *Server) handleNotificationFeed(w http.ResponseWriter, r *http.Request) 
 		category, severity, actionable := classifyNotificationEvent(event)
 		if !actionable || resolvedResources[resourceKey] > event.Sequence || !policyWatches(policy, category) || !notificationRecipient(policy, principal.Username, principal.Role, severity) {
 			continue
+		}
+		if isMetadataAuthenticationEvent(event) {
+			if latest, exists := recentBackendFailures[event.Actor]; exists && latest.Sub(event.Timestamp) <= time.Minute {
+				continue
+			}
+			recentBackendFailures[event.Actor] = event.Timestamp
 		}
 		if status, ok := authoringFailureStatus(event); ok {
 			key := resourceKey + "\x00" + event.Actor + "\x00" + status
@@ -310,7 +317,7 @@ func (s *Server) handleNotificationAck(w http.ResponseWriter, r *http.Request) {
 		payload, _ := json.Marshal(state)
 		id := safeID(principal.Username + "-" + strconv.FormatUint(sequence, 10))
 		if _, err := s.metadata.Put(r.Context(), metastore.Document{Collection: notificationAckCollection, ID: id, State: action, Payload: payload, CreatedBy: principal.Username}); err != nil {
-			jsonError(w, "notification state persistence failed", http.StatusServiceUnavailable)
+			replyMetadataFailure(w, "notification state persistence failed", err)
 			return
 		}
 		jsonOK(w, map[string]any{"status": action, "sequence": sequence, "snoozed_until": nullableTime(snoozedUntil)})
@@ -520,7 +527,14 @@ func isExpectedAnonymousSessionProbe(event auditlog.Event) bool {
 	return strings.Contains(detail, "status=401")
 }
 
+func isMetadataAuthenticationEvent(event auditlog.Event) bool {
+	return event.Outcome == "failure" && strings.Contains(event.Details["detail"], "backend_error=metadata_authentication_failed")
+}
+
 func notificationTitle(event auditlog.Event, category string) string {
+	if isMetadataAuthenticationEvent(event) {
+		return "Controller metadata authentication failed"
+	}
 	verb := strings.ReplaceAll(strings.ReplaceAll(event.Action, ".", " "), "_", " ")
 	if event.Outcome == "failure" || event.Outcome == "partial_failure" {
 		return strings.Title(category) + " issue: " + verb

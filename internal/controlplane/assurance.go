@@ -668,7 +668,7 @@ func (s *Server) listAssuranceCases(w http.ResponseWriter, r *http.Request) {
 	defer s.assurance.mu.Unlock()
 	documents, err := s.activeAssuranceCases(r.Context())
 	if err != nil {
-		jsonError(w, "fixture store unavailable", http.StatusServiceUnavailable)
+		replyMetadataFailure(w, "fixture store unavailable", err)
 		return
 	}
 	out := []map[string]any{}
@@ -753,7 +753,7 @@ func (s *Server) saveAssuranceCase(w http.ResponseWriter, r *http.Request, princ
 	}
 	documents, err := s.activeAssuranceCases(r.Context())
 	if err != nil {
-		jsonError(w, "fixture store unavailable", http.StatusServiceUnavailable)
+		replyMetadataFailure(w, "fixture store unavailable", err)
 		return
 	}
 	version := 1

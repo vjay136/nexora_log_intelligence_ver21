@@ -183,6 +183,18 @@
     if (button.dataset.action === 'nupire-transition' && button.dataset.value === 'approve') return 'parsers:review';
     return ACTION_PERMISSIONS[button.dataset.action];
   }
+  function staleCatalogReadAction(button) {
+    const action = button.dataset.action || '';
+    return ['reload','fleet-open'].includes(action) || action.startsWith('download-') ||
+      ['parser-asset','config-action'].includes(action) && button.dataset.value === 'download';
+  }
+  function lockStaleCatalogControls() {
+    if (page.dataset.catalogStale !== 'true') return;
+    for (const control of page.querySelectorAll('form input, form select, form textarea, form button')) control.disabled = true;
+    for (const button of page.querySelectorAll('[data-action]')) {
+      if (!staleCatalogReadAction(button)) button.disabled = true;
+    }
+  }
   function applyPermissions() {
     Object.entries(FORM_PERMISSIONS).forEach(([id, permission]) => {
       document.querySelectorAll(`#${id}`).forEach(form => {
@@ -195,6 +207,7 @@
       const permission = actionPermission(button);
       if (permission && !can(permission)) button.dataset.permissionHidden = 'true';
     });
+    lockStaleCatalogControls();
   }
   const page = el('page');
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -905,7 +918,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     nav.addEventListener('click',event=>{const button=event.target.closest('[data-endpoint-tab]');if(button)activate(button.dataset.endpointTab);});activate('destinations');
   }
 
-  function renderPage(id, html) { if (state.user && state.page === id) { page.innerHTML = html; page.dataset.page = id; page.dataset.dirty = 'false'; addInputGuidance();queueMicrotask(nfiDecorate);if(['assurance','quarantine-wizard'].includes(id))setupAssuranceTabs();if(id==='outputs')setupEndpointTabs();if(id==='ai')setupAITabs();if(id==='monitoring')setupMonitoringTabs();if(['sync-fabric','nhle-monitor','napi-monitor','nal-monitor','upes'].includes(id))setupSubsystemTabs();decorateWorkspaceAI(); } }
+  function renderPage(id, html) { if (state.user && state.page === id) { page.innerHTML = html; delete page.dataset.catalogStale; page.dataset.controllerInstance = state.sync.snapshot?.controller_instance_id || ''; if (page.querySelector('[data-catalog-snapshot-stale]')) page.dataset.catalogStale='true'; page.dataset.page = id; page.dataset.dirty = 'false'; addInputGuidance();queueMicrotask(nfiDecorate);if(['assurance','quarantine-wizard'].includes(id))setupAssuranceTabs();if(id==='outputs')setupEndpointTabs();if(id==='ai')setupAITabs();if(id==='monitoring')setupMonitoringTabs();if(['sync-fabric','nhle-monitor','napi-monitor','nal-monitor','upes'].includes(id))setupSubsystemTabs();decorateWorkspaceAI(); } }
   function mappingSuggestionButton(tab='Field mapping'){
     return `<button type="button" class="secondary" data-action="workspace-ai-auto" data-artifact="mapping" data-tab="${esc(tab)}" data-suggest-mapping>Suggest Mappings with Nexora AI</button>`;
   }
@@ -1356,10 +1369,40 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const id=encodeURIComponent(sequence),body={action};if(action==='snooze')body.snooze_minutes=60;
     await api(`/notifications/audit-${id}`,{method:'POST',body});await refreshNotificationBell();if(state.page==='notifications')await loadNotifications();
   }
+  const activeAPIFailures = new Map();
+  const errorNotificationEpisodes = new Set();
+  function apiDiagnostic(data = {}) {
+    if (!data.backend_error) return data.error || '';
+    const heading = data.backend_error === 'metadata_authentication_failed'
+      ? 'Controller metadata authentication failed.' : data.error || 'Controller metadata is unavailable.';
+    return [...new Set([heading, data.error_detail, data.action].filter(value => typeof value === 'string' && value.trim()).map(value=>value.trim()))].join(' ');
+  }
+  function errorNotificationKey(message) {
+    const text = String(message);
+    if (text.includes('Controller metadata authentication failed.')) return 'metadata_authentication_failed';
+    return text;
+  }
+  function trackAPIFailure(path, method, data, status) {
+    if (!data?.backend_error) return;
+    const key = `${method} ${path.split('?')[0]}`;
+    activeAPIFailures.set(key, {cause:data.backend_error, status});
+  }
+  function trackAPIRecovery(path, method) {
+    const key = `${method} ${path.split('?')[0]}`;
+    const previous = activeAPIFailures.get(key);
+    if (!previous) return;
+    activeAPIFailures.delete(key);
+    if (![...activeAPIFailures.values()].some(failure=>failure.cause===previous.cause)) {
+      errorNotificationEpisodes.delete(previous.cause);
+      notify('Controller metadata access recovered. Refresh the affected catalogs to load current data.', 'success');
+    }
+  }
   function notify(message, type = 'success') {
-    if(type==='error'&&[...el('toast-region').children].some(node=>node.classList.contains('bad')&&node.textContent===String(message))){
+    const episodeKey = errorNotificationKey(message);
+    if (type === 'error' && (errorNotificationEpisodes.has(episodeKey) || [...el('toast-region').children].some(node=>node.classList.contains('bad')&&node.textContent===String(message)))) {
       return {done:text=>notify(text,'success'),fail:text=>notify(text,'error')};
     }
+    if (type === 'error' && episodeKey === 'metadata_authentication_failed') errorNotificationEpisodes.add(episodeKey);
     const entry={ message: String(message), type, at: new Date().toISOString() };
     state.notifications.unshift(entry); state.notifications = state.notifications.slice(0, 30);
     renderNotificationBell();
@@ -1454,16 +1497,19 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     }
     const mappingOutcome=standby||(path==='/assurance/mapping-preview'&&data.passed===false?'Mapping rejected by native validation'
       :data.proposal_origin==='native_fallback'?'Verified native fallback returned':'');
-    recordAPI(path, method, response.status, latency, data?.snapshot_stale===true?'Serving last confirmed metadata snapshot':degraded?'Provider storage needs attention':mappingOutcome||(response.ok?'':response.statusText),degraded);
+    recordAPI(path, method, response.status, latency, data?.snapshot_stale===true?apiDiagnostic(data)||'Serving last confirmed metadata snapshot':degraded?'Provider storage needs attention':mappingOutcome||(response.ok?'':apiDiagnostic(data)||response.statusText),degraded);
     if ([405, 501].includes(response.status) || (!contentType.includes('application/json') && !response.ok && response.status<500)) throw new Error(CONTROLLER_REQUIRED);
-    if (response.status === 401 && path !== '/auth/login') { signOut(false); throw new Error('Session expired'); }
-    if (!response.ok) { const error=new Error(data.error || (response.status===502?'The request gateway could not reach the controller. Check the controller connection and retry.':response.status===504?'The request timed out. Check the controller connection and retry.':`Request failed (HTTP ${response.status}).`));error.status=response.status;error.details=data;throw error; }
+    if (response.status === 401 && path !== '/auth/login' && !data.backend_error) { signOut(false); throw new Error('Session expired'); }
+    if (!response.ok) { trackAPIFailure(path,method,data,response.status);const error=new Error(apiDiagnostic(data) || (response.status===502?'The request gateway could not reach the controller. Check the controller connection and retry.':response.status===504?'The request timed out. Check the controller connection and retry.':`Request failed (HTTP ${response.status}).`));error.status=response.status;error.details=data;throw error; }
     if (!contentType.includes('application/json')) throw new Error('The controller returned an invalid API response.');
+    if (data?.snapshot_stale===true) trackAPIFailure(path,method,data,response.status);
     if (data?.snapshot_stale===true && !options.allowStale) {
-      const error=new Error(data.snapshot_error || 'Live controller metadata is temporarily unavailable.');
+      const error=new Error(apiDiagnostic(data) || data.snapshot_error || 'Live controller metadata is temporarily unavailable.');
       error.status=503;
+      error.details=data;
       throw error;
     }
+    if (!degraded) trackAPIRecovery(path,method);
     return data;
   }
   function recordAPI(path, method, status, latency, error = '', degraded=false) {
@@ -1671,13 +1717,28 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     el('page-title').textContent = TITLES[state.page];
     el('page-kicker').textContent = `${navEntry?.[0] || 'Control plane'} workspace`;
     markActive(); updateFavoriteButton(); el('sidebar').classList.remove('open');
+    const retainCatalog = ['parsers','artifacts','rollouts','parser-sync',...Object.keys(CONFIG)].includes(requestedPage) && page.dataset.page === requestedPage && !page.querySelector('.error-state') && page.dataset.controllerInstance === (state.sync.snapshot?.controller_instance_id || '');
+    const previousCatalog = retainCatalog ? [...page.childNodes] : null;
     page.removeAttribute('data-page');
     page.innerHTML = loading();
     try {
       await LOADERS[requestedPage]();
       refreshNavigationBadges();
       if (state.page === requestedPage && state.user) { applyPermissions(); state.loadedAt = Date.now(); if(SYNC_PAGES.has(requestedPage))state.sync.renderedSignature=syncRenderSignature(); updateFreshness(); }
-    } catch (error) { if (state.page === requestedPage && state.user) { renderPage(requestedPage,errorState(error));applyPermissions();notify(`${TITLES[requestedPage]} could not refresh: ${error.message}`, 'error'); } }
+    } catch (error) {
+      if (state.page === requestedPage && state.user && state.navigationRequest === navigation) {
+        if (previousCatalog) {
+          page.replaceChildren(...previousCatalog);
+          page.querySelector('[data-catalog-unavailable]')?.remove();
+          page.insertAdjacentHTML('afterbegin', `<div class="callout warn" role="alert" data-catalog-unavailable><b>Live catalog unavailable</b><p>${esc(error.message)}</p><p>The last displayed catalog is retained for reference. Refresh successfully before making changes.</p><button type="button" class="secondary" data-action="reload">Retry live catalog</button></div>`);
+          page.dataset.page = requestedPage;
+          page.dataset.catalogStale = 'true';
+          lockStaleCatalogControls();
+        } else renderPage(requestedPage,errorState(error));
+        applyPermissions();
+        notify(`${TITLES[requestedPage]} could not refresh: ${error.message}`, 'error');
+      }
+    }
     finally {
       if (state.navigationRequest === navigation) {
         state.loadingPage = false;
@@ -2378,10 +2439,7 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
     const builtin = builtinResult.status === 'fulfilled' ? builtinResult.value || [] : [];
     state.parserPacks=packs;
     state.builtinParsers=builtin;
-    if (managedResult.status === 'rejected' && builtinResult.status === 'rejected') {
-      renderPage('parsers', `<div class="callout warn">Parser catalogs could not be read: ${esc(managedResult.reason.message)}. Check controller storage readiness and retry.</div>${panel('Managed parser packs','Draft creation remains available while the live catalog recovers.',empty('No live parser-pack snapshot is available.'))}${panel('Create parser draft','Declarative only; executable fields and non-RE2 regex are rejected.',`<form id="parser-form" class="form-grid"><label class="field wide">Start from live parser${assuranceParserSelect(builtin,'auto','base_parser_id')}<span class="hint">ⓘ Select a live parser to copy its declarative definition, or leave Automatic and create your own.</span></label><label class="field">Pack ID<input name="id" required></label><label class="field">Name<input name="name" required></label><label class="field">Semantic version<input name="version" value="0.1.0" required></label><label class="field">Priority<input name="priority" type="number" min="1" max="1000000000" value="100" required></label><label class="field wide">Rules JSON<textarea name="rules">[]</textarea></label><label class="field wide">Reviewed regression cases JSON<textarea name="regression_cases">[]</textarea><span class="hint">ⓘ Include at least one representative input, expected parser ID, route, and exact expected payload. Publication is blocked until the exact runtime parser passes retained review evidence.</span></label><button class="primary" type="submit">Create draft</button></form>`)}`);
-      return;
-    }
+    if (managedResult.status === 'rejected') throw managedResult.reason;
     const managedStale=managedResult.value?.snapshot_stale===true;
     const warnings = staleSnapshotWarning(managedResult.value)+[managedResult, builtinResult].filter(result => result.status === 'rejected').map(result => `<div class="callout warn">${esc(result.reason.message)}</div>`).join('');
     renderPage('parsers', `${warnings}${panel('Managed parser packs','Revisioned priority, runtime compatibility, and independent review/approval state. Blocked historical records stay isolated and can be moved into an editable repair draft.',table(['Pack','Version','Priority','Revision','State','Runtime sync','Author','Definition and actions'],packs.map(doc=>{const p=doc.payload||{},sync=doc.runtime_sync||{status:'not_published'},syncStatus=String(sync.status||'').toLowerCase(),runtimeSynced=!sync.drifted&&(['active','published','synced','synchronized','in_sync','current','applied'].includes(syncStatus)||(sync.applied_revision!=null&&Number(sync.applied_revision)===Number(doc.revision)&&sync.applied_hash&&sync.applied_hash===sync.desired_hash)),displayState=doc.state==='published'&&runtimeSynced?'Published / Active':doc.state;return `<tr><td><b>${esc(p.name||doc.id)}</b><br><small class="mono">${esc(doc.id)}</small></td><td>${esc(p.version||'—')}</td><td>${esc(p.priority||'—')}</td><td>${doc.revision}</td><td>${badge(displayState)}${approvalDetails(doc)}</td><td>${badge(sync.status||'not_published')}${sync.reason?`<br><small class="sync-error">${esc(sync.reason)}</small>`:''}</td><td>${esc(doc.created_by)}</td><td><details><summary>View full parser JSON</summary><pre class="json-output">${esc(pretty(p))}</pre></details><button class="secondary small" data-action="parser-asset" data-id="${esc(doc.id)}" data-value="edit">Edit draft</button> <button class="secondary small" data-action="parser-asset" data-id="${esc(doc.id)}" data-value="download">Download</button> <button class="danger small" data-action="parser-asset" data-id="${esc(doc.id)}" data-value="delete" ${managedStale?'disabled':''}>Delete</button> ${p.parser&&['published','approved','in_review'].includes(doc.state)?`<button type="button" class="secondary small" data-action="nfi-repair-candidate" data-id="${esc(doc.id)}">Repair as new draft</button>`:''} ${managedStale?'Refresh required for lifecycle actions':parserActions(doc)}</td></tr>`})))}${panel('Create parser draft','Declarative only; executable fields and non-RE2 regex are rejected.',`<form id="parser-form" class="form-grid"><label class="field wide">Start from live parser${assuranceParserSelect(builtin,'auto','base_parser_id')}<span class="hint">ⓘ Select a live parser to copy its declarative definition, or leave Automatic and create your own.</span></label><label class="field">Pack ID<input name="id" required title="Stable identifier; use Edit draft for existing draft packs."></label><label class="field">Name<input name="name" required></label><label class="field">Semantic version<input name="version" value="0.1.0" required></label><label class="field">Priority<input name="priority" type="number" min="1" max="1000000000" value="100" required title="Lower numbers are tried first."></label><label class="field wide">Rules JSON<textarea name="rules">[]</textarea><span class="hint">ⓘ Declarative parser rules only. Add regex, known-key, static-token and field projection stages.</span></label><label class="field wide">Reviewed regression cases JSON<textarea name="regression_cases">[]</textarea><span class="hint">ⓘ Required before submission. Each case must include name, input, expected_parser, expected_route, and expected_payload so the exact candidate can be validated before approval.</span></label><button class="primary" type="submit">Create draft</button></form>`)}${panel('Built-in runtime parsers','Read directly from the active controller registry. Inspect and download the exact registry metadata.',table(['ID','Version','Format','Description','Fields','Source'],builtin.map(item=>`<tr><td class="mono">${esc(item.id)}</td><td>${esc(item.version)}</td><td>${esc(item.format)}</td><td>${esc(item.description)}</td><td>${(item.fields||[]).length}</td><td><details><summary>Inspect JSON</summary><pre class="json-output">${esc(pretty(item))}</pre></details><button class="secondary small" data-action="download-builtin" data-id="${esc(item.id)}">Download JSON</button></td></tr>`)))}`);
@@ -2479,7 +2537,8 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
 
   async function loadConfig(kind) {
     const [path,title,example]=CONFIG[kind]; let data={items:[]}, warning='';
-    try { data=await api(path); } catch(error) { warning=`<div class="callout warn">Live ${esc(title.toLowerCase())} could not be loaded: ${esc(error.message)}. Defaults are shown for reference; retry after controller storage recovers.</div>`; }
+    data = await api(path);
+    warning = staleSnapshotWarning(data);
     const items=data.items||[], known=kind==='knownkeys';
     const lifecycle = doc => {
       const actions=[];
@@ -2854,8 +2913,8 @@ let pairs=[];try{pairs=qrwPairs(text);}catch{}const firstPair=pairs.length?Math.
   function staleSnapshotWarning(data = {}) {
     if (!data?.snapshot_stale) return '';
     const when=data.snapshot_at ? ' from ' + time(data.snapshot_at) : '';
-    return '<div class="callout warn" role="status">Showing the last confirmed snapshot' + esc(when) +
-      '. Live metadata is temporarily unavailable. Refresh to resume actions.</div>';
+    return '<div class="callout warn" role="status" data-catalog-snapshot-stale>Showing the last confirmed snapshot' + esc(when) +
+      '. Live metadata is temporarily unavailable. Refresh to resume actions.' + (data.backend_error ? '<p>' + esc(apiDiagnostic(data)) + '</p>' : '') + '</div>';
   }
   async function loadRollouts() {
     const [rolloutResult,syncResult]=await Promise.allSettled([api('/rollouts',{allowStale:true}),api('/parser-sync')]);
@@ -3250,6 +3309,7 @@ sudo systemctl start nli-controller-agent</pre><p>Restore access to the same Sup
   }
 
   async function submit(form) {
+    if (page.dataset.catalogStale === 'true') throw new Error('Refresh the live catalog successfully before making changes.');
     const data=formObject(form);
     switch(form.getAttribute('id')){
       case 'nupire-discovery-form': { const ids=value=>value.split(',').map(item=>item.trim()).filter(Boolean);const body={id:data.id,source:data.source,generator:data.generator,training_ids:ids(data.training_ids),held_out_ids:ids(data.held_out_ids)};if(!body.training_ids.length||!body.held_out_ids.length)throw new Error('Provide training and independent held-out evidence IDs');await api('/nupire/discoveries',{method:'POST',body});selectedNupire=data.id;notify('NUPIRE discovery record persisted.');await navigate('nupire');break; }
@@ -3342,6 +3402,7 @@ sudo systemctl start nli-controller-agent</pre><p>Restore access to the same Sup
   }
 
   async function action(button) {
+    if (page.dataset.catalogStale === 'true' && !staleCatalogReadAction(button)) throw new Error('Refresh the live catalog successfully before making changes.');
     const id=button.dataset.id, value=button.dataset.value;
     if(button.hasAttribute?.('data-map-sample')&&!can('assurance:run'))throw new Error('Mapping requires Assurance run access.');
     if(button.dataset.action==='parser-helper-validate'){
@@ -4341,7 +4402,7 @@ sudo systemctl start nli-controller-agent</pre><p>Restore access to the same Sup
     source.onerror=()=>{if(!state.user)return;state.streamMode='reconnecting';el('stream-state').innerHTML='<i></i>Reconnecting · recovery active';state.streamFailures++;source.close();state.streamSource=null;pollCanonicalSnapshot('event stream interrupted');if(state.streamReconnectTimer)clearTimeout(state.streamReconnectTimer);const delay=Math.min(1000*(2**Math.min(state.streamFailures-1,5)),30000);state.streamReconnectTimer=setTimeout(()=>{state.streamReconnectTimer=null;if(state.user)connectStream();},delay);renderSyncSubscriber({force:true});};
   }
 
-  async function signOut(notify=true){state.sampleHistoryEnabled=false;inFlightReads.clear();state.navigationHistory=[];if(state.socket){state.socket.onclose=null;state.socket.close();state.socket=null;}if(state.streamSource){state.streamSource.close();state.streamSource=null;}if(state.streamPollTimer){clearInterval(state.streamPollTimer);state.streamPollTimer=null;}if(state.streamReconnectTimer){clearTimeout(state.streamReconnectTimer);state.streamReconnectTimer=null;}state.sync.pollController?.abort();state.user=null;favoriteRequest++;favoriteSaving=false;if(notify){try{await api('/auth/logout',{method:'POST',body:{}});}catch{}}state.csrf='';state.lastAssurance=null;state.quarantineDiagnosis=null;state.gprsManual=null;state.blockBoard=null;state.blockSeed='';state.qrwReplayAcceptedIds=[];state.gprsSamples=[];state.gprsPreview=null;state.qrwFields=[];state.nfiRaw='';state.nfiCorpus='';state.nfiService='auto';state.nfiScopePattern='';state.nfiGlobalScope=false;state.nfiEditId='';state.nfiName='';state.nfiVersion='';state.nfiParser=null;state.nfiCases=[];state.nfiProfiles=[];state.nfiDesired=null;state.aiSelectedProviderId='';state.aiProviderTemplates=[];state.nfiMappingPriority=0;state.nfiSenseMode='';state.nfiExpert=false;state.nfiGuideStep=undefined;state.nfiCandidateValidated=null;state.nfiPreviewed=false;clearTimeout(nfiLiveTimer);nfiAnalysisController?.abort();qrwControllerPreview=null;state.controllerNotifications=[];state.notifications=[];renderNotificationBell();sessionStorage.removeItem('nli.qrw.mapping-draft');sessionStorage.removeItem('nli.qrw.selected-record');state.live=[];state.polling=false;state.sync={snapshot:null,history:[],browserAppliedAt:0,browserDelayMs:null,lastReceivedAt:0,pollInFlight:false,pollController:null,pollFailures:0,rejectedUpdates:0,connectionStartedAt:0,resyncing:false,renderedSignature:null,renderScheduled:false};el('login-form').querySelector('[name=password]').value='';el('app-view').hidden=true;el('auth-view').hidden=false;}
+  async function signOut(notify=true){state.sampleHistoryEnabled=false;inFlightReads.clear();activeAPIFailures.clear();errorNotificationEpisodes.clear();state.navigationHistory=[];if(state.socket){state.socket.onclose=null;state.socket.close();state.socket=null;}if(state.streamSource){state.streamSource.close();state.streamSource=null;}if(state.streamPollTimer){clearInterval(state.streamPollTimer);state.streamPollTimer=null;}if(state.streamReconnectTimer){clearTimeout(state.streamReconnectTimer);state.streamReconnectTimer=null;}state.sync.pollController?.abort();state.user=null;favoriteRequest++;favoriteSaving=false;if(notify){try{await api('/auth/logout',{method:'POST',body:{}});}catch{}}state.csrf='';state.lastAssurance=null;state.quarantineDiagnosis=null;state.gprsManual=null;state.blockBoard=null;state.blockSeed='';state.qrwReplayAcceptedIds=[];state.gprsSamples=[];state.gprsPreview=null;state.qrwFields=[];state.nfiRaw='';state.nfiCorpus='';state.nfiService='auto';state.nfiScopePattern='';state.nfiGlobalScope=false;state.nfiEditId='';state.nfiName='';state.nfiVersion='';state.nfiParser=null;state.nfiCases=[];state.nfiProfiles=[];state.nfiDesired=null;state.aiSelectedProviderId='';state.aiProviderTemplates=[];state.nfiMappingPriority=0;state.nfiSenseMode='';state.nfiExpert=false;state.nfiGuideStep=undefined;state.nfiCandidateValidated=null;state.nfiPreviewed=false;clearTimeout(nfiLiveTimer);nfiAnalysisController?.abort();qrwControllerPreview=null;state.controllerNotifications=[];state.notifications=[];renderNotificationBell();sessionStorage.removeItem('nli.qrw.mapping-draft');sessionStorage.removeItem('nli.qrw.selected-record');state.live=[];state.polling=false;state.sync={snapshot:null,history:[],browserAppliedAt:0,browserDelayMs:null,lastReceivedAt:0,pollInFlight:false,pollController:null,pollFailures:0,rejectedUpdates:0,connectionStartedAt:0,resyncing:false,renderedSignature:null,renderScheduled:false};el('login-form').querySelector('[name=password]').value='';el('app-view').hidden=true;el('auth-view').hidden=false;}
   let browserHeartbeatRetryAt = 0;
   let browserHeartbeatDelay = 5000;
   async function sendBrowserHeartbeat(){

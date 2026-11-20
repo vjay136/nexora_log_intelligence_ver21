@@ -33,6 +33,88 @@ test('stale approvals remain visible with mutation disabled', async ({page}) => 
   await expect(page.getByRole('button',{name:'Request approval'})).toBeDisabled();
 });
 
+const metadataAuthFailure = {
+  error:'artifact catalog unavailable', backend_error:'metadata_authentication_failed',
+  error_detail:'The controller metadata credential was rejected by Supabase.',
+  action:'Verify this controller uses the intended Supabase project and server credential, then retry.',
+};
+
+test('metadata authentication failure explains unavailable catalogs without signing out', async ({page}) => {
+  await mockController(page);
+  await login(page);
+  await page.route('**/api/v1/artifacts',route=>route.fulfill({status:503,json:metadataAuthFailure}));
+  await page.getByTestId('nav-artifacts').click();
+  const failure=page.locator('.error-state');
+  await expect(failure).toContainText('Controller metadata authentication failed.');
+  await expect(failure).toContainText(metadataAuthFailure.action);
+  await expect(page.getByTestId('nav-operations')).toBeVisible();
+  await expect(page.getByText('No signed artifacts available.',{exact:true})).toHaveCount(0);
+  await page.route('**/api/v1/config/templates',route=>route.fulfill({status:503,json:{...metadataAuthFailure,error:'template catalog unavailable'}}));
+  await page.getByTestId('nav-header-templates').click();
+  await expect(failure).toContainText('Controller metadata authentication failed.');
+  await expect(page.getByRole('button',{name:'Save draft revision',exact:true})).toHaveCount(0);
+});
+
+test('metadata authentication incidents deduplicate notifications while recording all probes and recovery', async ({page}) => {
+  await mockController(page);
+  await login(page);
+  let failing=true,requests=0;
+  for(const path of ['artifacts','rollouts']) await page.route(`**/api/v1/${path}`,route=>{
+    requests++;
+    return failing?route.fulfill({status:503,json:metadataAuthFailure}):route.fallback();
+  });
+  await page.getByTestId('nav-artifacts').click();
+  await expect(page.locator('.error-state')).toBeVisible();
+  await page.getByTestId('nav-rollouts').click();
+  await expect(page.locator('.error-state')).toBeVisible();
+  // Remove transient toasts: suppression must survive their display lifetime.
+  await page.locator('#toast-region').evaluate(node=>node.replaceChildren());
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await expect.poll(()=>requests).toBeGreaterThanOrEqual(3);
+  await page.getByTestId('nav-api-monitor').click();
+  await expect(page.getByRole('heading',{name:'API monitor',exact:true})).toBeVisible();
+  for(const path of ['/artifacts','/rollouts']) {
+    const row=page.locator('#page tr').filter({has:page.getByText(path,{exact:true})});
+    await expect(row).toContainText('503');
+    await expect(row).toContainText('Controller metadata authentication failed.');
+  }
+  await page.locator('#notification-bell').click();
+  await expect(page.locator('#notification-list .notification-item.error')).toHaveCount(1);
+  failing=false;
+  await page.getByTestId('nav-api-monitor').click();
+  await expect(page.getByRole('heading',{name:'API monitor',exact:true})).toBeVisible();
+  await page.locator('#notification-bell').click();
+  await expect(page.locator('#notification-list')).toContainText('Controller metadata access recovered.');
+  failing=true;
+  await page.getByTestId('nav-artifacts').click();
+  await expect(page.locator('.error-state')).toBeVisible();
+  await page.locator('#notification-bell').click();
+  await expect(page.locator('#notification-list .notification-item.error')).toHaveCount(2);
+});
+
+test('catalog refresh failure retains displayed templates and locks changes until live recovery', async ({page}) => {
+  await mockController(page);
+  let failing=false;
+  await page.route('**/api/v1/config/templates',route=>route.fulfill(failing?{status:503,json:metadataAuthFailure}:{json:{items:[{
+    id:'retained-header',revision:4,state:'active',payload:{name:'Retained header'},
+  }]}}));
+  await login(page);
+  await page.getByTestId('nav-header-templates').click();
+  await expect(page.getByText('Retained header',{exact:true})).toBeVisible();
+  failing=true;
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await expect(page.getByText('Retained header',{exact:true})).toBeVisible();
+  await expect(page.locator('[data-catalog-unavailable]')).toContainText(metadataAuthFailure.action);
+  await expect(page.getByRole('button',{name:'Create revision draft',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Generate draft JSON',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Download JSON',exact:true})).toBeEnabled();
+  failing=false;
+  await page.getByRole('button',{name:'Retry live catalog',exact:true}).click();
+  await expect(page.locator('[data-catalog-unavailable]')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Create revision draft',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Generate draft JSON',exact:true})).toBeEnabled();
+});
+
 test('stale fleet inventory remains readable without accepting target operations', async ({page}) => {
   await mockController(page);
   await login(page);

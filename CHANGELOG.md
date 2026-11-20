@@ -1,5 +1,14 @@
 # Changelog
 
+## v22.21.1-0
+
+- Preserve configured metadata backends across installation modes and retain verified prior controller/client bundles for recovery.
+
+- Preserve the registered Supabase controller secret during upgrades; refuse a conflicting bootstrap without altering stored metadata.
+- Distinguish metadata authentication failures from Webapp login failures and retain visible catalogs read-only during refresh failures.
+- Collapse repeated backend-auth notifications into one incident while retaining individual API diagnostics.
+- Test every reported catalog API and notification action through authentication failure and recovery.
+
 ## v22.20.1-0
 
 - Add protected catalog checkpoints, encrypted offline controller identity recovery, and an administrative Disaster Recovery workspace.

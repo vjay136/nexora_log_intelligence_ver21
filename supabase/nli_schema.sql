@@ -1,4 +1,4 @@
--- NLI Ver22 (22.20.1-0) Supabase metadata schema (compatible RPC schema version 1).
+-- NLI Ver22 (22.21.1-0) Supabase metadata schema (compatible RPC schema version 1).
 -- The controller uses protected RPCs for revisioned JSONB parser packs, mappings,
 -- scope policies, bundle descriptors, KV profiles and parser recovery archives.
 -- Assurance evidence is encrypted by the controller before persistence.
@@ -60,12 +60,30 @@ alter table public.nli_documents enable row level security;
 revoke all on table public.nli_controller_settings from public, anon, authenticated;
 revoke all on table public.nli_documents from public, anon, authenticated;
 
-insert into public.nli_controller_settings (singleton, secret_sha256, schema_version, updated_at)
-values (true, '__NLI_CONTROLLER_SECRET_SHA256__', 1, now())
-on conflict (singleton) do update
-set secret_sha256 = excluded.secret_sha256,
-    schema_version = excluded.schema_version,
-    updated_at = excluded.updated_at;
+-- A project keeps its controller ownership across schema upgrades. Rendering
+-- this file on another host must never replace a working controller's secret.
+do $nli_bootstrap$
+declare
+  v_requested_secret constant text := '__NLI_CONTROLLER_SECRET_SHA256__';
+  v_existing_secret text;
+begin
+  insert into public.nli_controller_settings (singleton, secret_sha256, schema_version, updated_at)
+  values (true, v_requested_secret, 1, now())
+  on conflict (singleton) do nothing;
+
+  select secret_sha256 into v_existing_secret
+  from public.nli_controller_settings where singleton for update;
+  if v_existing_secret is distinct from v_requested_secret then
+    raise exception using
+      errcode = '42501',
+      message = 'NLI Supabase bootstrap refused: controller secret does not match this project',
+      hint = 'Reuse NLI_SUPABASE_CONTROLLER_SECRET from the existing controller /etc/nli/controller.env, render the bootstrap again, and retry. Schema bootstrap does not rotate controller ownership.';
+  end if;
+  update public.nli_controller_settings
+  set schema_version = 1, updated_at = now()
+  where singleton;
+end;
+$nli_bootstrap$;
 
 create or replace function public.nli_controller_authorized()
 returns boolean
@@ -102,7 +120,7 @@ begin
   end if;
   select count(*) into v_count from public.nli_documents;
   return jsonb_build_object('status', 'ok', 'schema_version', 1, 'revisions', v_count,
-    'bootstrap_release', '22.20.1-0',
+    'bootstrap_release', '22.21.1-0',
     'persistence_capabilities', jsonb_build_array('revisioned_jsonb', 'nfi_mapping_plan_metadata', 'scope_policy_metadata', 'nullable_object_array_payloads', 'dynamic_kv_eol_metadata', 'parser_recovery_archive', 'kvie_profile_metadata'),
     'validation_authority', 'nli-controller');
 end;
